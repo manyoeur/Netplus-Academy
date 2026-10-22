@@ -6,7 +6,6 @@ import {
   CheckCircle, 
   AlertTriangle, 
   HelpCircle, 
-  Sparkles, 
   Activity, 
   Cpu, 
   Server, 
@@ -19,14 +18,12 @@ import { useAcademy } from '../../context/AcademyContext';
 interface InteractiveCliTerminalProps {
   module: CourseModule;
   courseId: string;
-  onAskAI?: (prompt: string) => void;
   onCompleted?: () => void;
 }
 
 export const InteractiveCliTerminal: React.FC<InteractiveCliTerminalProps> = ({
   module,
   courseId,
-  onAskAI,
   onCompleted
 }) => {
   const { completeModule } = useAcademy();
@@ -244,16 +241,6 @@ export const InteractiveCliTerminal: React.FC<InteractiveCliTerminalProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {onAskAI && (
-            <button
-              onClick={() => onAskAI(`I am working on the Cisco CLI lab for ${module.title}. What commands do I need to configure OSPF Area 0?`)}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-500 hover:to-blue-500 shadow-sm transition-all flex items-center gap-1.5"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Ask NetGenius AI</span>
-            </button>
-          )}
-
           <button
             onClick={resetTerminal}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700"

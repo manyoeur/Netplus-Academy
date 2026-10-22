@@ -22,14 +22,12 @@ import { InteractiveCliTerminal } from '../Lab/InteractiveCliTerminal';
 interface CoursePlayerProps {
   courseId: string;
   onBack: () => void;
-  onOpenAITutorWithPrompt: (prompt: string) => void;
   onViewCertificates: () => void;
 }
 
 export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   courseId,
   onBack,
-  onOpenAITutorWithPrompt,
   onViewCertificates
 }) => {
   const { courses, currentUser, completeModule, enrollInCourse } = useAcademy();
@@ -136,14 +134,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               <span>View Certificate</span>
             </button>
           )}
-
-          <button
-            onClick={() => onOpenAITutorWithPrompt(`Explain key concepts for ${activeModule.title}`)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-xs font-semibold shadow-sm"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>AI Tutor</span>
-          </button>
         </div>
       </div>
 
@@ -152,6 +142,21 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
         
         {/* Left Column: Syllabus Navigation */}
         <div className="lg:col-span-1 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+          {/* Course Thumbnail Mini Card */}
+          <div className="relative aspect-video rounded-xl overflow-hidden bg-slate-950 border border-slate-200 dark:border-slate-800 shadow-sm">
+            <img
+              src={course.thumbnail || 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800'}
+              alt={course.title}
+              className="w-full h-full object-cover"
+            />
+            <span className="absolute top-2 left-2 px-2 py-0.5 rounded text-[9px] font-bold bg-slate-900/80 backdrop-blur-md text-white border border-white/10">
+              {course.category}
+            </span>
+            <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-blue-600 text-white">
+              {course.level}
+            </span>
+          </div>
+
           <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
             <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Course Modules</span>
             <span className="text-[10px] font-mono text-slate-400">{completedCount}/{course.modules.length} Done</span>
@@ -264,7 +269,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             <InteractiveCliTerminal
               module={activeModule}
               courseId={course.id}
-              onAskAI={(p) => onOpenAITutorWithPrompt(p)}
               onCompleted={() => {
                 completeModule(course.id, activeModule.id);
               }}

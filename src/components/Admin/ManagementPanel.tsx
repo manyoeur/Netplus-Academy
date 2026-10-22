@@ -57,6 +57,7 @@ export const ManagementPanel: React.FC = () => {
     durationHours: 35,
     price: 179,
     bannerColor: 'from-blue-700 via-indigo-800 to-slate-900',
+    thumbnail: 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800',
     description: 'Learn modern data center fabric design using BGP EVPN control plane and VXLAN data plane.',
     prerequisites: ['BGP fundamentals', 'OSPF/IS-IS'],
     learningOutcomes: ['Configure VXLAN Tunnel Endpoints (VTEPs)', 'Deploy BGP EVPN Type-2 and Type-5 routes', 'Troubleshoot asymmetrical routing']
@@ -94,6 +95,7 @@ export const ManagementPanel: React.FC = () => {
       enrolledCount: 0,
       price: Number(newCourse.price) || 99,
       bannerColor: newCourse.bannerColor || 'from-blue-600 to-slate-900',
+      thumbnail: newCourse.thumbnail || 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800',
       badge: 'New Release',
       description: newCourse.description || '',
       prerequisites: newCourse.prerequisites || ['Basic Networking'],
@@ -360,17 +362,24 @@ export const ManagementPanel: React.FC = () => {
                 key={course.id}
                 className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4"
               >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono text-[10px] font-bold">
-                      {course.code}
-                    </span>
-                    <h3 className="text-base font-bold text-slate-900 dark:text-white mt-1">
-                      {course.title}
-                    </h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">
-                      {course.subtitle}
-                    </p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <img
+                      src={course.thumbnail || 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800'}
+                      alt={course.title}
+                      className="w-20 h-14 rounded-xl object-cover shrink-0 bg-slate-950 border border-slate-200 dark:border-slate-800"
+                    />
+                    <div>
+                      <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono text-[10px] font-bold">
+                        {course.code}
+                      </span>
+                      <h3 className="text-base font-bold text-slate-900 dark:text-white mt-0.5">
+                        {course.title}
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
+                        {course.subtitle}
+                      </p>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-1">
@@ -503,6 +512,29 @@ export const ManagementPanel: React.FC = () => {
                   onChange={(e) => setNewCourse({ ...newCourse, subtitle: e.target.value })}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                 />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Course Thumbnail Image URL</label>
+                <input
+                  type="text"
+                  value={newCourse.thumbnail}
+                  onChange={(e) => setNewCourse({ ...newCourse, thumbnail: e.target.value })}
+                  placeholder="https://images.unsplash.com/photo-..."
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-xs font-mono"
+                />
+                {newCourse.thumbnail && (
+                  <div className="mt-2 relative rounded-xl overflow-hidden aspect-video border border-slate-200 dark:border-slate-700 max-w-xs bg-slate-950">
+                    <img
+                      src={newCourse.thumbnail}
+                      alt="Thumbnail Preview"
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute bottom-2 left-2 text-[10px] font-mono bg-slate-900/80 backdrop-blur-md text-white px-2 py-0.5 rounded">
+                      Live Preview
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">

@@ -1,0 +1,2407 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apex Academy | Next-Gen Learning & Course Studio</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Chart.js for analytics -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f7ff',
+              100: '#e0effe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a',
+            },
+            accent: {
+              500: '#8b5cf6',
+              600: '#7c3aed',
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['Fira Code', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(156, 163, 175, 0.4); border-radius: 9999px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(156, 163, 175, 0.6); }
+    .toast-animate { animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes slideIn {
+      from { transform: translateY(-100%); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+  </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 transition-colors duration-200 min-h-screen flex flex-col selection:bg-brand-500 selection:text-white">
+
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <div id="toast-container" class="fixed top-20 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none"></div>
+
+  <!-- TOP NAVIGATION HEADER -->
+  <header class="sticky top-0 z-40 bg-white/90 dark:bg-gray-800/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-700">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16 gap-4">
+        
+        <!-- Left: Logo & Nav Links -->
+        <div class="flex items-center gap-6">
+          <button id="mobile-menu-btn" class="lg:hidden p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+            <i data-lucide="menu" class="w-6 h-6"></i>
+          </button>
+          
+          <a href="#" onclick="switchView('catalog')" class="flex items-center gap-2 font-bold text-xl tracking-tight text-gray-900 dark:text-white">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-600 to-accent-500 flex items-center justify-center text-white shadow-md shadow-brand-500/20">
+              <i data-lucide="graduation-cap" class="w-5 h-5"></i>
+            </div>
+            <span>Apex<span class="text-brand-500">Academy</span></span>
+          </a>
+
+          <!-- Desktop Nav Navigation -->
+          <nav class="hidden lg:flex items-center gap-1">
+            <button onclick="switchView('catalog')" id="nav-catalog" class="nav-link px-3 py-2 rounded-lg text-sm font-medium transition-colors text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30">
+              <i data-lucide="compass" class="w-4 h-4 inline mr-1.5"></i>Catalog
+            </button>
+            <button onclick="switchView('dashboard')" id="nav-dashboard" class="nav-link px-3 py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-gray-100 dark:hover:bg-gray-700/50">
+              <i data-lucide="layout-dashboard" class="w-4 h-4 inline mr-1.5"></i>Dashboard
+            </button>
+            <button onclick="switchView('viewer')" id="nav-viewer" class="nav-link px-3 py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-gray-100 dark:hover:bg-gray-700/50">
+              <i data-lucide="book-open" class="w-4 h-4 inline mr-1.5"></i>Active Lesson
+            </button>
+            <button onclick="switchView('sandbox')" id="nav-sandbox" class="nav-link px-3 py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-gray-100 dark:hover:bg-gray-700/50">
+              <i data-lucide="code" class="w-4 h-4 inline mr-1.5"></i>Sandbox
+            </button>
+          </nav>
+        </div>
+
+        <!-- Center: Search Bar -->
+        <div class="hidden md:flex flex-1 max-w-md mx-4 relative">
+          <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+            <i data-lucide="search" class="w-4 h-4"></i>
+          </div>
+          <input type="text" id="global-search" onkeyup="handleGlobalSearch(this.value)" placeholder="Search courses, lessons, topics..." class="w-full pl-9 pr-4 py-2 bg-gray-100 dark:bg-gray-700/50 border border-transparent focus:border-brand-500 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition-all text-gray-800 dark:text-gray-100 placeholder-gray-400">
+        </div>
+
+        <!-- Right: Actions & Auth / Profile Area -->
+        <div class="flex items-center gap-3">
+          
+          <!-- Instructor Action Buttons (Shown when Instructor is active) -->
+          <div id="header-instructor-actions" class="hidden sm:flex items-center gap-2">
+            <button onclick="openCourseStudioModal(null, true)" class="px-3 py-1.5 rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 font-bold text-xs hover:bg-gray-200 dark:hover:bg-gray-600 transition flex items-center gap-1.5 border border-gray-200 dark:border-gray-600" title="Manage Existing Courses">
+              <i data-lucide="file-edit" class="w-4 h-4 text-brand-500"></i>
+              <span>Manage Courses</span>
+            </button>
+            <button id="header-create-course-btn" onclick="openCourseStudioModal()" class="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-accent-600 to-brand-600 text-white font-bold text-xs shadow-md hover:opacity-90 transition">
+              <i data-lucide="plus-circle" class="w-4 h-4"></i>
+              <span>Create Course</span>
+            </button>
+          </div>
+
+          <!-- Persona Switcher Quick Dropdown -->
+          <div class="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-gray-100 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 text-xs">
+            <i data-lucide="user-check" class="w-3.5 h-3.5 text-brand-500"></i>
+            <span class="text-gray-400 text-[10px] font-medium">Demo Persona:</span>
+            <select id="persona-selector" onchange="switchPersona(this.value)" class="bg-transparent text-gray-800 dark:text-gray-200 font-semibold focus:outline-none cursor-pointer">
+              <option value="student1">Alex Rivera (Student)</option>
+              <option value="instructor1">Sarah Chen (Instructor)</option>
+              <option value="guest">Guest User (Logged Out)</option>
+            </select>
+          </div>
+
+          <!-- Streak Indicator -->
+          <div id="streak-badge" class="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-semibold border border-amber-500/20" title="Current Daily Streak">
+            <i data-lucide="flame" class="w-4 h-4 text-amber-500 fill-amber-500"></i>
+            <span id="header-streak-text">5 Day Streak</span>
+          </div>
+
+          <!-- Theme Toggle -->
+          <button id="theme-toggle" class="p-2 rounded-xl text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" title="Toggle Theme">
+            <i data-lucide="sun" class="w-5 h-5 hidden dark:block"></i>
+            <i data-lucide="moon" class="w-5 h-5 block dark:hidden"></i>
+          </button>
+
+          <!-- AUTH STATE: LOGGED IN PROFILE vs LOGGED OUT BUTTONS -->
+          <div id="auth-state-container" class="flex items-center gap-2 pl-2 border-l border-gray-200 dark:border-gray-700">
+            <!-- Dynamically populated via updateAuthUI() -->
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </header>
+
+  <!-- USER PROFILE DROPDOWN MENU -->
+  <div id="profile-dropdown" class="hidden absolute right-6 top-16 z-50 w-64 bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 p-2 space-y-1">
+    <div class="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700/60">
+      <p id="dropdown-user-name" class="text-sm font-bold text-gray-900 dark:text-white">Alex Rivera</p>
+      <p id="dropdown-user-email" class="text-xs text-gray-500 truncate">alex.rivera@academy.io</p>
+      <div class="mt-2 flex items-center justify-between text-[10px] font-semibold text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/40 px-2 py-1 rounded-md">
+        <span id="dropdown-user-role">Pro Student</span>
+        <span id="dropdown-user-xp">1,450 XP</span>
+      </div>
+    </div>
+    <button onclick="openCourseStudioModal(); closeDropdowns()" id="dropdown-create-course-option" class="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-brand-600 dark:text-brand-400 font-semibold hover:bg-brand-50 dark:hover:bg-brand-900/30 rounded-xl transition">
+      <i data-lucide="plus-circle" class="w-4 h-4"></i> Course Creator Studio
+    </button>
+    <button onclick="switchView('dashboard'); closeDropdowns()" class="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition">
+      <i data-lucide="layout-dashboard" class="w-4 h-4 text-brand-500"></i> My Dashboard
+    </button>
+    <button onclick="switchView('sandbox'); closeDropdowns()" class="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition">
+      <i data-lucide="notebook-pen" class="w-4 h-4 text-accent-500"></i> Saved Notes
+    </button>
+    <button onclick="showCertificateModal(); closeDropdowns()" class="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition">
+      <i data-lucide="award" class="w-4 h-4 text-amber-500"></i> Certificates
+    </button>
+    <div class="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+    <button onclick="performLogout()" class="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition font-medium">
+      <i data-lucide="log-out" class="w-4 h-4"></i> Log Out
+    </button>
+  </div>
+
+  <!-- MOBILE NAVIGATION DRAWER -->
+  <div id="mobile-menu" class="hidden fixed inset-0 z-50 bg-gray-900/60 backdrop-blur-sm lg:hidden">
+    <div class="w-72 bg-white dark:bg-gray-800 h-full p-5 flex flex-col justify-between shadow-xl">
+      <div>
+        <div class="flex items-center justify-between pb-4 border-b border-gray-200 dark:border-gray-700">
+          <div class="flex items-center gap-2 font-bold text-lg">
+            <i data-lucide="graduation-cap" class="w-6 h-6 text-brand-500"></i>
+            <span>Apex Academy</span>
+          </div>
+          <button id="close-mobile-menu" class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+        
+        <!-- Mobile Persona Selector -->
+        <div class="mt-4 p-2.5 rounded-xl bg-gray-100 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600">
+          <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Switch User Persona</label>
+          <select id="mobile-persona-selector" onchange="switchPersona(this.value); closeMobileMenu()" class="w-full bg-transparent text-xs font-semibold text-gray-800 dark:text-gray-200 focus:outline-none">
+            <option value="student1">Alex Rivera (Student)</option>
+            <option value="instructor1">Sarah Chen (Instructor)</option>
+            <option value="guest">Guest User (Logged Out)</option>
+          </select>
+        </div>
+
+        <button onclick="openCourseStudioModal(); closeMobileMenu()" class="mt-3 w-full py-2.5 rounded-xl bg-gradient-to-r from-accent-600 to-brand-600 text-white font-bold text-xs shadow-md flex items-center justify-center gap-2">
+          <i data-lucide="plus-circle" class="w-4 h-4"></i> Create New Course
+        </button>
+
+        <nav class="mt-4 flex flex-col gap-2">
+          <button onclick="switchView('catalog'); closeMobileMenu()" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-100 dark:hover:bg-gray-700">
+            <i data-lucide="compass" class="w-5 h-5"></i> Course Catalog
+          </button>
+          <button onclick="switchView('dashboard'); closeMobileMenu()" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-100 dark:hover:bg-gray-700">
+            <i data-lucide="layout-dashboard" class="w-5 h-5"></i> My Dashboard
+          </button>
+          <button onclick="switchView('viewer'); closeMobileMenu()" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-100 dark:hover:bg-gray-700">
+            <i data-lucide="book-open" class="w-5 h-5"></i> Active Lesson
+          </button>
+          <button onclick="switchView('sandbox'); closeMobileMenu()" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-100 dark:hover:bg-gray-700">
+            <i data-lucide="code" class="w-5 h-5"></i> Interactive Sandbox
+          </button>
+        </nav>
+      </div>
+      <div id="mobile-menu-footer" class="pt-4 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-500">
+        <!-- Dynamic via JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT CONTAINER -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+    <!-- VIEW 1: COURSE CATALOG & EXPLORER -->
+    <section id="view-catalog" class="space-y-6">
+      
+      <!-- Hero Banner -->
+      <div class="relative overflow-hidden rounded-3xl bg-gradient-to-r from-brand-900 via-brand-800 to-accent-600 p-8 sm:p-10 text-white shadow-xl">
+        <div class="relative z-10 max-w-2xl space-y-4">
+          <span class="px-3 py-1 rounded-full text-xs font-semibold bg-white/20 backdrop-blur-md text-brand-100 border border-white/10">Master Modern Tech Skills</span>
+          <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight">Learn or Teach Skills with Interactive Courses</h1>
+          <p class="text-brand-100 text-sm sm:text-base leading-relaxed">Interactive video lessons, built-in coding sandboxes, real-world projects, and instant skill assessments designed by world-class instructors.</p>
+          <div class="flex flex-wrap gap-3 pt-2">
+            <button onclick="filterCategory('All')" class="px-5 py-2.5 rounded-xl bg-white text-brand-900 font-semibold text-sm hover:bg-brand-50 transition shadow-md">Explore Catalog (<span id="total-course-count-badge">5</span>)</button>
+            <button onclick="openCourseStudioModal()" class="px-5 py-2.5 rounded-xl bg-accent-600 hover:bg-accent-700 text-white border border-white/20 font-bold text-sm transition backdrop-blur-md flex items-center gap-2 shadow-lg">
+              <i data-lucide="plus-circle" class="w-4 h-4"></i> Teach & Publish Course
+            </button>
+          </div>
+        </div>
+        <i data-lucide="sparkles" class="absolute right-6 -bottom-10 w-72 h-72 text-white/5 pointer-events-none"></i>
+      </div>
+
+      <!-- Filters & Controls Bar -->
+      <div class="bg-white dark:bg-gray-800 p-4 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col md:flex-row gap-4 items-center justify-between">
+        <!-- Category Badges -->
+        <div class="flex items-center gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0 custom-scrollbar" id="category-filters">
+          <button onclick="filterCategory('All')" class="cat-btn px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition bg-brand-600 text-white shadow-sm" data-cat="All">All Categories</button>
+          <button onclick="filterCategory('Web Dev')" class="cat-btn px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600" data-cat="Web Dev">Web Dev</button>
+          <button onclick="filterCategory('Cybersecurity')" class="cat-btn px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600" data-cat="Cybersecurity">Cybersecurity</button>
+          <button onclick="filterCategory('Cloud')" class="cat-btn px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600" data-cat="Cloud">Cloud</button>
+          <button onclick="filterCategory('Linux')" class="cat-btn px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600" data-cat="Linux">Linux</button>
+          <button onclick="filterCategory('Data Science')" class="cat-btn px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600" data-cat="Data Science">Data Science</button>
+          <button onclick="filterCategory('AI & ML')" class="cat-btn px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600" data-cat="AI & ML">AI & ML</button>
+        </div>
+
+        <!-- Level Filter Dropdown & Studio Quick Launcher -->
+        <div class="flex items-center gap-3 w-full md:w-auto justify-end">
+          <label class="text-xs font-medium text-gray-500 dark:text-gray-400 flex items-center gap-1">
+            <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5"></i> Level:
+          </label>
+          <select id="level-filter" onchange="applyFilters()" class="bg-gray-100 dark:bg-gray-700 border-none text-xs font-medium rounded-xl px-3 py-2 text-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-brand-500">
+            <option value="All">All Levels</option>
+            <option value="Beginner">Beginner</option>
+            <option value="Intermediate">Intermediate</option>
+            <option value="Advanced">Advanced</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Course Cards Grid -->
+      <div id="course-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- JS renders courses here dynamically -->
+      </div>
+    </section>
+
+    <!-- VIEW 2: INTERACTIVE LESSON VIEWER -->
+    <section id="view-viewer" class="hidden space-y-4">
+      
+      <!-- Top Title & Navigation Bar -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-gray-800 p-4 rounded-2xl border border-gray-200 dark:border-gray-700">
+        <div>
+          <div class="flex items-center gap-2 text-xs font-semibold text-brand-600 dark:text-brand-400">
+            <span id="active-course-category">Web Dev</span> &bull; <span id="active-course-title">Full-Stack React & Node Mastery</span>
+          </div>
+          <h2 id="active-lesson-title" class="text-xl font-bold text-gray-900 dark:text-white mt-0.5">Lesson 1.2: Understanding React State & Hooks</h2>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="toggleLessonCompletion()" id="btn-complete-lesson" class="px-4 py-2 rounded-xl text-xs font-semibold border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 transition flex items-center gap-1.5">
+            <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+            <span id="complete-btn-text">Mark as Complete</span>
+          </button>
+          <button onclick="switchView('sandbox')" class="px-4 py-2 rounded-xl text-xs font-semibold bg-brand-600 hover:bg-brand-700 text-white transition flex items-center gap-1.5">
+            <i data-lucide="code" class="w-4 h-4"></i>
+            <span>Practice Sandbox</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Main Lesson Interface Layout -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- Left / Center Column: Video Player, Lesson Content & Q&A -->
+        <div class="lg:col-span-8 space-y-6">
+          
+          <!-- Custom Interactive Video Player Container -->
+          <div class="relative bg-black rounded-2xl overflow-hidden shadow-xl aspect-video border border-gray-800 group" id="video-player-container">
+            <iframe id="video-iframe" class="w-full h-full border-0 hidden" src="" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
+            <div id="video-thumbnail-wrapper" class="relative w-full h-full">
+              <img id="video-thumbnail" src="https://images.unsplash.com/photo-1555066931-4365d14bab8c?auto=format&fit=crop&q=80&w=1200" alt="Video cover" class="w-full h-full object-cover opacity-60">
+              
+              <!-- GUEST / LOGGED-OUT LOCK OVERLAY -->
+              <div id="video-auth-lock" class="hidden absolute inset-0 bg-gray-900/85 backdrop-blur-md z-20 flex flex-col items-center justify-center p-6 text-center space-y-4">
+                <div class="w-16 h-16 rounded-2xl bg-brand-500/20 text-brand-400 border border-brand-500/30 flex items-center justify-center shadow-inner">
+                  <i data-lucide="lock" class="w-8 h-8"></i>
+                </div>
+                <div class="max-w-md space-y-1">
+                  <h3 class="text-xl font-bold text-white">Full Video Lesson Locked</h3>
+                  <p class="text-xs text-gray-300">Sign in or register your free Apex Academy account to access interactive video streaming, code sandboxes, and earned certificates.</p>
+                </div>
+                <div class="flex items-center gap-3 pt-2">
+                  <button onclick="openAuthModal('login')" class="px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs shadow-lg transition">Sign In to Unlock</button>
+                  <button onclick="openAuthModal('register')" class="px-5 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 font-bold text-xs transition">Create Account</button>
+                </div>
+              </div>
+
+              <!-- Center Play Overlay Button -->
+              <button id="video-play-overlay" onclick="togglePlayVideo()" class="absolute inset-0 flex items-center justify-center bg-black/30 group-hover:bg-black/20 transition">
+                <div class="w-16 h-16 rounded-full bg-brand-600/90 text-white flex items-center justify-center shadow-2xl transform scale-100 group-hover:scale-110 transition">
+                  <i id="play-icon" data-lucide="play" class="w-8 h-8 ml-1"></i>
+                </div>
+              </button>
+
+              <!-- Video Top Info Bar -->
+              <div class="absolute top-3 left-3 right-3 flex items-center justify-between text-xs text-white bg-gray-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl opacity-0 group-hover:opacity-100 transition">
+                <span class="font-medium">Apex Academy Player &bull; 1080p HD</span>
+                <span class="bg-brand-500 px-2 py-0.5 rounded text-[10px] uppercase tracking-wider font-semibold">Interactive</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Content Tabs: Transcript / Code / Resources / Q&A -->
+          <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+            <div class="flex border-b border-gray-200 dark:border-gray-700 overflow-x-auto custom-scrollbar">
+              <button onclick="switchLessonTab('overview')" id="tab-btn-overview" class="tab-btn px-5 py-3 text-xs font-semibold border-b-2 border-brand-500 text-brand-600 dark:text-brand-400 flex items-center gap-1.5 whitespace-nowrap">
+                <i data-lucide="file-text" class="w-4 h-4"></i> Lesson Notes & Code
+              </button>
+              <button onclick="switchLessonTab('transcript')" id="tab-btn-transcript" class="tab-btn px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1.5 whitespace-nowrap">
+                <i data-lucide="captions" class="w-4 h-4"></i> Interactive Transcript
+              </button>
+              <button onclick="switchLessonTab('resources')" id="tab-btn-resources" class="tab-btn px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1.5 whitespace-nowrap">
+                <i data-lucide="download" class="w-4 h-4"></i> Resources (3)
+              </button>
+              <button onclick="switchLessonTab('discussion')" id="tab-btn-discussion" class="tab-btn px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1.5 whitespace-nowrap">
+                <i data-lucide="message-square" class="w-4 h-4"></i> Discussion Q&A <span class="bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300 px-1.5 py-0.5 rounded-full text-[10px]" id="comment-count-badge">1</span>
+              </button>
+            </div>
+
+            <div class="p-6">
+              
+              <!-- Tab 1: Overview & Reading Content -->
+              <div id="lesson-tab-overview" class="space-y-4">
+                <h3 class="text-lg font-bold text-gray-900 dark:text-white">Lesson Summary & Technical Documentation</h3>
+                <div id="active-lesson-reading-content" class="text-sm text-gray-600 dark:text-gray-300 leading-relaxed space-y-3">
+                  <p>In this lesson, we explore how React handles state updates under the hood and why state immutability is essential. You'll learn to manage component state using the <code class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-brand-600 dark:text-brand-400 font-mono text-xs">useState</code> hook and trigger side effects clean-ups using <code class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-brand-600 dark:text-brand-400 font-mono text-xs">useEffect</code>.</p>
+                </div>
+
+                <!-- Syntax Highlighted Code Snippet Block -->
+                <div class="rounded-xl overflow-hidden border border-gray-700 bg-gray-900 text-gray-100 font-mono text-xs shadow-md">
+                  <div class="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700 text-gray-400">
+                    <span class="flex items-center gap-2"><i data-lucide="file-code" class="w-4 h-4 text-brand-400"></i> CounterComponent.jsx</span>
+                    <button onclick="copyCodeSnippet(this)" class="hover:text-white flex items-center gap-1"><i data-lucide="copy" class="w-3.5 h-3.5"></i> Copy</button>
+                  </div>
+                  <pre class="p-4 overflow-x-auto text-emerald-400"><code><span class="text-purple-400">import</span> React, { useState, useEffect } <span class="text-purple-400">from</span> <span class="text-amber-300">'react'</span>;
+
+<span class="text-purple-400">export default function</span> <span class="text-blue-400">Counter</span>() {
+  <span class="text-purple-400">const</span> [count, setCount] = <span class="text-blue-400">useState</span>(<span class="text-orange-400">0</span>);
+
+  <span class="text-blue-400">useEffect</span>(() => {
+    document.title = <span class="text-amber-300">`Clicked ${count} times`</span>;
+  }, [count]);
+
+  <span class="text-purple-400">return</span> (
+    <span class="text-gray-300">&lt;<span class="text-red-400">button</span> <span class="text-yellow-300">onClick</span>={() =&gt; <span class="text-blue-400">setCount</span>(count + <span class="text-orange-400">1</span>)}&gt;</span>
+      Count: {count}
+    <span class="text-gray-300">&lt;/<span class="text-red-400">button</span>&gt;</span>
+  );
+}</code></pre>
+                </div>
+              </div>
+
+              <!-- Tab 2: Transcript -->
+              <div id="lesson-tab-transcript" class="hidden space-y-3 max-h-80 overflow-y-auto custom-scrollbar pr-2">
+                <div class="p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition border border-transparent hover:border-gray-200 dark:hover:border-gray-700 flex gap-4">
+                  <span class="text-xs font-mono font-bold text-brand-500 min-w-[45px]">00:15</span>
+                  <p class="text-xs text-gray-700 dark:text-gray-300">Welcome back everyone! In this module, we are diving deep into state management in modern React applications.</p>
+                </div>
+                <div class="p-3 rounded-xl bg-brand-50 dark:bg-brand-900/20 border border-brand-200 dark:border-brand-800/40 flex gap-4">
+                  <span class="text-xs font-mono font-bold text-brand-600 dark:text-brand-400 min-w-[45px]">02:30</span>
+                  <p class="text-xs font-medium text-gray-800 dark:text-gray-100">Notice how `useState` returns an array with two elements: current value state and setter function.</p>
+                </div>
+                <div class="p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition border border-transparent hover:border-gray-200 dark:hover:border-gray-700 flex gap-4">
+                  <span class="text-xs font-mono font-bold text-brand-500 min-w-[45px]">05:10</span>
+                  <p class="text-xs text-gray-700 dark:text-gray-300">Always remember never to mutate state directly. Always use the setter function to trigger re-renders.</p>
+                </div>
+              </div>
+
+              <!-- Tab 3: Downloads & Resources -->
+              <div id="lesson-tab-resources" class="hidden space-y-3">
+                <div class="flex items-center justify-between p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition">
+                  <div class="flex items-center gap-3">
+                    <div class="p-2 rounded-lg bg-red-500/10 text-red-500"><i data-lucide="file-text" class="w-5 h-5"></i></div>
+                    <div>
+                      <p class="text-xs font-semibold text-gray-900 dark:text-white">React_Hooks_Cheatsheet.pdf</p>
+                      <p class="text-[10px] text-gray-500">PDF Document &bull; 1.8 MB</p>
+                    </div>
+                  </div>
+                  <button class="p-2 rounded-lg text-gray-500 hover:text-brand-500 hover:bg-gray-100 dark:hover:bg-gray-700"><i data-lucide="download" class="w-4 h-4"></i></button>
+                </div>
+                <div class="flex items-center justify-between p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition">
+                  <div class="flex items-center gap-3">
+                    <div class="p-2 rounded-lg bg-blue-500/10 text-blue-500"><i data-lucide="archive" class="w-5 h-5"></i></div>
+                    <div>
+                      <p class="text-xs font-semibold text-gray-900 dark:text-white">Lesson-Starter-Code.zip</p>
+                      <p class="text-[10px] text-gray-500">ZIP File &bull; 4.2 MB</p>
+                    </div>
+                  </div>
+                  <button class="p-2 rounded-lg text-gray-500 hover:text-brand-500 hover:bg-gray-100 dark:hover:bg-gray-700"><i data-lucide="download" class="w-4 h-4"></i></button>
+                </div>
+              </div>
+
+              <!-- Tab 4: Q&A Discussion -->
+              <div id="lesson-tab-discussion" class="hidden space-y-4">
+                <!-- Add Comment Input -->
+                <div class="flex gap-3">
+                  <img id="qa-user-avatar" src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=120" class="w-8 h-8 rounded-full object-cover">
+                  <div class="flex-1 flex gap-2">
+                    <input type="text" id="new-comment-input" placeholder="Ask a question or share feedback..." class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                    <button onclick="addComment()" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium transition">Post</button>
+                  </div>
+                </div>
+
+                <!-- Existing Comments Thread -->
+                <div id="comments-container" class="space-y-3 pt-2">
+                  <div class="p-3.5 rounded-xl bg-gray-50 dark:bg-gray-700/30 border border-gray-200 dark:border-gray-700 space-y-2">
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-2">
+                        <span class="text-xs font-semibold text-gray-900 dark:text-white">Sarah Chen</span>
+                        <span class="px-2 py-0.5 rounded text-[10px] bg-brand-500/10 text-brand-600 dark:text-brand-400 font-semibold">Lead Instructor</span>
+                      </div>
+                      <span class="text-[10px] text-gray-400">2 hours ago</span>
+                    </div>
+                    <p class="text-xs text-gray-600 dark:text-gray-300">When using state setters, remember to pass a callback function if your new state depends on the previous state!</p>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Course Module Navigation Sidebar & Assessment Trigger -->
+        <div class="lg:col-span-4 space-y-6">
+          
+          <!-- Course Modules Card -->
+          <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-gray-200 dark:border-gray-700">
+              <h3 class="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-2">
+                <i data-lucide="layers" class="w-4 h-4 text-brand-500"></i> Course Outline
+              </h3>
+              <span class="text-xs font-semibold text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30 px-2.5 py-1 rounded-full" id="course-overall-pct">45% Completed</span>
+            </div>
+
+            <!-- Modules Accordion List -->
+            <div class="space-y-3 custom-scrollbar max-h-[500px] overflow-y-auto pr-1" id="modules-list">
+              <!-- JS populates course chapters/lessons -->
+            </div>
+          </div>
+
+          <!-- Module End Assessment Box -->
+          <div class="bg-gradient-to-br from-indigo-900 to-accent-900 rounded-2xl p-5 text-white shadow-md space-y-3 relative overflow-hidden">
+            <div class="flex items-center gap-2 text-amber-400 text-xs font-bold uppercase tracking-wider">
+              <i data-lucide="award" class="w-4 h-4"></i> Knowledge Check
+            </div>
+            <h4 class="font-bold text-base">Module Quiz Assessment</h4>
+            <p class="text-xs text-indigo-200">Test your comprehension to earn Module Certification badge.</p>
+            <button onclick="openQuizModal()" class="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-gray-900 font-bold text-xs transition shadow-md flex items-center justify-center gap-2">
+              <i data-lucide="play-circle" class="w-4 h-4"></i> Start Quiz Assessment
+            </button>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- VIEW 3: INTERACTIVE CODE / NOTE SANDBOX -->
+    <section id="view-sandbox" class="hidden space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-gray-800 p-4 rounded-2xl border border-gray-200 dark:border-gray-700">
+        <div>
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+            <i data-lucide="code-2" class="w-6 h-6 text-brand-500"></i> Interactive Code & Notes Playground
+          </h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Test real-time code execution or take personal lesson notes synced directly to your active account.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="runSandboxCode()" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition flex items-center gap-1.5">
+            <i data-lucide="play" class="w-4 h-4"></i> Run Code
+          </button>
+          <button onclick="saveStudentNotes()" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-sm transition flex items-center gap-1.5">
+            <i data-lucide="save" class="w-4 h-4"></i> Save Notes
+          </button>
+        </div>
+      </div>
+
+      <!-- Split Screen Workbench -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Left: Code Editor -->
+        <div class="bg-gray-900 rounded-2xl border border-gray-800 flex flex-col overflow-hidden shadow-xl min-h-[420px]">
+          <div class="flex items-center justify-between px-4 py-3 bg-gray-800/80 border-b border-gray-700 text-xs text-gray-300">
+            <span class="font-mono flex items-center gap-2"><i data-lucide="file-terminal" class="w-4 h-4 text-emerald-400"></i> script.js / HTML</span>
+            <span class="text-[10px] bg-gray-700 px-2 py-0.5 rounded text-gray-400">Live Preview Engine</span>
+          </div>
+          <textarea id="sandbox-code-input" class="w-full flex-1 bg-transparent p-4 text-emerald-400 font-mono text-xs focus:outline-none resize-none leading-relaxed" spellcheck="false">// Interactive JavaScript / HTML Sandbox
+function calculateLearningStreak(days) {
+  const bonus = days > 5 ? 100 : 50;
+  return `Awesome! Streak: ${days} Days | Bonus XP: +${bonus}`;
+}
+
+const result = calculateLearningStreak(7);
+document.getElementById("output").innerHTML = "<h1>" + result + "</h1>";
+console.log("Sandbox executed successfully!");
+</textarea>
+        </div>
+
+        <!-- Right: Execution Output & Personal Notepad -->
+        <div class="space-y-6 flex flex-col">
+          <!-- Output Box -->
+          <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm space-y-2 flex-1">
+            <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 pb-2">
+              <span class="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5"><i data-lucide="monitor" class="w-4 h-4 text-brand-500"></i> Console / Rendered Output</span>
+              <button onclick="clearSandboxOutput()" class="text-[10px] text-gray-400 hover:text-gray-600">Clear</button>
+            </div>
+            <div id="sandbox-output-view" class="p-3 bg-gray-50 dark:bg-gray-900 rounded-xl font-mono text-xs text-gray-800 dark:text-gray-200 min-h-[140px] border border-gray-200 dark:border-gray-700">
+              <div id="output">Result will render here when you click "Run Code"...</div>
+            </div>
+          </div>
+
+          <!-- Lesson Notes Notepad -->
+          <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm space-y-2">
+            <span class="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5"><i data-lucide="notebook-pen" class="w-4 h-4 text-accent-500"></i> Personal Study Notes</span>
+            <textarea id="student-notes-area" placeholder="Jot down key takeaways, questions for instructor, or code snippets..." class="w-full h-32 bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-600 rounded-xl p-3 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-brand-500 focus:outline-none resize-none"></textarea>
+            <p id="notes-status" class="text-[10px] text-emerald-500 hidden font-medium">Notes auto-saved to cloud memory!</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 4: STUDENT & INSTRUCTOR DASHBOARD -->
+    <section id="view-dashboard" class="hidden space-y-6">
+      
+      <!-- Welcome Header -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 id="dash-welcome-title" class="text-2xl font-bold text-gray-900 dark:text-white">Welcome back, Alex! 👋</h2>
+          <p id="dash-welcome-sub" class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">You've completed 75% of your weekly study goal. Keep up the momentum!</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="openCourseStudioModal()" class="px-4 py-2 rounded-xl bg-gradient-to-r from-accent-600 to-brand-600 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-md">
+            <i data-lucide="plus-circle" class="w-4 h-4"></i> Add New Course
+          </button>
+          <button onclick="switchView('catalog')" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold transition flex items-center gap-1.5">
+            <i data-lucide="compass" class="w-4 h-4"></i> Browse Catalog
+          </button>
+        </div>
+      </div>
+
+      <!-- INSTRUCTOR PROMO BANNER (Appears for Sarah Chen or Instructor role) -->
+      <div id="instructor-studio-banner" class="hidden p-6 rounded-2xl bg-gradient-to-r from-accent-900 via-purple-900 to-brand-900 text-white border border-accent-500/30 shadow-lg flex flex-col md:flex-row items-center justify-between gap-4">
+        <div class="space-y-1">
+          <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-accent-500/20 border border-accent-400/30 text-accent-300">Instructor Studio Active</span>
+          <h3 class="text-lg font-bold">Ready to publish your next masterpiece course?</h3>
+          <p class="text-xs text-purple-200">Design dynamic modules, embed video lessons, build custom quiz assessments, and publish directly to the global student body.</p>
+        </div>
+        <button onclick="openCourseStudioModal()" class="px-5 py-2.5 rounded-xl bg-white text-gray-900 font-bold text-xs hover:bg-gray-100 transition whitespace-nowrap shadow-md">
+          Open Course Studio
+        </button>
+      </div>
+
+      <!-- Quick Metrics Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="p-4 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-brand-500/10 text-brand-600 dark:text-brand-400 flex items-center justify-center">
+            <i data-lucide="book-marked" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 font-medium">Enrolled Courses</p>
+            <h3 id="dash-enrolled-count" class="text-xl font-bold text-gray-900 dark:text-white">2 Active</h3>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+            <i data-lucide="flame" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 font-medium">Current Streak</p>
+            <h3 id="dash-streak-count" class="text-xl font-bold text-gray-900 dark:text-white">5 Days 🔥</h3>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+            <i data-lucide="clock" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 font-medium">Study Time</p>
+            <h3 id="dash-study-time" class="text-xl font-bold text-gray-900 dark:text-white">14.5 Hrs</h3>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-accent-500/10 text-accent-500 flex items-center justify-center">
+            <i data-lucide="award" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 font-medium">Certificates</p>
+            <h3 id="dash-cert-count" class="text-xl font-bold text-gray-900 dark:text-white">3 Earned</h3>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Dashboard Grid: Enrolled Courses & Analytics -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- Enrolled Courses List -->
+        <div class="lg:col-span-8 space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="font-bold text-base text-gray-900 dark:text-white flex items-center gap-2">
+              <i data-lucide="play-circle" class="w-5 h-5 text-brand-500"></i> Continue Learning
+            </h3>
+          </div>
+
+          <div id="enrolled-courses-container" class="space-y-4">
+            <!-- Populated via JS -->
+          </div>
+        </div>
+
+        <!-- Analytics & Earned Badges Sidebar -->
+        <div class="lg:col-span-4 space-y-6">
+          
+          <!-- Analytics Chart Box -->
+          <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm space-y-3">
+            <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 pb-3">
+              <h4 class="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-2">
+                <i data-lucide="bar-chart-2" class="w-4 h-4 text-brand-500"></i> Weekly Activity
+              </h4>
+              <span class="text-[10px] text-gray-400">Hours / Day</span>
+            </div>
+            <div class="h-44">
+              <canvas id="studyTimeChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Earned Badges Showcase -->
+          <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm space-y-3">
+            <h4 class="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-2 border-b border-gray-200 dark:border-gray-700 pb-3">
+              <i data-lucide="shield-check" class="w-4 h-4 text-amber-500"></i> Achievements & Badges
+            </h4>
+
+            <div class="grid grid-cols-3 gap-3">
+              <div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center flex flex-col items-center gap-1">
+                <div class="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center text-xs font-bold">⚡</div>
+                <span class="text-[10px] font-bold text-gray-800 dark:text-gray-200">5-Day Streak</span>
+              </div>
+              <div class="p-3 rounded-xl bg-brand-500/10 border border-brand-500/20 text-center flex flex-col items-center gap-1">
+                <div class="w-8 h-8 rounded-full bg-brand-500 text-white flex items-center justify-center text-xs font-bold">⚛️</div>
+                <span class="text-[10px] font-bold text-gray-800 dark:text-gray-200">React Ninja</span>
+              </div>
+              <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center flex flex-col items-center gap-1">
+                <div class="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-bold">🎯</div>
+                <span class="text-[10px] font-bold text-gray-800 dark:text-gray-200">Quiz Master</span>
+              </div>
+            </div>
+
+            <button onclick="showCertificateModal()" class="w-full py-2 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-xs font-semibold text-gray-700 dark:text-gray-200 transition text-center block">
+              View Digital Certificates
+            </button>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODAL 1: COURSE CREATOR STUDIO SUITE -->
+  <div id="course-studio-modal" class="hidden fixed inset-0 z-50 bg-gray-900/80 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-3xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden relative">
+      
+      <!-- Studio Header -->
+      <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700/80 flex items-center justify-between bg-gray-50 dark:bg-gray-800/80">
+        <div class="flex items-center gap-2">
+          <div id="studio-header-icon" class="p-2 rounded-xl bg-gradient-to-tr from-brand-600 to-accent-500 text-white">
+            <i data-lucide="plus-circle" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 id="studio-modal-title" class="text-lg font-bold text-gray-900 dark:text-white leading-tight">Course Creator Studio</h3>
+            <p id="studio-modal-sub" class="text-xs text-gray-500 dark:text-gray-400">Design, structure, and publish a new interactive course</p>
+          </div>
+        </div>
+        <button onclick="closeCourseStudioModal()" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Course Selection Dropdown (For Edit Mode) -->
+      <div id="studio-course-selector-bar" class="hidden px-6 py-3 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300">
+          <i data-lucide="edit-3" class="w-4 h-4 text-amber-500"></i>
+          <span>Select Course to Edit:</span>
+        </div>
+        <select id="studio-select-course-dropdown" onchange="loadCourseIntoStudio(this.value)" class="flex-1 max-w-md px-3 py-1.5 bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-700 rounded-xl text-xs font-semibold text-gray-800 dark:text-gray-200 focus:outline-none">
+          <!-- Populated via JS -->
+        </select>
+      </div>
+
+      <!-- Studio Progress Wizard Steps Nav -->
+      <div class="px-6 py-3 bg-gray-100 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-700/80 flex items-center justify-around text-xs font-bold">
+        <button onclick="switchStudioStep(1)" id="studio-step-btn-1" class="flex items-center gap-2 text-brand-600 dark:text-brand-400">
+          <span class="w-6 h-6 rounded-full bg-brand-600 text-white flex items-center justify-center text-[11px]">1</span>
+          <span>1. Basic Info</span>
+        </button>
+        <div class="w-12 h-0.5 bg-gray-300 dark:bg-gray-700"></div>
+        <button onclick="switchStudioStep(2)" id="studio-step-btn-2" class="flex items-center gap-2 text-gray-400">
+          <span class="w-6 h-6 rounded-full bg-gray-300 dark:bg-gray-700 text-gray-600 dark:text-gray-300 flex items-center justify-center text-[11px]">2</span>
+          <span>2. Curriculum & Lessons</span>
+        </button>
+        <div class="w-12 h-0.5 bg-gray-300 dark:bg-gray-700"></div>
+        <button onclick="switchStudioStep(3)" id="studio-step-btn-3" class="flex items-center gap-2 text-gray-400">
+          <span class="w-6 h-6 rounded-full bg-gray-300 dark:bg-gray-700 text-gray-600 dark:text-gray-300 flex items-center justify-center text-[11px]">3</span>
+          <span>3. Quizzes & Publish</span>
+        </button>
+      </div>
+
+      <!-- Studio Main Form Scrollable Area -->
+      <div class="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6">
+        
+        <!-- STEP 1: BASIC COURSE INFO -->
+        <div id="studio-step-1" class="space-y-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="space-y-1 md:col-span-2">
+              <label class="text-xs font-semibold text-gray-700 dark:text-gray-300">Course Title *</label>
+              <input type="text" id="new-course-title" placeholder="e.g., Ethical Hacking & Cybersecurity Foundations" class="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+            </div>
+
+            <div class="space-y-1 md:col-span-2">
+              <label class="text-xs font-semibold text-gray-700 dark:text-gray-300">Subtitle / Brief Description</label>
+              <input type="text" id="new-course-subtitle" placeholder="e.g., Learn network security, penetration testing tools, and threat mitigation." class="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+            </div>
+
+            <div class="space-y-1">
+              <label class="text-xs font-semibold text-gray-700 dark:text-gray-300">Category *</label>
+              <select id="new-course-category" class="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                <option value="Web Dev">Web Dev</option>
+                <option value="Cybersecurity">Cybersecurity</option>
+                <option value="Cloud">Cloud</option>
+                <option value="Linux">Linux</option>
+                <option value="Data Science">Data Science</option>
+                <option value="AI & ML">AI & ML</option>
+                <option value="UI/UX Design">UI/UX Design</option>
+                <option value="Business">Business</option>
+              </select>
+            </div>
+
+            <div class="space-y-1">
+              <label class="text-xs font-semibold text-gray-700 dark:text-gray-300">Difficulty Level *</label>
+              <select id="new-course-level" class="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                <option value="Beginner">Beginner</option>
+                <option value="Intermediate">Intermediate</option>
+                <option value="Advanced">Advanced</option>
+              </select>
+            </div>
+
+            <div class="space-y-1">
+              <label class="text-xs font-semibold text-gray-700 dark:text-gray-300">Estimated Duration (Hours)</label>
+              <input type="text" id="new-course-duration" placeholder="e.g., 14.5 Hours" value="12.0 Hours" class="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+            </div>
+
+            <div class="space-y-1">
+              <label class="text-xs font-semibold text-gray-700 dark:text-gray-300">Instructor Name</label>
+              <input type="text" id="new-course-instructor" placeholder="Instructor Name" value="Sarah Chen" class="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+            </div>
+
+            <div class="space-y-1 md:col-span-2">
+              <label class="text-xs font-semibold text-gray-700 dark:text-gray-300">Thumbnail Image URL</label>
+              <div class="flex gap-2">
+                <input type="text" id="new-course-thumbnail" onkeyup="updateStudioThumbnailPreview(this.value)" placeholder="https://images.unsplash.com/photo-..." value="https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=600" class="flex-1 px-3.5 py-2.5 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+              </div>
+              <div class="mt-2 relative rounded-xl overflow-hidden aspect-video border border-gray-200 dark:border-gray-700 max-w-xs">
+                <img id="studio-thumb-preview" src="https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=600" class="w-full h-full object-cover">
+                <span class="absolute bottom-2 left-2 text-[10px] bg-black/70 text-white px-2 py-0.5 rounded">Preview</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP 2: MODULE & LESSON BUILDER -->
+        <div id="studio-step-2" class="hidden space-y-4">
+          <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 pb-3">
+            <div>
+              <h4 class="font-bold text-sm text-gray-900 dark:text-white">Curriculum Modules & Video Lessons</h4>
+              <p class="text-xs text-gray-500">Organize your course into modules and add individual video lessons.</p>
+            </div>
+            <button onclick="addStudioModule()" class="px-3 py-1.5 rounded-xl bg-brand-600 text-white font-semibold text-xs hover:bg-brand-700 transition flex items-center gap-1">
+              <i data-lucide="plus" class="w-4 h-4"></i> Add Module
+            </button>
+          </div>
+
+          <!-- Dynamic Modules Container -->
+          <div id="studio-modules-container" class="space-y-4">
+            <!-- Dynamically populated via JS -->
+          </div>
+        </div>
+
+        <!-- STEP 3: QUIZ CREATOR & PUBLISH -->
+        <div id="studio-step-3" class="hidden space-y-4">
+          <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 pb-3">
+            <div>
+              <h4 class="font-bold text-sm text-gray-900 dark:text-white">Module Assessment & Quiz Builder</h4>
+              <p class="text-xs text-gray-500">Add multiple-choice questions to test student comprehension upon module finish.</p>
+            </div>
+            <button onclick="addStudioQuizQuestion()" class="px-3 py-1.5 rounded-xl bg-amber-500 text-gray-900 font-bold text-xs hover:bg-amber-600 transition flex items-center gap-1">
+              <i data-lucide="plus" class="w-4 h-4"></i> Add Question
+            </button>
+          </div>
+
+          <div id="studio-quizzes-container" class="space-y-4">
+            <!-- Dynamically populated via JS -->
+          </div>
+        </div>
+
+      </div>
+
+        <!-- Studio Footer Actions -->
+      <div class="px-6 py-4 bg-gray-50 dark:bg-gray-800/80 border-t border-gray-200 dark:border-gray-700/80 flex items-center justify-between">
+        <button onclick="closeCourseStudioModal()" class="px-4 py-2 rounded-xl bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-xs font-semibold transition">Cancel</button>
+        
+        <div class="flex items-center gap-2">
+          <button id="studio-prev-btn" onclick="prevStudioStep()" class="hidden px-4 py-2 rounded-xl bg-gray-100 dark:bg-gray-700 text-xs font-semibold hover:bg-gray-200 transition">Back</button>
+          <button id="studio-next-btn" onclick="nextStudioStep()" class="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition">Next Step</button>
+          <button id="studio-publish-btn" onclick="publishNewCourse()" class="hidden px-6 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-extrabold shadow-md transition flex items-center gap-1.5">
+            <i data-lucide="check-circle" class="w-4 h-4"></i> <span id="studio-submit-btn-text">Publish Course</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MODAL 2: INTERACTIVE AUTHENTICATION OVERLAY MODAL -->
+  <div id="auth-modal" class="hidden fixed inset-0 z-50 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-700 space-y-6 relative">
+      <button onclick="closeAuthModal()" class="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <div class="text-center space-y-1">
+        <h3 id="modal-auth-title" class="text-xl font-bold text-gray-900 dark:text-white">Sign In to Apex Academy</h3>
+        <p id="modal-auth-sub" class="text-xs text-gray-500">Access full interactive course content & tracking</p>
+      </div>
+
+      <div class="flex rounded-xl bg-gray-100 dark:bg-gray-700/60 p-1 border border-gray-200 dark:border-gray-700">
+        <button id="modal-tab-login" onclick="setModalAuthTab('login')" class="flex-1 py-2 text-xs font-bold rounded-lg transition bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm">
+          Sign In
+        </button>
+        <button id="modal-tab-register" onclick="setModalAuthTab('register')" class="flex-1 py-2 text-xs font-bold rounded-lg transition text-gray-500 dark:text-gray-400">
+          Create Account
+        </button>
+      </div>
+
+      <form id="modal-auth-form" onsubmit="handleModalAuthSubmit(event)" class="space-y-4">
+        <div id="modal-field-name" class="hidden space-y-1">
+          <label class="text-xs font-semibold text-gray-700 dark:text-gray-300">Full Name</label>
+          <input type="text" id="modal-input-name" placeholder="Alex Rivera" class="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+        </div>
+
+        <div class="space-y-1">
+          <label class="text-xs font-semibold text-gray-700 dark:text-gray-300">Email Address</label>
+          <input type="email" id="modal-input-email" required placeholder="alex.rivera@academy.io" class="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+        </div>
+
+        <div class="space-y-1">
+          <div class="flex justify-between items-center">
+            <label class="text-xs font-semibold text-gray-700 dark:text-gray-300">Password</label>
+            <button type="button" onclick="openForgotPasswordModal()" class="text-[10px] font-semibold text-brand-600 dark:text-brand-400 hover:underline">Forgot?</button>
+          </div>
+          <input type="password" id="modal-input-password" required placeholder="••••••••" class="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+        </div>
+
+        <button type="submit" id="modal-auth-submit-btn" class="w-full py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs shadow-md transition">
+          Sign In
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 3: FORGOT PASSWORD FLOW -->
+  <div id="forgot-password-modal" class="hidden fixed inset-0 z-50 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-700 space-y-4 relative">
+      <button onclick="closeForgotPasswordModal()" class="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <div class="text-center space-y-1">
+        <div class="w-10 h-10 rounded-full bg-brand-500/10 text-brand-500 flex items-center justify-center mx-auto mb-2">
+          <i data-lucide="key-round" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-lg font-bold text-gray-900 dark:text-white">Reset Password</h3>
+        <p class="text-xs text-gray-500">Enter your email and we'll send a password recovery link.</p>
+      </div>
+
+      <form onsubmit="handleForgotPassword(event)" class="space-y-3">
+        <input type="email" id="forgot-email-input" required placeholder="name@example.com" class="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+        <button type="submit" class="w-full py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs transition">
+          Send Recovery Email
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 4: INTERACTIVE QUIZ ASSESSMENT -->
+  <div id="quiz-modal" class="hidden fixed inset-0 z-50 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-700 space-y-6 relative">
+      <button onclick="closeQuizModal()" class="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <div id="quiz-intro">
+        <span class="px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 border border-amber-500/20">Module Knowledge Check</span>
+        <h3 id="quiz-modal-title" class="text-xl font-bold text-gray-900 dark:text-white mt-2">React Hooks & Fundamentals Quiz</h3>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Answer multiple-choice questions to test your comprehension and earn your certificate checkpoint.</p>
+        
+        <button onclick="startQuizQuestions()" class="mt-6 w-full py-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm transition">
+          Begin Assessment
+        </button>
+      </div>
+
+      <div id="quiz-active" class="hidden space-y-5">
+        <div class="flex items-center justify-between text-xs font-semibold text-gray-500">
+          <span id="quiz-step-indicator">Question 1 of 3</span>
+          <span id="quiz-timer" class="text-brand-500">Time left: 02:00</span>
+        </div>
+
+        <h4 id="quiz-question-text" class="text-base font-bold text-gray-900 dark:text-white"></h4>
+
+        <div id="quiz-options-container" class="space-y-2.5">
+          <!-- Dynamically populated options -->
+        </div>
+
+        <div id="quiz-feedback" class="hidden p-3 rounded-xl text-xs font-medium"></div>
+
+        <div class="flex justify-end pt-2">
+          <button id="btn-next-question" onclick="nextQuizQuestion()" disabled class="px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs font-bold transition">
+            Next Question
+          </button>
+        </div>
+      </div>
+
+      <div id="quiz-result" class="hidden text-center space-y-4 py-4">
+        <div class="w-16 h-16 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center mx-auto text-2xl">
+          🎉
+        </div>
+        <h3 class="text-2xl font-bold text-gray-900 dark:text-white">Assessment Passed!</h3>
+        <p class="text-xs text-gray-500 dark:text-gray-400">You scored <span id="quiz-final-score" class="font-bold text-emerald-500">100%</span>. Your learning progress for this module has been updated.</p>
+        <button onclick="closeQuizModal()" class="px-6 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition">
+          Return to Lesson
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 5: CERTIFICATE SHOWCASE -->
+  <div id="cert-modal" class="hidden fixed inset-0 z-50 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-700 space-y-6 relative text-center">
+      <button onclick="closeCertModal()" class="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <div class="border-8 border-brand-500/20 p-8 rounded-2xl bg-gradient-to-br from-brand-50/50 to-amber-50/50 dark:from-gray-900 dark:to-gray-800 relative">
+        <div class="text-brand-600 dark:text-brand-400 text-xs font-bold tracking-widest uppercase mb-1">Official Academy Certification</div>
+        <h2 class="text-2xl font-extrabold text-gray-900 dark:text-white">Certificate of Completion</h2>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">This is proudly presented to</p>
+        <h3 id="cert-user-name" class="text-xl font-bold text-brand-600 dark:text-brand-400 mt-1 underline decoration-amber-400">Alex Rivera</h3>
+        <p class="text-xs text-gray-600 dark:text-gray-300 mt-3 max-w-md mx-auto">For successfully completing all requirements & project assessments for <br><span class="font-semibold text-gray-900 dark:text-white" id="cert-course-title">Full-Stack React & Node Mastery</span>.</p>
+        <div class="flex justify-between items-center mt-8 text-[10px] text-gray-400 border-t border-gray-200 dark:border-gray-700 pt-4">
+          <span>Issued: Oct 2026</span>
+          <span class="font-mono">ID: APX-9823-2026</span>
+          <span>Apex Academy Board</span>
+        </div>
+      </div>
+
+      <div class="flex justify-center gap-3">
+        <button onclick="closeCertModal()" class="px-5 py-2 rounded-xl bg-gray-200 dark:bg-gray-700 text-xs font-semibold">Close</button>
+        <button onclick="showToast('Downloading official certificate PDF...')" class="px-5 py-2 rounded-xl bg-brand-600 text-white text-xs font-semibold hover:bg-brand-700 transition flex items-center gap-1.5">
+          <i data-lucide="download" class="w-4 h-4"></i> Download PDF
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- JAVASCRIPT LOGIC ENGINE -->
+  <script>
+    // --- PRESET USER PERSONAS ---
+    const PRESET_USERS = {
+      student1: {
+        id: 'usr_student1',
+        name: 'Alex Rivera',
+        email: 'alex.rivera@academy.io',
+        role: 'Pro Student',
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=120',
+        xp: 1450,
+        streak: 5,
+        studyHours: 14.5,
+        enrolledIds: ['c1', 'c2'],
+        certificatesCount: 3
+      },
+      instructor1: {
+        id: 'usr_instructor1',
+        name: 'Sarah Chen',
+        email: 'sarah.chen@academy.io',
+        role: 'Lead Instructor',
+        avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=120',
+        xp: 4200,
+        streak: 12,
+        studyHours: 42.0,
+        enrolledIds: ['c1', 'c3', 'c4'],
+        certificatesCount: 8
+      }
+    };
+
+    // --- MOCK INITIAL COURSES DATA ---
+    const INITIAL_COURSES = [
+      {
+        id: 'c1',
+        title: 'Full-Stack React & Node Mastery',
+        category: 'Web Dev',
+        level: 'Intermediate',
+        duration: '18.5 Hours',
+        rating: '4.9',
+        students: '12,400',
+        thumbnail: 'https://images.unsplash.com/photo-1633356122544-f134324a6cee?auto=format&fit=crop&q=80&w=600',
+        progress: 45,
+        instructor: 'Sarah Chen',
+        modules: [
+          {
+            title: 'Module 1: React Fundamentals & Hooks',
+            lessons: [
+              { id: 'l1', title: '1.1 Introduction to JSX & Components', duration: '10:15', videoUrl: 'https://www.youtube.com/embed/bMknfKXIFA8', reading: 'JSX allows us to write HTML-like structures inside JavaScript files. It makes writing React templates intuitive and declarative.', completed: true },
+              { id: 'l2', title: '1.2 Understanding React State & Hooks', duration: '12:40', videoUrl: 'https://www.youtube.com/embed/TNhaISOUy68', reading: 'State allows components to retain memory and re-render dynamically when data changes. Use the useState hook to attach local state to components.', completed: false, active: true },
+              { id: 'l3', title: '1.3 Effect Hook & Lifecycle Management', duration: '15:20', videoUrl: 'https://www.youtube.com/embed/0ZJgOiR4L7M', reading: 'The useEffect hook lets you perform side effects in function components, such as fetching data, subscribing to services, or manually manipulating the DOM.', completed: false }
+            ]
+          },
+          {
+            title: 'Module 2: Node.js REST API Backend',
+            lessons: [
+              { id: 'l4', title: '2.1 Express Server Setup & Routing', duration: '18:00', videoUrl: 'https://www.youtube.com/embed/L72fhGm1tfE', reading: 'Express is a minimal and flexible Node.js web application framework that provides a robust set of features for web and mobile applications.', completed: false }
+            ]
+          }
+        ],
+        quizzes: [
+          {
+            question: "What is the primary rule when using React Hooks like useState?",
+            options: [
+              "They can be called inside loop iterations",
+              "They must only be called at the top level of React function components",
+              "They should be called inside asynchronous functions",
+              "They can only be used in Class components"
+            ],
+            answer: 1
+          },
+          {
+            question: "How do you trigger a side effect clean-up function in useEffect?",
+            options: [
+              "Call return() explicitly inside component body",
+              "Pass cleanUp: true as an argument",
+              "Return a function from inside the useEffect callback",
+              "Set state value to null"
+            ],
+            answer: 2
+          }
+        ]
+      },
+      {
+        id: 'c2',
+        title: 'Ethical Hacking & Cybersecurity Foundations',
+        category: 'Cybersecurity',
+        level: 'Beginner',
+        duration: '16.0 Hours',
+        rating: '4.9',
+        students: '9,150',
+        thumbnail: 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=600',
+        progress: 10,
+        instructor: 'Sarah Chen',
+        modules: [
+          {
+            title: 'Module 1: Network Security & Threat Analysis',
+            lessons: [
+              { id: 'sec1', title: '1.1 Introduction to Penetration Testing', duration: '14:20', videoUrl: 'https://www.youtube.com/embed/3Kq1MIfTWCE', reading: 'Ethical hacking involves authorized attempts to gain unauthorized access to a computer system, application, or data.', completed: true }
+            ]
+          }
+        ],
+        quizzes: [
+          {
+            question: "Which port is used by default for secure HTTPS communication?",
+            options: ["80", "21", "443", "8080"],
+            answer: 2
+          }
+        ]
+      },
+      {
+        id: 'c3',
+        title: 'AWS Cloud Architect & DevOps Pipeline',
+        category: 'Cloud',
+        level: 'Advanced',
+        duration: '22.0 Hours',
+        rating: '4.8',
+        students: '6,400',
+        thumbnail: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=600',
+        progress: 0,
+        instructor: 'David K.',
+        modules: [
+          {
+            title: 'Module 1: AWS EC2 & Cloud Architecture',
+            lessons: [
+              { id: 'aws1', title: '1.1 Provisioning EC2 Instances', duration: '18:10', videoUrl: 'https://www.youtube.com/embed/3Kq1MIfTWCE', reading: 'Amazon Elastic Compute Cloud (Amazon EC2) offers reliable, scalable compute capacity on demand.', completed: false }
+            ]
+          }
+        ],
+        quizzes: []
+      },
+      {
+        id: 'c4',
+        title: 'Linux System Administration & Bash Scripting',
+        category: 'Linux',
+        level: 'Intermediate',
+        duration: '14.0 Hours',
+        rating: '4.9',
+        students: '11,200',
+        thumbnail: 'https://images.unsplash.com/photo-1629654297299-c8506221ca97?auto=format&fit=crop&q=80&w=600',
+        progress: 0,
+        instructor: 'Marcus Sterling',
+        modules: [],
+        quizzes: []
+      },
+      {
+        id: 'c5',
+        title: 'Python for Data Science & Machine Learning',
+        category: 'Data Science',
+        level: 'Beginner',
+        duration: '24.0 Hours',
+        rating: '4.8',
+        students: '8,900',
+        thumbnail: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&q=80&w=600',
+        progress: 0,
+        instructor: 'Dr. Michael Vance',
+        modules: [],
+        quizzes: []
+      }
+    ];
+
+    // --- GLOBAL APPLICATION STATE ---
+    let coursesData = [];
+    let currentUser = null;
+    let currentView = 'catalog';
+    let currentCategoryFilter = 'All';
+    let searchQuery = '';
+    let currentActiveCourse = null;
+    let activeLessonObj = null;
+    let isCurrentLessonCompleted = false;
+
+    // Studio Builder Temporary State
+    let studioCurrentStep = 1;
+    let studioModulesList = [];
+    let studioQuizzesList = [];
+    let isStudioEditMode = false;
+    let editingCourseId = null;
+
+    // Quiz Assessment Modal State
+    let quizCurrentStep = 0;
+    let quizSelectedOption = null;
+    let quizScore = 0;
+    let activeQuizQuestions = [];
+
+    // --- INITIALIZATION ---
+    window.onload = function() {
+      // 1. Load Courses Data from localStorage or fallback
+      const savedCourses = localStorage.getItem('apex_academy_courses');
+      if (savedCourses) {
+        try { coursesData = JSON.parse(savedCourses); } catch(e) { coursesData = INITIAL_COURSES; }
+      } else {
+        coursesData = INITIAL_COURSES;
+      }
+
+      // 2. Load User Persona
+      const savedUser = localStorage.getItem('apex_academy_user');
+      if (savedUser) {
+        try { currentUser = JSON.parse(savedUser); } catch(e) { currentUser = PRESET_USERS.student1; }
+      } else {
+        currentUser = PRESET_USERS.student1;
+      }
+
+      currentActiveCourse = coursesData[0];
+      if (currentActiveCourse && currentActiveCourse.modules && currentActiveCourse.modules[0]) {
+        activeLessonObj = currentActiveCourse.modules[0].lessons[0];
+      }
+
+      if (window.lucide) {
+        lucide.createIcons();
+      }
+      updateAuthUI();
+      renderCourseGrid();
+      renderEnrolledCourses();
+      renderModulesSidebar();
+      initAnalyticsChart();
+      setupEventListeners();
+    };
+
+    // --- AUTHENTICATION & PERSONA MANAGEMENT ---
+    function updateAuthUI() {
+      const container = document.getElementById('auth-state-container');
+      const videoLock = document.getElementById('video-auth-lock');
+      const mobileFooter = document.getElementById('mobile-menu-footer');
+      const studioBtnHeader = document.getElementById('header-instructor-actions');
+      const studioBannerDash = document.getElementById('instructor-studio-banner');
+      const dropStudioOpt = document.getElementById('dropdown-create-course-option');
+
+      const isInstructor = currentUser && (currentUser.role.includes('Instructor') || currentUser.role.includes('Admin'));
+
+      if (isInstructor) {
+        if (studioBtnHeader) studioBtnHeader.classList.remove('hidden');
+        if (studioBannerDash) studioBannerDash.classList.remove('hidden');
+        if (dropStudioOpt) dropStudioOpt.classList.remove('hidden');
+      } else {
+        if (studioBtnHeader) studioBtnHeader.classList.add('hidden');
+        if (studioBannerDash) studioBannerDash.classList.add('hidden');
+        if (dropStudioOpt) dropStudioOpt.classList.add('hidden');
+      }
+
+      if (currentUser && currentUser.role !== 'Guest') {
+        if (videoLock) videoLock.classList.add('hidden');
+        if (container) {
+          container.innerHTML = `
+            <div class="relative">
+              <button onclick="toggleProfileDropdown()" class="flex items-center gap-2 p-1 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                <img src="${currentUser.avatar}" alt="${currentUser.name}" class="w-8 h-8 rounded-full object-cover border-2 border-brand-500">
+                <span class="hidden md:inline text-xs font-semibold text-gray-800 dark:text-gray-200">${currentUser.name}</span>
+                <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-gray-400"></i>
+              </button>
+            </div>
+          `;
+        }
+        if (mobileFooter) {
+          mobileFooter.innerHTML = `
+            <div class="flex items-center gap-3">
+              <img src="${currentUser.avatar}" class="w-8 h-8 rounded-full object-cover">
+              <div>
+                <p class="font-bold text-gray-900 dark:text-white">${currentUser.name}</p>
+                <p class="text-[10px] text-brand-500">${currentUser.role}</p>
+              </div>
+            </div>
+          `;
+        }
+      } else {
+        if (videoLock) videoLock.classList.remove('hidden');
+        if (container) {
+          container.innerHTML = `
+            <button onclick="openAuthModal('login')" class="px-3 py-1.5 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">Sign In</button>
+            <button onclick="openAuthModal('register')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 hover:bg-brand-700 text-white shadow-sm">Register</button>
+          `;
+        }
+        if (mobileFooter) {
+          mobileFooter.innerHTML = `<button onclick="openAuthModal('login'); closeMobileMenu()" class="w-full py-2 bg-brand-600 text-white rounded-xl text-xs font-bold">Sign In to Account</button>`;
+        }
+      }
+
+      const selector = document.getElementById('persona-selector');
+      if (selector) {
+        if (currentUser.id === 'usr_student1') selector.value = 'student1';
+        else if (currentUser.id === 'usr_instructor1') selector.value = 'instructor1';
+        else selector.value = 'guest';
+      }
+
+      if (window.lucide) {
+        lucide.createIcons();
+      }
+    }
+
+    function toggleProfileDropdown() {
+      const dropdown = document.getElementById('profile-dropdown');
+      if (dropdown) dropdown.classList.toggle('hidden');
+    }
+
+    function closeDropdowns() {
+      const dropdown = document.getElementById('profile-dropdown');
+      if (dropdown) dropdown.classList.add('hidden');
+    }
+
+    function switchPersona(val) {
+      if (val === 'student1') {
+        currentUser = PRESET_USERS.student1;
+      } else if (val === 'instructor1') {
+        currentUser = PRESET_USERS.instructor1;
+      } else {
+        currentUser = { id: 'usr_guest', name: 'Guest User', role: 'Guest', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=120', xp: 0, streak: 0, studyHours: 0, enrolledIds: [], certificatesCount: 0 };
+      }
+      localStorage.setItem('apex_academy_user', JSON.stringify(currentUser));
+      updateAuthUI();
+      renderCourseGrid();
+      renderEnrolledCourses();
+      showToast(`Switched persona to: ${currentUser.name}`);
+    }
+
+    function performLogout() {
+      switchPersona('guest');
+      closeDropdowns();
+      showToast('Logged out successfully');
+    }
+
+    // --- SEARCH & FILTER HANDLERS ---
+    function handleGlobalSearch(val) {
+      searchQuery = val.toLowerCase();
+      renderCourseGrid();
+    }
+
+    function filterCategory(cat) {
+      currentCategoryFilter = cat;
+      document.querySelectorAll('.cat-btn').forEach(btn => {
+        if (btn.getAttribute('data-cat') === cat) {
+          btn.className = "cat-btn px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition bg-brand-600 text-white shadow-sm";
+        } else {
+          btn.className = "cat-btn px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600";
+        }
+      });
+      renderCourseGrid();
+    }
+
+    function applyFilters() {
+      renderCourseGrid();
+    }
+
+    // --- RENDER COURSE CATALOG GRID ---
+    function renderCourseGrid() {
+      const grid = document.getElementById('course-grid');
+      const levelFilter = document.getElementById('level-filter');
+      const levelVal = levelFilter ? levelFilter.value : 'All';
+      if (!grid) return;
+      grid.innerHTML = '';
+
+      const userEnrolled = currentUser ? (currentUser.enrolledIds || []) : [];
+      const isInstructor = currentUser && (currentUser.role.includes('Instructor') || currentUser.role.includes('Admin'));
+
+      const filtered = coursesData.filter(course => {
+        const catMatch = currentCategoryFilter === 'All' || course.category === currentCategoryFilter;
+        const levelMatch = levelVal === 'All' || course.level === levelVal;
+        const searchMatch = !searchQuery || course.title.toLowerCase().includes(searchQuery) || course.category.toLowerCase().includes(searchQuery);
+        return catMatch && levelMatch && searchMatch;
+      });
+
+      const totalBadge = document.getElementById('total-course-count-badge');
+      if (totalBadge) totalBadge.innerText = coursesData.length;
+
+      if (filtered.length === 0) {
+        grid.innerHTML = `<div class="col-span-full text-center py-12 text-gray-500">No courses match your selected filter or search criteria.</div>`;
+        return;
+      }
+
+      filtered.forEach(course => {
+        const isEnrolled = userEnrolled.includes(course.id);
+        const card = document.createElement('div');
+        card.className = "bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm hover:shadow-md transition flex flex-col group";
+        
+        const instructorEditBtn = isInstructor ? `
+          <button onclick="event.stopPropagation(); openCourseStudioModal('${course.id}', true)" class="px-2.5 py-1 rounded-lg bg-gray-900/80 backdrop-blur-md text-amber-400 hover:text-amber-300 text-[10px] font-bold border border-amber-400/30 flex items-center gap-1 transition" title="Edit Course Content">
+            <i data-lucide="edit" class="w-3 h-3"></i> Edit
+          </button>
+        ` : '';
+
+        card.innerHTML = `
+          <div class="relative overflow-hidden aspect-video">
+            <img src="${course.thumbnail}" alt="${course.title}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300">
+            <span class="absolute top-3 left-3 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-gray-900/80 backdrop-blur-md text-white">${course.category}</span>
+            <div class="absolute top-3 right-3 flex items-center gap-1.5">
+              ${instructorEditBtn}
+              <span class="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-brand-600 text-white">${course.level}</span>
+            </div>
+          </div>
+          <div class="p-5 flex-1 flex flex-col justify-between space-y-4">
+            <div>
+              <div class="flex items-center gap-1 text-amber-400 text-xs font-bold mb-1">
+                <i data-lucide="star" class="w-3.5 h-3.5 fill-amber-400"></i> ${course.rating}
+                <span class="text-gray-400 font-normal">(${course.students} students)</span>
+              </div>
+              <h3 class="font-bold text-gray-900 dark:text-white text-base line-clamp-2 leading-snug">${course.title}</h3>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Instructor: ${course.instructor}</p>
+            </div>
+
+            <div class="pt-3 border-t border-gray-100 dark:border-gray-700/60 flex items-center justify-between">
+              <span class="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                <i data-lucide="clock" class="w-3.5 h-3.5"></i> ${course.duration}
+              </span>
+              <div class="flex items-center gap-2">
+                ${isInstructor ? `<button onclick="openCourseStudioModal('${course.id}', true)" class="px-2.5 py-1.5 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-xs font-bold text-gray-700 dark:text-gray-200 transition" title="Manage Course Content"><i data-lucide="settings" class="w-3.5 h-3.5"></i></button>` : ''}
+                <button onclick="startCourse('${course.id}')" class="px-3.5 py-1.5 rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-300 text-xs font-bold hover:bg-brand-600 hover:text-white dark:hover:bg-brand-600 transition">
+                  ${isEnrolled ? 'Resume Course' : 'Enroll Now'}
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+
+      if (window.lucide) {
+        lucide.createIcons();
+      }
+    }
+
+    // --- ENROLLED COURSES DASHBOARD RENDER ---
+    function renderEnrolledCourses() {
+      const container = document.getElementById('enrolled-courses-container');
+      if (!container) return;
+      container.innerHTML = '';
+
+      const userEnrolled = currentUser ? (currentUser.enrolledIds || []) : [];
+      const enrolledCourses = coursesData.filter(c => userEnrolled.includes(c.id));
+
+      if (enrolledCourses.length === 0) {
+        container.innerHTML = `
+          <div class="p-8 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-center space-y-3">
+            <p class="text-sm text-gray-500">You are not enrolled in any active courses yet.</p>
+            <button onclick="switchView('catalog')" class="px-4 py-2 rounded-xl bg-brand-600 text-white font-bold text-xs">Explore Catalog</button>
+          </div>
+        `;
+        return;
+      }
+
+      enrolledCourses.forEach(course => {
+        const item = document.createElement('div');
+        item.className = "p-4 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col sm:flex-row items-center gap-4 hover:border-brand-500/50 transition";
+        item.innerHTML = `
+          <img src="${course.thumbnail}" class="w-full sm:w-28 h-20 rounded-xl object-cover">
+          <div class="flex-1 space-y-2 w-full">
+            <div class="flex justify-between items-center">
+              <span class="text-[10px] font-bold text-brand-500 uppercase">${course.category}</span>
+              <span class="text-xs font-bold text-gray-700 dark:text-gray-300">${course.progress || 0}% Done</span>
+            </div>
+            <h4 class="font-bold text-sm text-gray-900 dark:text-white">${course.title}</h4>
+            <div class="w-full bg-gray-100 dark:bg-gray-700 h-2 rounded-full overflow-hidden">
+              <div class="bg-brand-500 h-full rounded-full" style="width: ${course.progress || 0}%"></div>
+            </div>
+          </div>
+          <button onclick="startCourse('${course.id}')" class="w-full sm:w-auto px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition whitespace-nowrap">
+            Continue Lesson
+          </button>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    // --- LAUNCH LESSON VIEWER ---
+    function startCourse(courseId) {
+      const course = coursesData.find(c => c.id === courseId);
+      if (!course) return;
+
+      if (currentUser && currentUser.enrolledIds && !currentUser.enrolledIds.includes(course.id)) {
+        currentUser.enrolledIds.push(course.id);
+        localStorage.setItem('apex_academy_user', JSON.stringify(currentUser));
+        showToast(`Enrolled in ${course.title}!`);
+      }
+
+      currentActiveCourse = course;
+      if (course.modules && course.modules.length > 0 && course.modules[0].lessons.length > 0) {
+        activeLessonObj = course.modules[0].lessons[0];
+      }
+
+      const activeCat = document.getElementById('active-course-category');
+      const activeTitle = document.getElementById('active-course-title');
+      const certTitle = document.getElementById('cert-course-title');
+
+      if (activeCat) activeCat.innerText = course.category;
+      if (activeTitle) activeTitle.innerText = course.title;
+      if (certTitle) certTitle.innerText = course.title;
+
+      loadActiveLessonContent();
+      renderModulesSidebar();
+      renderEnrolledCourses();
+      switchView('viewer');
+    }
+
+    function selectLesson(lessonId) {
+      currentActiveCourse.modules.forEach(mod => {
+        mod.lessons.forEach(l => {
+          if (l.id === lessonId || l.title === lessonId) {
+            l.active = true;
+            activeLessonObj = l;
+          } else {
+            l.active = false;
+          }
+        });
+      });
+      loadActiveLessonContent();
+      renderModulesSidebar();
+    }
+
+    function loadActiveLessonContent() {
+      if (!activeLessonObj) return;
+
+      const titleEl = document.getElementById('active-lesson-title');
+      const readingEl = document.getElementById('active-lesson-reading-content');
+
+      if (titleEl) titleEl.innerText = activeLessonObj.title;
+      if (readingEl) readingEl.innerText = activeLessonObj.reading || "Dynamic lesson reading material and documentation.";
+      
+      const iframe = document.getElementById('video-iframe');
+      const thumbWrapper = document.getElementById('video-thumbnail-wrapper');
+
+      if (iframe && thumbWrapper) {
+        if (activeLessonObj.videoUrl && activeLessonObj.videoUrl.includes('youtube.com')) {
+          iframe.src = activeLessonObj.videoUrl;
+          iframe.classList.remove('hidden');
+          thumbWrapper.classList.add('hidden');
+        } else {
+          iframe.classList.add('hidden');
+          thumbWrapper.classList.remove('hidden');
+        }
+      }
+
+      isCurrentLessonCompleted = !!activeLessonObj.completed;
+      updateCompletionBtnState();
+    }
+
+    // --- MODULE ACCORDION SIDEBAR ---
+    function renderModulesSidebar() {
+      const list = document.getElementById('modules-list');
+      if (!list) return;
+      list.innerHTML = '';
+
+      if (!currentActiveCourse || !currentActiveCourse.modules || currentActiveCourse.modules.length === 0) {
+        list.innerHTML = `<p class="text-xs text-gray-400 py-4 text-center">No modules created yet for this course.</p>`;
+        return;
+      }
+
+      currentActiveCourse.modules.forEach((mod) => {
+        const modBox = document.createElement('div');
+        modBox.className = "border border-gray-200 dark:border-gray-700/80 rounded-xl overflow-hidden";
+        
+        let lessonsHTML = '';
+        mod.lessons.forEach(lesson => {
+          lessonsHTML += `
+            <div onclick="selectLesson('${lesson.id || lesson.title}')" class="p-2.5 rounded-lg flex items-center justify-between text-xs cursor-pointer transition ${lesson.active ? 'bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-300 font-semibold' : 'hover:bg-gray-100 dark:hover:bg-gray-700/50 text-gray-700 dark:text-gray-300'}">
+              <div class="flex items-center gap-2">
+                <i data-lucide="${lesson.completed ? 'check-circle' : 'circle'}" class="w-3.5 h-3.5 ${lesson.completed ? 'text-emerald-500 fill-emerald-500/20' : 'text-gray-400'}"></i>
+                <span class="line-clamp-1">${lesson.title}</span>
+              </div>
+              <span class="text-[10px] text-gray-400 font-mono">${lesson.duration}</span>
+            </div>
+          `;
+        });
+
+        modBox.innerHTML = `
+          <div class="p-3 bg-gray-50 dark:bg-gray-700/40 text-xs font-bold text-gray-800 dark:text-gray-200 flex justify-between items-center border-b border-gray-200 dark:border-gray-700">
+            <span>${mod.title}</span>
+          </div>
+          <div class="p-2 space-y-1">
+            ${lessonsHTML}
+          </div>
+        `;
+        list.appendChild(modBox);
+      });
+
+      if (window.lucide) {
+        lucide.createIcons();
+      }
+    }
+
+    function toggleLessonCompletion() {
+      if (!currentUser) {
+        openAuthModal('login');
+        return;
+      }
+      isCurrentLessonCompleted = !isCurrentLessonCompleted;
+      if (activeLessonObj) activeLessonObj.completed = isCurrentLessonCompleted;
+
+      updateCompletionBtnState();
+      renderModulesSidebar();
+      showToast(isCurrentLessonCompleted ? 'Lesson marked complete!' : 'Progress updated');
+    }
+
+    function updateCompletionBtnState() {
+      const btnText = document.getElementById('complete-btn-text');
+      const btn = document.getElementById('btn-complete-lesson');
+      
+      if (btnText && btn) {
+        if (isCurrentLessonCompleted) {
+          btnText.innerText = "Completed ✔";
+          btn.className = "px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-500 text-white shadow-sm transition flex items-center gap-1.5";
+        } else {
+          btnText.innerText = "Mark as Complete";
+          btn.className = "px-4 py-2 rounded-xl text-xs font-semibold border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 transition flex items-center gap-1.5";
+        }
+      }
+    }
+
+    // --- VIDEO CONTROLS OVERLAY ---
+    function togglePlayVideo() {
+      if (!currentUser) {
+        openAuthModal('login');
+        return;
+      }
+      showToast('Playing interactive video stream...');
+    }
+
+    // --- COURSE CREATOR & EDITOR STUDIO ENGINE ---
+    function openCourseStudioModal(targetCourseId = null, forceEditMode = false) {
+      if (!currentUser) {
+        openAuthModal('login');
+        return;
+      }
+
+      isStudioEditMode = forceEditMode || !!targetCourseId;
+      editingCourseId = targetCourseId || (coursesData[0] ? coursesData[0].id : null);
+
+      const modalTitle = document.getElementById('studio-modal-title');
+      const modalSub = document.getElementById('studio-modal-sub');
+      const submitBtnText = document.getElementById('studio-submit-btn-text');
+      const courseSelectorBar = document.getElementById('studio-course-selector-bar');
+
+      if (isStudioEditMode) {
+        if (modalTitle) modalTitle.innerText = "Course Content Manager";
+        if (modalSub) modalSub.innerText = "Edit course details, update modules, manage lessons, and update quizzes";
+        if (submitBtnText) submitBtnText.innerText = "Save Course Changes";
+        if (courseSelectorBar) courseSelectorBar.classList.remove('hidden');
+
+        // Populate course dropdown selector
+        const dropdown = document.getElementById('studio-select-course-dropdown');
+        if (dropdown) {
+          dropdown.innerHTML = '';
+          coursesData.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.innerText = `${c.title} (${c.category})`;
+            if (c.id === editingCourseId) opt.selected = true;
+            dropdown.appendChild(opt);
+          });
+        }
+
+        loadCourseIntoStudio(editingCourseId);
+      } else {
+        if (modalTitle) modalTitle.innerText = "Course Creator Studio";
+        if (modalSub) modalSub.innerText = "Design, structure, and publish a new interactive course";
+        if (submitBtnText) submitBtnText.innerText = "Publish Course";
+        if (courseSelectorBar) courseSelectorBar.classList.add('hidden');
+
+        // Reset fields for fresh creation
+        const titleIn = document.getElementById('new-course-title');
+        const subIn = document.getElementById('new-course-subtitle');
+        const catIn = document.getElementById('new-course-category');
+        const lvlIn = document.getElementById('new-course-level');
+        const durIn = document.getElementById('new-course-duration');
+        const instIn = document.getElementById('new-course-instructor');
+        const thumbIn = document.getElementById('new-course-thumbnail');
+
+        if (titleIn) titleIn.value = '';
+        if (subIn) subIn.value = '';
+        if (catIn) catIn.value = 'Web Dev';
+        if (lvlIn) lvlIn.value = 'Beginner';
+        if (durIn) durIn.value = '10.0 Hours';
+        if (instIn) instIn.value = currentUser ? currentUser.name : 'Sarah Chen';
+        if (thumbIn) thumbIn.value = 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=600';
+        updateStudioThumbnailPreview('https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=600');
+
+        studioModulesList = [
+          {
+            title: "Module 1: Course Overview & Setup",
+            lessons: [
+              { title: "1.1 Introduction & Environment Setup", duration: "10:00", videoUrl: "https://www.youtube.com/embed/bMknfKXIFA8", reading: "Welcome to this course! In this lesson we set up our development environment." }
+            ]
+          }
+        ];
+        studioQuizzesList = [
+          {
+            question: "What is the main objective of this course module?",
+            options: ["To set up the workspace", "To skip fundamentals", "No objective", "None of above"],
+            answer: 0
+          }
+        ];
+      }
+
+      switchStudioStep(1);
+      renderStudioModules();
+      renderStudioQuizzes();
+      const studioModal = document.getElementById('course-studio-modal');
+      if (studioModal) studioModal.classList.remove('hidden');
+    }
+
+    function loadCourseIntoStudio(courseId) {
+      editingCourseId = courseId;
+      const course = coursesData.find(c => c.id === courseId);
+      if (!course) return;
+
+      const titleIn = document.getElementById('new-course-title');
+      const subIn = document.getElementById('new-course-subtitle');
+      const catIn = document.getElementById('new-course-category');
+      const lvlIn = document.getElementById('new-course-level');
+      const durIn = document.getElementById('new-course-duration');
+      const instIn = document.getElementById('new-course-instructor');
+      const thumbIn = document.getElementById('new-course-thumbnail');
+
+      if (titleIn) titleIn.value = course.title || '';
+      if (subIn) subIn.value = course.subtitle || '';
+      if (catIn) catIn.value = course.category || 'Web Dev';
+      if (lvlIn) lvlIn.value = course.level || 'Beginner';
+      if (durIn) durIn.value = course.duration || '10.0 Hours';
+      if (instIn) instIn.value = course.instructor || (currentUser ? currentUser.name : 'Sarah Chen');
+      if (thumbIn) thumbIn.value = course.thumbnail || '';
+      updateStudioThumbnailPreview(course.thumbnail);
+
+      studioModulesList = course.modules ? JSON.parse(JSON.stringify(course.modules)) : [];
+      studioQuizzesList = course.quizzes ? JSON.parse(JSON.stringify(course.quizzes)) : [];
+
+      renderStudioModules();
+      renderStudioQuizzes();
+    }
+
+    function closeCourseStudioModal() {
+      const modal = document.getElementById('course-studio-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function updateStudioThumbnailPreview(url) {
+      const img = document.getElementById('studio-thumb-preview');
+      if (img) img.src = url || 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=600';
+    }
+
+    function switchStudioStep(step) {
+      studioCurrentStep = step;
+
+      const s1 = document.getElementById('studio-step-1');
+      const s2 = document.getElementById('studio-step-2');
+      const s3 = document.getElementById('studio-step-3');
+
+      const btnNext = document.getElementById('studio-next-btn');
+      const btnPrev = document.getElementById('studio-prev-btn');
+      const btnPublish = document.getElementById('studio-publish-btn');
+
+      if (s1) s1.classList.add('hidden');
+      if (s2) s2.classList.add('hidden');
+      if (s3) s3.classList.add('hidden');
+
+      if (step === 1) {
+        if (s1) s1.classList.remove('hidden');
+        if (btnPrev) btnPrev.classList.add('hidden');
+        if (btnNext) btnNext.classList.remove('hidden');
+        if (btnPublish) btnPublish.classList.add('hidden');
+      } else if (step === 2) {
+        if (s2) s2.classList.remove('hidden');
+        if (btnPrev) btnPrev.classList.remove('hidden');
+        if (btnNext) btnNext.classList.remove('hidden');
+        if (btnPublish) btnPublish.classList.add('hidden');
+      } else if (step === 3) {
+        if (s3) s3.classList.remove('hidden');
+        if (btnPrev) btnPrev.classList.remove('hidden');
+        if (btnNext) btnNext.classList.add('hidden');
+        if (btnPublish) btnPublish.classList.remove('hidden');
+      }
+
+      for (let i = 1; i <= 3; i++) {
+        const btn = document.getElementById(`studio-step-btn-${i}`);
+        if (btn) {
+          if (i === step) {
+            btn.className = "flex items-center gap-2 text-brand-600 dark:text-brand-400 font-bold";
+          } else if (i < step) {
+            btn.className = "flex items-center gap-2 text-emerald-500 font-bold";
+          } else {
+            btn.className = "flex items-center gap-2 text-gray-400";
+          }
+        }
+      }
+    }
+
+    function nextStudioStep() {
+      if (studioCurrentStep < 3) switchStudioStep(studioCurrentStep + 1);
+    }
+
+    function prevStudioStep() {
+      if (studioCurrentStep > 1) switchStudioStep(studioCurrentStep - 1);
+    }
+
+    // STUDIO MODULE & LESSON DYNAMIC BUILDER
+    function addStudioModule() {
+      studioModulesList.push({
+        title: `Module ${studioModulesList.length + 1}: New Chapter`,
+        lessons: [
+          { id: `l_${Date.now()}`, title: `${studioModulesList.length + 1}.1 New Lesson`, duration: "12:00", videoUrl: "https://www.youtube.com/embed/bMknfKXIFA8", reading: "Lesson text documentation goes here." }
+        ]
+      });
+      renderStudioModules();
+      showToast('New module added');
+    }
+
+    function deleteStudioModule(mIdx) {
+      studioModulesList.splice(mIdx, 1);
+      renderStudioModules();
+      showToast('Module removed');
+    }
+
+    function renderStudioModules() {
+      const container = document.getElementById('studio-modules-container');
+      if (!container) return;
+      container.innerHTML = '';
+
+      if (studioModulesList.length === 0) {
+        container.innerHTML = `<p class="text-xs text-gray-400 py-4 text-center">No modules created yet. Click "+ Add Module" to start.</p>`;
+        return;
+      }
+
+      studioModulesList.forEach((mod, mIdx) => {
+        const mDiv = document.createElement('div');
+        mDiv.className = "p-4 rounded-2xl bg-gray-50 dark:bg-gray-700/30 border border-gray-200 dark:border-gray-700 space-y-3";
+        
+        let lessonsHTML = '';
+        mod.lessons.forEach((les, lIdx) => {
+          lessonsHTML += `
+            <div class="p-3 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-600 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-brand-600 dark:text-brand-400">Lesson ${lIdx + 1}</span>
+                <button onclick="removeStudioLesson(${mIdx}, ${lIdx})" class="text-red-500 text-[10px] font-semibold hover:underline flex items-center gap-1">
+                  <i data-lucide="trash-2" class="w-3 h-3"></i> Delete Lesson
+                </button>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input type="text" value="${les.title}" onchange="studioModulesList[${mIdx}].lessons[${lIdx}].title = this.value" placeholder="Lesson Title" class="px-3 py-1.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-xs">
+                <input type="text" value="${les.duration}" onchange="studioModulesList[${mIdx}].lessons[${lIdx}].duration = this.value" placeholder="Duration (e.g. 12:00)" class="px-3 py-1.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-xs">
+              </div>
+              <input type="text" value="${les.videoUrl || ''}" onchange="studioModulesList[${mIdx}].lessons[${lIdx}].videoUrl = this.value" placeholder="YouTube Embed URL (https://www.youtube.com/embed/...)" class="w-full px-3 py-1.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-xs">
+              <textarea placeholder="Lesson Markdown / Reading Content" onchange="studioModulesList[${mIdx}].lessons[${lIdx}].reading = this.value" class="w-full h-16 p-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-xs resize-none">${les.reading || ''}</textarea>
+            </div>
+          `;
+        });
+
+        mDiv.innerHTML = `
+          <div class="flex items-center justify-between gap-3">
+            <input type="text" value="${mod.title}" onchange="studioModulesList[${mIdx}].title = this.value" class="font-bold text-sm bg-transparent border-b border-gray-300 dark:border-gray-600 focus:outline-none text-gray-900 dark:text-white flex-1">
+            <div class="flex items-center gap-2">
+              <button onclick="addStudioLesson(${mIdx})" class="px-2.5 py-1 rounded-lg bg-brand-500/10 text-brand-600 dark:text-brand-400 font-bold text-xs hover:bg-brand-500/20 transition">+ Lesson</button>
+              <button onclick="deleteStudioModule(${mIdx})" class="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg" title="Delete Module">
+                <i data-lucide="trash" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+          <div class="space-y-2">
+            ${lessonsHTML}
+          </div>
+        `;
+        container.appendChild(mDiv);
+      });
+
+      if (window.lucide) {
+        lucide.createIcons();
+      }
+    }
+
+    function addStudioLesson(mIdx) {
+      studioModulesList[mIdx].lessons.push({
+        id: `l_${Date.now()}`,
+        title: "New Interactive Lesson",
+        duration: "10:00",
+        videoUrl: "https://www.youtube.com/embed/bMknfKXIFA8",
+        reading: "Content documentation."
+      });
+      renderStudioModules();
+    }
+
+    function removeStudioLesson(mIdx, lIdx) {
+      studioModulesList[mIdx].lessons.splice(lIdx, 1);
+      renderStudioModules();
+    }
+
+    // STUDIO QUIZ CREATOR
+    function addStudioQuizQuestion() {
+      studioQuizzesList.push({
+        question: "New quiz assessment question?",
+        options: ["Option A", "Option B", "Option C", "Option D"],
+        answer: 0
+      });
+      renderStudioQuizzes();
+    }
+
+    function renderStudioQuizzes() {
+      const container = document.getElementById('studio-quizzes-container');
+      if (!container) return;
+      container.innerHTML = '';
+
+      if (studioQuizzesList.length === 0) {
+        container.innerHTML = `<p class="text-xs text-gray-400 py-4 text-center">No quiz questions created yet. Click "Add Question" above.</p>`;
+        return;
+      }
+
+      studioQuizzesList.forEach((q, qIdx) => {
+        const qDiv = document.createElement('div');
+        qDiv.className = "p-4 rounded-2xl bg-gray-50 dark:bg-gray-700/30 border border-gray-200 dark:border-gray-700 space-y-3";
+        
+        qDiv.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-amber-500">Question ${qIdx + 1}</span>
+            <button onclick="studioQuizzesList.splice(${qIdx}, 1); renderStudioQuizzes()" class="text-red-500 text-[10px] font-semibold hover:underline">Delete Question</button>
+          </div>
+          <input type="text" value="${q.question}" onchange="studioQuizzesList[${qIdx}].question = this.value" placeholder="Question prompt..." class="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl text-xs font-semibold">
+          
+          <div class="grid grid-cols-2 gap-2">
+            <input type="text" value="${q.options[0] || ''}" onchange="studioQuizzesList[${qIdx}].options[0] = this.value" placeholder="Option 1" class="px-3 py-1.5 bg-white dark:bg-gray-800 border rounded-lg text-xs">
+            <input type="text" value="${q.options[1] || ''}" onchange="studioQuizzesList[${qIdx}].options[1] = this.value" placeholder="Option 2" class="px-3 py-1.5 bg-white dark:bg-gray-800 border rounded-lg text-xs">
+            <input type="text" value="${q.options[2] || ''}" onchange="studioQuizzesList[${qIdx}].options[2] = this.value" placeholder="Option 3" class="px-3 py-1.5 bg-white dark:bg-gray-800 border rounded-lg text-xs">
+            <input type="text" value="${q.options[3] || ''}" onchange="studioQuizzesList[${qIdx}].options[3] = this.value" placeholder="Option 4" class="px-3 py-1.5 bg-white dark:bg-gray-800 border rounded-lg text-xs">
+          </div>
+
+          <div class="flex items-center gap-2 pt-1 text-xs">
+            <label class="text-gray-500 text-[11px]">Correct Answer Index:</label>
+            <select onchange="studioQuizzesList[${qIdx}].answer = parseInt(this.value)" class="px-2 py-1 bg-white dark:bg-gray-800 border rounded-lg text-xs font-bold text-emerald-500">
+              <option value="0" ${q.answer === 0 ? 'selected' : ''}>Option 1</option>
+              <option value="1" ${q.answer === 1 ? 'selected' : ''}>Option 2</option>
+              <option value="2" ${q.answer === 2 ? 'selected' : ''}>Option 3</option>
+              <option value="3" ${q.answer === 3 ? 'selected' : ''}>Option 4</option>
+            </select>
+          </div>
+        `;
+        container.appendChild(qDiv);
+      });
+    }
+
+    // PUBLISH OR UPDATE COURSE ACTION
+    function publishNewCourse() {
+      const titleIn = document.getElementById('new-course-title');
+      const title = titleIn ? titleIn.value.trim() : '';
+      if (!title) {
+        showToast('Please enter a course title');
+        switchStudioStep(1);
+        return;
+      }
+
+      const category = document.getElementById('new-course-category')?.value || 'Web Dev';
+      const level = document.getElementById('new-course-level')?.value || 'Beginner';
+      const duration = document.getElementById('new-course-duration')?.value || '10.0 Hours';
+      const instructor = document.getElementById('new-course-instructor')?.value || (currentUser ? currentUser.name : 'Sarah Chen');
+      const thumbnail = document.getElementById('new-course-thumbnail')?.value || 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=600';
+
+      if (isStudioEditMode && editingCourseId) {
+        const existingIdx = coursesData.findIndex(c => c.id === editingCourseId);
+        if (existingIdx !== -1) {
+          coursesData[existingIdx] = {
+            ...coursesData[existingIdx],
+            title: title,
+            category: category,
+            level: level,
+            duration: duration,
+            instructor: instructor,
+            thumbnail: thumbnail,
+            modules: studioModulesList,
+            quizzes: studioQuizzesList
+          };
+
+          if (currentActiveCourse && currentActiveCourse.id === editingCourseId) {
+            currentActiveCourse = coursesData[existingIdx];
+            if (currentActiveCourse.modules && currentActiveCourse.modules.length > 0 && currentActiveCourse.modules[0].lessons.length > 0) {
+              activeLessonObj = currentActiveCourse.modules[0].lessons[0];
+            }
+            loadActiveLessonContent();
+            renderModulesSidebar();
+          }
+
+          localStorage.setItem('apex_academy_courses', JSON.stringify(coursesData));
+          closeCourseStudioModal();
+          renderCourseGrid();
+          renderEnrolledCourses();
+          showToast(`✅ Course "${title}" updated successfully!`);
+          return;
+        }
+      }
+
+      const newCourseObj = {
+        id: `c_${Date.now()}`,
+        title: title,
+        category: category,
+        level: level,
+        duration: duration,
+        rating: '5.0',
+        students: '1',
+        thumbnail: thumbnail,
+        progress: 0,
+        instructor: instructor,
+        modules: studioModulesList.length > 0 ? studioModulesList : [],
+        quizzes: studioQuizzesList.length > 0 ? studioQuizzesList : []
+      };
+
+      coursesData.unshift(newCourseObj);
+      localStorage.setItem('apex_academy_courses', JSON.stringify(coursesData));
+
+      closeCourseStudioModal();
+      renderCourseGrid();
+      switchView('catalog');
+      showToast(`🎉 Course "${title}" published successfully!`);
+    }
+
+    // --- QUIZ ASSESSMENT MODAL ---
+    function openQuizModal() {
+      if (!currentUser) {
+        openAuthModal('login');
+        return;
+      }
+      
+      activeQuizQuestions = currentActiveCourse.quizzes && currentActiveCourse.quizzes.length > 0 ? currentActiveCourse.quizzes : [
+        {
+          question: "What is the primary concept covered in this module?",
+          options: ["Core Fundamentals & Syntax", "Advanced Compiler Optimization", "Deprecated Legacy APIs"],
+          answer: 0
+        }
+      ];
+
+      const modalTitle = document.getElementById('quiz-modal-title');
+      if (modalTitle) modalTitle.innerText = `${currentActiveCourse.title} Assessment`;
+      
+      document.getElementById('quiz-intro')?.classList.remove('hidden');
+      document.getElementById('quiz-active')?.classList.add('hidden');
+      document.getElementById('quiz-result')?.classList.add('hidden');
+      document.getElementById('quiz-modal')?.classList.remove('hidden');
+    }
+
+    function closeQuizModal() {
+      document.getElementById('quiz-modal')?.classList.add('hidden');
+    }
+
+    function startQuizQuestions() {
+      quizCurrentStep = 0;
+      quizScore = 0;
+      document.getElementById('quiz-intro')?.classList.add('hidden');
+      document.getElementById('quiz-active')?.classList.remove('hidden');
+      loadQuizQuestion();
+    }
+
+    function loadQuizQuestion() {
+      const q = activeQuizQuestions[quizCurrentStep];
+      const stepInd = document.getElementById('quiz-step-indicator');
+      const qText = document.getElementById('quiz-question-text');
+
+      if (stepInd) stepInd.innerText = `Question ${quizCurrentStep + 1} of ${activeQuizQuestions.length}`;
+      if (qText) qText.innerText = q.question;
+      
+      const optionsContainer = document.getElementById('quiz-options-container');
+      if (optionsContainer) {
+        optionsContainer.innerHTML = '';
+        quizSelectedOption = null;
+
+        const nextBtn = document.getElementById('btn-next-question');
+        if (nextBtn) nextBtn.disabled = true;
+
+        q.options.forEach((opt, idx) => {
+          const btn = document.createElement('button');
+          btn.className = "w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-brand-500 text-left text-xs font-medium transition text-gray-800 dark:text-gray-200 flex items-center justify-between";
+          btn.innerHTML = `<span>${opt}</span><div class="w-4 h-4 rounded-full border border-gray-400"></div>`;
+          btn.onclick = () => selectQuizOption(idx, btn);
+          optionsContainer.appendChild(btn);
+        });
+      }
+    }
+
+    function selectQuizOption(idx, element) {
+      quizSelectedOption = idx;
+      const optionsContainer = document.getElementById('quiz-options-container');
+      if (optionsContainer) {
+        const allBtns = optionsContainer.children;
+        for (let b of allBtns) {
+          b.className = "w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-brand-500 text-left text-xs font-medium transition text-gray-800 dark:text-gray-200 flex items-center justify-between";
+        }
+      }
+      element.className = "w-full p-3 rounded-xl border-2 border-brand-500 bg-brand-50/50 dark:bg-brand-900/30 text-left text-xs font-semibold text-brand-600 dark:text-brand-300 flex items-center justify-between";
+      const nextBtn = document.getElementById('btn-next-question');
+      if (nextBtn) nextBtn.disabled = false;
+    }
+
+    function nextQuizQuestion() {
+      const q = activeQuizQuestions[quizCurrentStep];
+      if (quizSelectedOption === q.answer) quizScore++;
+
+      quizCurrentStep++;
+      if (quizCurrentStep < activeQuizQuestions.length) {
+        loadQuizQuestion();
+      } else {
+        document.getElementById('quiz-active')?.classList.add('hidden');
+        document.getElementById('quiz-result')?.classList.remove('hidden');
+        const pct = Math.round((quizScore / activeQuizQuestions.length) * 100);
+        const scoreEl = document.getElementById('quiz-final-score');
+        if (scoreEl) scoreEl.innerText = `${pct}%`;
+        
+        if (currentUser) {
+          currentUser.xp = (currentUser.xp || 0) + 150;
+          localStorage.setItem('apex_academy_user', JSON.stringify(currentUser));
+          updateAuthUI();
+        }
+      }
+    }
+
+    // --- CODE & NOTES PLAYGROUND ---
+    function runSandboxCode() {
+      const input = document.getElementById('sandbox-code-input');
+      const outputView = document.getElementById('sandbox-output-view');
+      if (!input || !outputView) return;
+      const code = input.value;
+      try {
+        outputView.innerHTML = `<div id="output">Executing snippet...</div>`;
+        setTimeout(() => { eval(code); }, 100);
+      } catch (err) {
+        outputView.innerHTML = `<div class="text-red-500">Error: ${err.message}</div>`;
+      }
+    }
+
+    function saveStudentNotes() {
+      if (!currentUser) {
+        openAuthModal('login');
+        return;
+      }
+      const notesEl = document.getElementById('student-notes-area');
+      if (!notesEl) return;
+      const notes = notesEl.value;
+      localStorage.setItem(`apex_notes_${currentUser.id}`, notes);
+      const status = document.getElementById('notes-status');
+      if (status) {
+        status.classList.remove('hidden');
+        setTimeout(() => { status.classList.add('hidden'); }, 2500);
+      }
+      showToast('Study notes saved!');
+    }
+
+    function clearSandboxOutput() {
+      const view = document.getElementById('sandbox-output-view');
+      if (view) view.innerHTML = '<div class="text-gray-400">Console cleared.</div>';
+    }
+
+    function copyCodeSnippet(btn) {
+      btn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5 text-emerald-400"></i> Copied!`;
+      if (window.lucide) lucide.createIcons();
+      setTimeout(() => {
+        btn.innerHTML = `<i data-lucide="copy" class="w-3.5 h-3.5"></i> Copy`;
+        if (window.lucide) lucide.createIcons();
+      }, 2000);
+    }
+
+    function switchLessonTab(tabName) {
+      const tabs = ['overview', 'transcript', 'resources', 'discussion'];
+      tabs.forEach(t => {
+        const btn = document.getElementById(`tab-btn-${t}`);
+        const view = document.getElementById(`lesson-tab-${t}`);
+        if (btn && view) {
+          if (t === tabName) {
+            view.classList.remove('hidden');
+            btn.className = "tab-btn px-5 py-3 text-xs font-semibold border-b-2 border-brand-500 text-brand-600 dark:text-brand-400 flex items-center gap-1.5 whitespace-nowrap";
+          } else {
+            view.classList.add('hidden');
+            btn.className = "tab-btn px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1.5 whitespace-nowrap";
+          }
+        }
+      });
+    }
+
+    function addComment() {
+      if (!currentUser) {
+        openAuthModal('login');
+        return;
+      }
+      const input = document.getElementById('new-comment-input');
+      if (!input) return;
+      const val = input.value.trim();
+      if (!val) return;
+
+      const container = document.getElementById('comments-container');
+      if (container) {
+        const comment = document.createElement('div');
+        comment.className = "p-3.5 rounded-xl bg-gray-50 dark:bg-gray-700/30 border border-gray-200 dark:border-gray-700 space-y-2";
+        comment.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-semibold text-gray-900 dark:text-white">${currentUser.name}</span>
+              <span class="px-2 py-0.5 rounded text-[10px] bg-brand-500/10 text-brand-600 dark:text-brand-400 font-semibold">${currentUser.role}</span>
+            </div>
+            <span class="text-[10px] text-gray-400">Just now</span>
+          </div>
+          <p class="text-xs text-gray-600 dark:text-gray-300">${val}</p>
+        `;
+        container.prepend(comment);
+      }
+      input.value = '';
+      showToast('Comment posted!');
+    }
+
+    // --- AUTHENTICATION MODALS & UTILS ---
+    function openAuthModal(mode = 'login') {
+      setModalAuthTab(mode);
+      const modal = document.getElementById('auth-modal');
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function closeAuthModal() {
+      const modal = document.getElementById('auth-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function setModalAuthTab(mode) {
+      const title = document.getElementById('modal-auth-title');
+      const nameField = document.getElementById('modal-field-name');
+      const submitBtn = document.getElementById('modal-auth-submit-btn');
+
+      const tabLogin = document.getElementById('modal-tab-login');
+      const tabRegister = document.getElementById('modal-tab-register');
+
+      if (mode === 'login') {
+        if (title) title.innerText = "Sign In to Apex Academy";
+        if (nameField) nameField.classList.add('hidden');
+        if (submitBtn) submitBtn.innerText = "Sign In";
+        if (tabLogin) tabLogin.className = "flex-1 py-2 text-xs font-bold rounded-lg transition bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm";
+        if (tabRegister) tabRegister.className = "flex-1 py-2 text-xs font-bold rounded-lg transition text-gray-500 dark:text-gray-400";
+      } else {
+        if (title) title.innerText = "Register Free Account";
+        if (nameField) nameField.classList.remove('hidden');
+        if (submitBtn) submitBtn.innerText = "Create Account";
+        if (tabRegister) tabRegister.className = "flex-1 py-2 text-xs font-bold rounded-lg transition bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm";
+        if (tabLogin) tabLogin.className = "flex-1 py-2 text-xs font-bold rounded-lg transition text-gray-500 dark:text-gray-400";
+      }
+    }
+
+    function handleModalAuthSubmit(e) {
+      e.preventDefault();
+      const email = document.getElementById('modal-input-email')?.value || 'user@academy.io';
+      const name = document.getElementById('modal-input-name')?.value || 'Alex Rivera';
+
+      currentUser = {
+        id: `usr_${Date.now()}`,
+        name: name,
+        email: email,
+        role: 'Pro Student',
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=120',
+        xp: 250,
+        streak: 1,
+        studyHours: 1.0,
+        enrolledIds: ['c1'],
+        certificatesCount: 0
+      };
+
+      localStorage.setItem('apex_academy_user', JSON.stringify(currentUser));
+      closeAuthModal();
+      updateAuthUI();
+      renderCourseGrid();
+      renderEnrolledCourses();
+      showToast('Authenticated successfully!');
+    }
+
+    function openForgotPasswordModal() {
+      const modal = document.getElementById('forgot-password-modal');
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function closeForgotPasswordModal() {
+      const modal = document.getElementById('forgot-password-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function handleForgotPassword(e) {
+      e.preventDefault();
+      const email = document.getElementById('forgot-email-input')?.value || '';
+      closeForgotPasswordModal();
+      showToast(`Password recovery link sent to ${email}`);
+    }
+
+    function showCertificateModal() {
+      if (!currentUser) {
+        openAuthModal('login');
+        return;
+      }
+      const certUser = document.getElementById('cert-user-name');
+      if (certUser) certUser.innerText = currentUser.name;
+      const modal = document.getElementById('cert-modal');
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function closeCertModal() {
+      const modal = document.getElementById('cert-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    // --- GENERAL TOAST MESSAGES ---
+    function showToast(message) {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+      const toast = document.createElement('div');
+      toast.className = "toast-animate p-3.5 rounded-2xl bg-gray-900/90 dark:bg-white/90 text-white dark:text-gray-900 border border-gray-700 dark:border-gray-200 text-xs font-semibold shadow-xl flex items-center justify-between gap-3 pointer-events-auto backdrop-blur-md";
+      toast.innerHTML = `
+        <div class="flex items-center gap-2">
+          <i data-lucide="check-circle" class="w-4 h-4 text-emerald-400 dark:text-emerald-600"></i>
+          <span>${message}</span>
+        </div>
+        <button onclick="this.parentElement.remove()" class="opacity-60 hover:opacity-100"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+      `;
+      container.appendChild(toast);
+      if (window.lucide) lucide.createIcons();
+      setTimeout(() => { if (toast.parentElement) toast.remove(); }, 3500);
+    }
+
+    // --- VIEW SWITCHER ---
+    function switchView(viewName) {
+      currentView = viewName;
+      const views = ['catalog', 'viewer', 'sandbox', 'dashboard'];
+      views.forEach(v => {
+        const el = document.getElementById(`view-${v}`);
+        const navEl = document.getElementById(`nav-${v}`);
+        if (el) {
+          if (v === viewName) {
+            el.classList.remove('hidden');
+            if (navEl) navEl.className = "nav-link px-3 py-2 rounded-lg text-sm font-medium transition-colors text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30";
+          } else {
+            el.classList.add('hidden');
+            if (navEl) navEl.className = "nav-link px-3 py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-gray-100 dark:hover:bg-gray-700/50";
+          }
+        }
+      });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // --- CHART INITIALIZATION ---
+    function initAnalyticsChart() {
+      const chartEl = document.getElementById('studyTimeChart');
+      if (!chartEl || typeof Chart === 'undefined') return;
+      const ctx = chartEl.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+          datasets: [{
+            label: 'Study Hours',
+            data: [2.5, 3.0, 1.5, 4.0, 2.0, 1.0, 0.5],
+            backgroundColor: '#3b82f6',
+            borderRadius: 8,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false } },
+            y: { grid: { borderDash: [4, 4] }, ticks: { stepSize: 1 } }
+          }
+        }
+      });
+    }
+
+    function setupEventListeners() {
+      const mobileBtn = document.getElementById('mobile-menu-btn');
+      const closeMobileBtn = document.getElementById('close-mobile-menu');
+      const themeBtn = document.getElementById('theme-toggle');
+
+      if (mobileBtn) {
+        mobileBtn.addEventListener('click', () => {
+          document.getElementById('mobile-menu')?.classList.remove('hidden');
+        });
+      }
+      if (closeMobileBtn) {
+        closeMobileBtn.addEventListener('click', closeMobileMenu);
+      }
+      if (themeBtn) {
+        themeBtn.addEventListener('click', () => {
+          document.documentElement.classList.toggle('dark');
+        });
+      }
+
+      document.addEventListener('click', (e) => {
+        const drop = document.getElementById('profile-dropdown');
+        const container = document.getElementById('auth-state-container');
+        if (drop && !drop.contains(e.target) && container && !container.contains(e.target)) {
+          drop.classList.add('hidden');
+        }
+      });
+    }
+
+    function closeMobileMenu() {
+      const menu = document.getElementById('mobile-menu');
+      if (menu) menu.classList.add('hidden');
+    }
+  </script>
+</body>
+</html>

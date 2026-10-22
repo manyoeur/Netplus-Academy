@@ -120,127 +120,115 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
       </div>
 
       {/* Course Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredCourses.map(course => {
           const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
           const completedCount = course.modules.filter(m => currentUser.completedModuleIds.includes(m.id)).length;
           const progressPercent = Math.round((completedCount / (course.modules.length || 1)) * 100);
+          const isInstructor = currentUser.role === 'admin' || currentUser.role === 'instructor';
+          const defaultThumb = 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800';
 
           return (
             <div
               key={course.id}
-              className="group rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-blue-400 dark:hover:border-cyan-500/50 transition-all flex flex-col justify-between overflow-hidden"
+              onClick={() => onSelectCourse(course.id)}
+              className="bg-white dark:bg-[#0c1220] rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:shadow-xl hover:border-blue-400 dark:hover:border-cyan-500/50 transition-all flex flex-col group cursor-pointer"
             >
-              <div>
-                {/* Course Banner Header */}
-                <div className={`p-6 bg-gradient-to-r ${course.bannerColor} text-white relative`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-sm text-[11px] font-mono font-bold tracking-wider">
-                      {course.code}
-                    </span>
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded bg-black/30 backdrop-blur-sm">
-                      {course.level}
+              {/* Course Thumbnail Image Header */}
+              <div className="relative overflow-hidden aspect-video bg-slate-950">
+                <img
+                  src={course.thumbnail || defaultThumb}
+                  alt={course.title}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  loading="lazy"
+                />
+                
+                {/* Top-Left Category Badge */}
+                <span className="absolute top-3 left-3 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-900/80 dark:bg-[#070b14]/85 backdrop-blur-md text-white border border-white/10 shadow-sm">
+                  {course.category}
+                </span>
+
+                {/* Top-Right Badges */}
+                <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                  <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-blue-600 text-white shadow-sm">
+                    {course.level}
+                  </span>
+                </div>
+
+                {/* Bottom Overlay Pill for Course Code */}
+                <div className="absolute bottom-2.5 left-3 px-2 py-0.5 rounded-md bg-slate-900/80 backdrop-blur-md text-[10px] font-mono text-cyan-300 font-bold border border-cyan-500/30">
+                  {course.code}
+                </div>
+              </div>
+
+              {/* Card Body */}
+              <div className="p-5 flex-1 flex flex-col justify-between space-y-3">
+                <div>
+                  {/* Star Rating & Enrolled Count */}
+                  <div className="flex items-center gap-1 text-amber-400 text-xs font-bold mb-1">
+                    <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                    <span>{course.rating.toFixed(1)}</span>
+                    <span className="text-slate-400 font-normal">
+                      ({course.enrolledCount.toLocaleString()} students)
                     </span>
                   </div>
 
-                  <h3 className="text-lg font-black tracking-tight leading-snug">
+                  {/* Course Title */}
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base line-clamp-2 leading-snug group-hover:text-blue-600 dark:group-hover:text-cyan-400 transition-colors">
                     {course.title}
                   </h3>
 
-                  <div className="flex items-center gap-2 mt-3 text-xs text-slate-200">
-                    <img
-                      src={course.instructor.avatar}
-                      alt={course.instructor.name}
-                      className="w-6 h-6 rounded-full object-cover ring-1 ring-white/50"
-                    />
-                    <span className="font-medium">{course.instructor.name}</span>
-                    <span>• {course.instructor.title}</span>
-                  </div>
-                </div>
+                  {/* Instructor Name */}
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    Instructor: <span className="font-medium text-slate-700 dark:text-slate-300">{course.instructor.name}</span>
+                  </p>
 
-                {/* Body Content */}
-                <div className="p-6 space-y-4 text-xs">
-                  <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                  {/* Brief Subtitle */}
+                  <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 mt-1 leading-relaxed">
                     {course.subtitle}
                   </p>
 
-                  {/* Highlights */}
-                  <div className="space-y-1.5 pt-1">
-                    {course.learningOutcomes.slice(0, 3).map((item, i) => (
-                      <div key={i} className="flex items-start gap-2 text-slate-700 dark:text-slate-300 text-[11px]">
-                        <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                        <span className="line-clamp-1">{item}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Enrolled Progress Bar if already taking course */}
+                  {/* Enrolled Progress Bar */}
                   {isEnrolled && (
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
                       <div className="flex justify-between text-[11px] font-mono font-semibold mb-1">
-                        <span className="text-slate-500">Your Progress</span>
+                        <span className="text-slate-500 dark:text-slate-400">Progress</span>
                         <span className="text-blue-600 dark:text-cyan-400">{progressPercent}%</span>
                       </div>
                       <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-blue-600 dark:bg-cyan-400 rounded-full"
+                          className="h-full bg-gradient-to-r from-blue-600 to-cyan-400 rounded-full transition-all"
                           style={{ width: `${progressPercent}%` }}
                         />
                       </div>
                     </div>
                   )}
-
-                  {/* Meta stats */}
-                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono">
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" />
-                      <span>{course.durationHours}h ({course.modules.length} modules)</span>
-                    </span>
-
-                    <span className="flex items-center gap-1">
-                      <Users className="w-3.5 h-3.5" />
-                      <span>{course.enrolledCount.toLocaleString()} Enrolled</span>
-                    </span>
-
-                    <span className="flex items-center gap-1 text-amber-500 font-bold">
-                      <Star className="w-3.5 h-3.5 fill-amber-400" />
-                      <span>{course.rating}</span>
-                    </span>
-                  </div>
                 </div>
-              </div>
 
-              {/* Action Footer */}
-              <div className="p-6 pt-0">
-                {isEnrolled ? (
+                {/* Footer Metadata & Action Button */}
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1 font-mono">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>{course.durationHours} Hours</span>
+                  </span>
+
                   <button
-                    onClick={() => onSelectCourse(course.id)}
-                    className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-all flex items-center justify-center gap-2"
-                  >
-                    <BookOpen className="w-4 h-4" />
-                    <span>Continue Course ({progressPercent}% Completed)</span>
-                  </button>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!isEnrolled) {
                         enrollInCourse(course.id);
-                        onSelectCourse(course.id);
-                      }}
-                      className="flex-1 py-2.5 rounded-xl bg-slate-900 dark:bg-blue-600 hover:bg-slate-800 dark:hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-all flex items-center justify-center gap-2"
-                    >
-                      <span>Enroll in Course</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      onClick={() => onSelectCourse(course.id)}
-                      className="px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium"
-                    >
-                      Syllabus
-                    </button>
-                  </div>
-                )}
+                      }
+                      onSelectCourse(course.id);
+                    }}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      isEnrolled
+                        ? 'bg-blue-50 text-blue-600 dark:bg-cyan-950/40 dark:text-cyan-300 hover:bg-blue-600 hover:text-white dark:hover:bg-cyan-500 dark:hover:text-slate-950 border border-blue-200/60 dark:border-cyan-800/50'
+                        : 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-500/20'
+                    }`}
+                  >
+                    {isEnrolled ? 'Resume Course' : 'Enroll Now'}
+                  </button>
+                </div>
               </div>
             </div>
           );

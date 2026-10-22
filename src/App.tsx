@@ -11,7 +11,6 @@ import { ManagementPanel } from './components/Admin/ManagementPanel';
 import { AnalyticsDashboard } from './components/Admin/AnalyticsDashboard';
 import { LMSIntegrationPanel } from './components/LMS/LMSIntegrationPanel';
 import { DiscussionForum } from './components/Forum/DiscussionForum';
-import { NetGeniusTutor } from './components/AI/NetGeniusTutor';
 import { NotificationDrawer } from './components/Notifications/NotificationDrawer';
 import { LoginModal } from './components/Auth/LoginModal';
 import { PaymentGatewayModal } from './components/Billing/PaymentGatewayModal';
@@ -26,8 +25,6 @@ const AcademyApp: React.FC = () => {
   // Modals & Drawers
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  const [isAITutorOpen, setIsAITutorOpen] = useState(false);
-  const [aiTutorInitialPrompt, setAiTutorInitialPrompt] = useState<string>('');
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
 
   const handleSelectCourse = (courseId: string) => {
@@ -35,13 +32,8 @@ const AcademyApp: React.FC = () => {
     setCurrentTab('player');
   };
 
-  const handleOpenAITutorWithPrompt = (prompt: string) => {
-    setAiTutorInitialPrompt(prompt);
-    setIsAITutorOpen(true);
-  };
-
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-50 dark:bg-[#070b14] text-slate-900 dark:text-slate-100 transition-colors flex flex-col font-sans">
       
       {/* Offline Alert Bar */}
       {isOffline && (
@@ -74,10 +66,6 @@ const AcademyApp: React.FC = () => {
         }}
         onOpenLogin={() => setIsLoginOpen(true)}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
-        onOpenAITutor={() => {
-          setAiTutorInitialPrompt('');
-          setIsAITutorOpen(true);
-        }}
       />
 
       {/* Main Content Area */}
@@ -91,7 +79,6 @@ const AcademyApp: React.FC = () => {
               setActiveCourseId(null);
               setCurrentTab('courses');
             }}
-            onOpenAITutorWithPrompt={handleOpenAITutorWithPrompt}
             onViewCertificates={() => setCurrentTab('certificates')}
           />
         )}
@@ -132,7 +119,6 @@ const AcademyApp: React.FC = () => {
             <InteractiveCliTerminal
               module={courses[0].modules[2]}
               courseId={courses[0].id}
-              onAskAI={handleOpenAITutorWithPrompt}
             />
           </div>
         )}
@@ -170,13 +156,6 @@ const AcademyApp: React.FC = () => {
         )}
 
       </main>
-
-      {/* Floating NetGenius AI Chat Drawer */}
-      <NetGeniusTutor
-        isOpen={isAITutorOpen}
-        onClose={() => setIsAITutorOpen(false)}
-        initialPrompt={aiTutorInitialPrompt}
-      />
 
       {/* System Notifications Drawer */}
       <NotificationDrawer

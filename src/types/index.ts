@@ -92,6 +92,7 @@ export interface Course {
   enrolledCount: number;
   price: number;
   bannerColor: string;
+  thumbnail?: string;
   badge: string;
   description: string;
   prerequisites: string[];
