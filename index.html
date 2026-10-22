@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function() {
+        try {
+          var _rawFetch = window.fetch;
+          var _boundFetch = _rawFetch ? function() { return _rawFetch.apply(window, arguments); } : undefined;
+          Object.defineProperty(window, 'fetch', {
+            get: function() {
+              return _boundFetch;
+            },
+            set: function(fn) {
+              _rawFetch = fn;
+              _boundFetch = fn;
+            },
+            configurable: true,
+            enumerable: true
+          });
+        } catch (e) {}
+      })();
+    </script>
+    <title>Netplus Academy - Enterprise Networking & Certification LMS</title>
+    <meta name="description" content="Netplus Academy - Premier networking academy featuring real-time lab tracking, automated certificates, AI tutoring assistant, subscription billing, interactive CLI/topology, and external LMS integrations." />
+    <meta property="og:title" content="Netplus Academy - Enterprise Networking & Certification LMS" />
+    <meta property="og:description" content="Netplus Academy - Premier networking academy featuring real-time lab tracking, automated certificates, AI tutoring assistant, subscription billing, interactive CLI/topology, and external LMS integrations." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

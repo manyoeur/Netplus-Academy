@@ -1,0 +1,6 @@
+{
+  "name": "NetPulse Academy - Enterprise Networking & Certification LMS",
+  "description": "Premier networking academy featuring real-time lab tracking, automated certificates, AI tutoring assistant, subscription billing, interactive CLI/topology, and external LMS integrations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
