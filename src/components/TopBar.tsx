@@ -10,9 +10,7 @@ import {
   ChevronDown,
   ArrowRight,
   Menu,
-  X,
-  PanelLeftOpen,
-  Pin
+  X
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
 import { UserRole } from '../types';
@@ -25,8 +23,6 @@ interface TopBarProps {
   isSidebarOpen: boolean;
   mobileMenuOpen: boolean;
   setMobileMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  onShowSidebar: () => void;
-  onPinSidebar: () => void;
   onNavigateHome: () => void;
 }
 
@@ -38,8 +34,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   isSidebarOpen,
   mobileMenuOpen,
   setMobileMenuOpen,
-  onShowSidebar,
-  onPinSidebar,
   onNavigateHome
 }) => {
   const {
@@ -104,25 +98,15 @@ export const TopBar: React.FC<TopBarProps> = ({
             </span>
           </div>
 
-          {/* Desktop Sidebar Show / Pin Controls when Sidebar is Hidden */}
+          {/* Desktop Compact Workspace Title when Sidebar is in Icon Rail mode */}
           {!isSidebarShown && (
-            <div className="hidden lg:flex items-center gap-1.5">
-              <button
-                onClick={onShowSidebar}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-600/10 dark:bg-cyan-500/15 text-blue-600 dark:text-cyan-300 hover:bg-blue-600 hover:text-white dark:hover:bg-cyan-500 dark:hover:text-slate-950 text-xs font-semibold transition-all border border-blue-500/20 dark:border-cyan-500/30"
-                title="Show Menu Sidebar (Ctrl+B)"
-              >
-                <PanelLeftOpen className="w-4 h-4" />
-                <span>Menu</span>
-              </button>
-
-              <button
-                onClick={onPinSidebar}
-                className="p-1.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-cyan-300 hover:bg-slate-100 dark:hover:bg-[#0c1220] border border-slate-200/80 dark:border-slate-800 transition-colors"
-                title="Pin Left Sidebar"
-              >
-                <Pin className="w-4 h-4" />
-              </button>
+            <div className="hidden lg:flex items-center gap-2.5 select-none">
+              <span className="text-sm font-bold text-slate-900 dark:text-white tracking-tight">
+                Netplus Academy
+              </span>
+              <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">
+                • Enterprise Networking LMS
+              </span>
             </div>
           )}
         </div>

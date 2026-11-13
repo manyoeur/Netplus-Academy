@@ -75,8 +75,8 @@ const AcademyApp: React.FC = () => {
         setMobileMenuOpen={setMobileMenuOpen}
       />
 
-      {/* Content Wrapper shifted right when sidebar is pinned */}
-      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ease-in-out ${isSidebarPinned ? 'lg:pl-64' : 'lg:pl-0'}`}>
+      {/* Workspace Content Wrapper: responds smoothly to expanded sidebar (256px) or collapsed icon rail (72px) */}
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ease-in-out ${isSidebarPinned || isSidebarOpen ? 'lg:pl-64' : 'lg:pl-[72px]'}`}>
 
         {/* Sticky Top Bar (Top-right Fabric, Mode Toggle, Notifications, User Profile) */}
         <TopBar
@@ -87,11 +87,6 @@ const AcademyApp: React.FC = () => {
           isSidebarOpen={isSidebarOpen}
           mobileMenuOpen={mobileMenuOpen}
           setMobileMenuOpen={setMobileMenuOpen}
-          onShowSidebar={() => setIsSidebarOpen(true)}
-          onPinSidebar={() => {
-            setIsSidebarPinned(true);
-            setIsSidebarOpen(true);
-          }}
           onNavigateHome={() => {
             setCurrentTab('courses');
             setActiveCourseId(null);

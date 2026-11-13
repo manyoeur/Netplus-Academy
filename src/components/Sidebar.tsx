@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-  Network, 
-  UserCheck, 
-  Layers, 
-  Award, 
-  MessageSquare, 
-  BarChart3, 
-  Settings, 
-  CreditCard, 
-  Terminal, 
-  Calculator, 
+import {
+  Network,
+  UserCheck,
+  Layers,
+  Award,
+  MessageSquare,
+  BarChart3,
+  Settings,
+  CreditCard,
+  Terminal,
+  Calculator,
   X,
   Search,
   Command,
@@ -17,7 +17,8 @@ import {
   Globe,
   Pin,
   PinOff,
-  PanelLeftClose
+  PanelLeftClose,
+  PanelLeftOpen
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
 
@@ -34,6 +35,7 @@ interface SidebarProps {
 
 const INACTIVITY_HIDE_MS = 3500;
 const MOUSE_LEAVE_HIDE_MS = 650;
+const HOVER_EXPAND_DELAY_MS = 140;
 
 export const Sidebar: React.FC<SidebarProps> = ({
   currentTab,
@@ -49,10 +51,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandSearch, setCommandSearch] = useState('');
-  const [isMouseInside, setIsMouseInside] = useState(false);
 
   const hideTimerRef = useRef<number | null>(null);
-  const suppressEdgeHoverUntilRef = useRef<number>(0);
+  const hoverExpandTimerRef = useRef<number | null>(null);
+  const suppressHoverUntilRef = useRef<number>(0);
 
   const isPinnedRef = useRef(isPinned);
   const commandPaletteOpenRef = useRef(commandPaletteOpen);
@@ -72,18 +74,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   }, []);
 
+  const clearHoverExpandTimer = useCallback(() => {
+    if (hoverExpandTimerRef.current !== null) {
+      window.clearTimeout(hoverExpandTimerRef.current);
+      hoverExpandTimerRef.current = null;
+    }
+  }, []);
+
   const scheduleAutoHide = useCallback((delayMs: number) => {
     clearHideTimer();
     if (isPinnedRef.current || commandPaletteOpenRef.current) return;
     hideTimerRef.current = window.setTimeout(() => {
       if (isPinnedRef.current || commandPaletteOpenRef.current) return;
-      suppressEdgeHoverUntilRef.current = Date.now() + 500;
+      suppressHoverUntilRef.current = Date.now() + 450;
       setIsOpen(false);
-      setIsMouseInside(false);
     }, delayMs);
   }, [clearHideTimer, setIsOpen]);
 
-  // Keep open when pinned; start inactivity auto-hide timer whenever opened while unpinned
+  // Keep open when pinned; start inactivity auto-hide timer whenever expanded while unpinned
   useEffect(() => {
     if (isPinned) {
       clearHideTimer();
@@ -93,10 +101,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
     } else {
       clearHideTimer();
     }
-    return () => clearHideTimer();
+    return () => {
+      clearHideTimer();
+    };
   }, [isPinned, isOpen, commandPaletteOpen, clearHideTimer, scheduleAutoHide, setIsOpen]);
 
-  // Keyboard shortcuts (Cmd+K / Ctrl+K for Search, Cmd+B / Ctrl+B to toggle sidebar)
+  useEffect(() => {
+    return () => {
+      clearHideTimer();
+      clearHoverExpandTimer();
+    };
+  }, [clearHideTimer, clearHoverExpandTimer]);
+
+  // Keyboard shortcuts (Cmd+K / Ctrl+K for Search, Cmd+B / Ctrl+B to toggle pin/expand)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -127,31 +144,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleSidebarMouseEnter = () => {
-    setIsMouseInside(true);
-    resetInactivityTimer();
+    clearHideTimer();
+    if (!isOpen && !isPinned) {
+      if (Date.now() < suppressHoverUntilRef.current) return;
+      clearHoverExpandTimer();
+      hoverExpandTimerRef.current = window.setTimeout(() => {
+        setIsOpen(true);
+      }, HOVER_EXPAND_DELAY_MS);
+    } else {
+      resetInactivityTimer();
+    }
   };
 
   const handleSidebarMouseMove = () => {
-    if (!isMouseInside) setIsMouseInside(true);
-    resetInactivityTimer();
+    if (isOpen) {
+      resetInactivityTimer();
+    }
   };
 
   const handleSidebarMouseLeave = () => {
-    setIsMouseInside(false);
+    clearHoverExpandTimer();
     if (!isPinned && isOpen && !commandPaletteOpen) {
       scheduleAutoHide(MOUSE_LEAVE_HIDE_MS);
     }
   };
 
-  const handleEdgeHoverReveal = () => {
-    if (Date.now() < suppressEdgeHoverUntilRef.current) return;
-    if (!isOpen) {
-      setIsOpen(true);
-      setIsMouseInside(true);
-    }
-  };
-
   const handleTogglePin = () => {
+    clearHoverExpandTimer();
     if (isPinned) {
       setIsPinned(false);
     } else {
@@ -161,12 +180,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleHideSidebar = () => {
+  const handleCollapseToIcons = () => {
     clearHideTimer();
-    suppressEdgeHoverUntilRef.current = Date.now() + 500;
+    clearHoverExpandTimer();
+    suppressHoverUntilRef.current = Date.now() + 600;
     setIsPinned(false);
     setIsOpen(false);
-    setIsMouseInside(false);
+  };
+
+  const handleExpandSidebar = () => {
+    clearHoverExpandTimer();
+    setIsOpen(true);
   };
 
   const handleNavClick = (tabId: string) => {
@@ -174,6 +198,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setMobileMenuOpen(false);
     resetInactivityTimer();
   };
+
+  const isAdminOrInstructor = currentUser.role === 'admin' || currentUser.role === 'instructor';
 
   const quickJumpItems = [
     { id: 'courses', label: 'Course Catalog & Syllabus', category: 'Curriculum', icon: Layers },
@@ -183,33 +209,43 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'certificates', label: 'Verifiable Digital Credentials & Registry', category: 'Certificates', icon: Award },
     { id: 'forum', label: 'Network Engineers Discussion Forum', category: 'Community', icon: MessageSquare },
     { id: 'pricing', label: 'Subscription Tiers & Pro Checkout', category: 'Account', icon: CreditCard },
-    ...(currentUser.role === 'admin' || currentUser.role === 'instructor' ? [
-      { id: 'management', label: 'Admin Course Manager & Enrollment Telemetry', category: 'Administration', icon: Settings },
-      { id: 'analytics', label: 'Real-Time Learner Activity Stream', category: 'Administration', icon: BarChart3 },
-      { id: 'lms', label: 'External LMS (Canvas / Blackboard / SCORM)', category: 'Administration', icon: Globe }
-    ] : [])
+    ...(isAdminOrInstructor
+      ? [
+          { id: 'management', label: 'Admin Course Manager & Enrollment Telemetry', category: 'Administration', icon: Settings },
+          { id: 'analytics', label: 'Real-Time Learner Activity Stream', category: 'Administration', icon: BarChart3 },
+          { id: 'lms', label: 'External LMS (Canvas / Blackboard / SCORM)', category: 'Administration', icon: Globe }
+        ]
+      : [])
   ];
 
-  const filteredQuickJumps = quickJumpItems.filter(item => 
-    item.label.toLowerCase().includes(commandSearch.toLowerCase()) ||
-    item.category.toLowerCase().includes(commandSearch.toLowerCase())
+  const railNavItems = [
+    { id: 'courses', label: 'Courses', icon: Layers, dot: false },
+    { id: 'dashboard', label: 'My Learning', icon: UserCheck, dot: false },
+    { id: 'lab-sandbox', label: 'Cisco CLI Sandbox', icon: Terminal, dot: true },
+    { id: 'subnet-calc', label: 'Subnet & VLSM Calc', icon: Calculator, dot: false },
+    { id: 'certificates', label: 'Certificates', icon: Award, dot: false },
+    { id: 'forum', label: 'Discussion Forum', icon: MessageSquare, dot: false },
+    ...(isAdminOrInstructor
+      ? [
+          { id: 'management', label: 'Course Manager', icon: Settings, dot: true },
+          { id: 'analytics', label: 'Live Analytics', icon: BarChart3, dot: true },
+          { id: 'lms', label: 'LMS & SCORM API', icon: Globe, dot: false }
+        ]
+      : [])
+  ];
+
+  const filteredQuickJumps = quickJumpItems.filter(
+    item =>
+      item.label.toLowerCase().includes(commandSearch.toLowerCase()) ||
+      item.category.toLowerCase().includes(commandSearch.toLowerCase())
   );
 
   const isSidebarShown = isPinned || isOpen;
+  // On mobile (< lg), always render the expanded drawer layout when opened; on desktop (lg+), toggle between w-64 and w-[72px] icon rail
+  const isExpandedView = isSidebarShown || mobileMenuOpen;
 
   return (
     <>
-      {/* Desktop Left-Edge Hover Sensor (reveals sidebar when hidden) */}
-      {!isSidebarShown && (
-        <div
-          onMouseEnter={handleEdgeHoverReveal}
-          className="hidden lg:flex fixed top-0 left-0 bottom-0 w-3.5 z-40 group cursor-e-resize items-center"
-          title="Move mouse here to show sidebar"
-        >
-          <div className="w-1 h-20 rounded-r-full bg-blue-500/40 dark:bg-cyan-400/40 group-hover:bg-blue-500 dark:group-hover:bg-cyan-400 group-hover:w-1.5 transition-all" />
-        </div>
-      )}
-
       {/* Mobile Backdrop */}
       {mobileMenuOpen && (
         <div
@@ -218,7 +254,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         />
       )}
 
-      {/* Left Sidebar (Desktop Auto-Hide / Pin + Mobile Drawer) */}
+      {/* Left Sidebar: Desktop expands (w-64) or auto-hides into Compact Icon Rail (lg:w-[72px]); Mobile is slide-over drawer */}
       <aside
         onMouseEnter={handleSidebarMouseEnter}
         onMouseMove={handleSidebarMouseMove}
@@ -226,240 +262,311 @@ export const Sidebar: React.FC<SidebarProps> = ({
         onWheel={resetInactivityTimer}
         onMouseDown={resetInactivityTimer}
         onKeyDown={resetInactivityTimer}
-        className={`fixed top-0 left-0 bottom-0 z-50 w-64 flex flex-col backdrop-blur-2xl bg-white/95 dark:bg-[#090e1a]/95 border-r border-slate-200/90 dark:border-slate-800/90 transition-transform duration-300 ease-in-out ${
+        className={`fixed top-0 left-0 bottom-0 z-50 flex flex-col backdrop-blur-2xl bg-white/95 dark:bg-[#090e1a]/95 border-r border-slate-200/90 dark:border-slate-800/90 transition-all duration-300 ease-in-out ${
           mobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
+        } lg:translate-x-0 w-64 ${
+          isSidebarShown ? 'lg:w-64' : 'lg:w-[72px]'
         } ${
-          isSidebarShown ? 'lg:translate-x-0' : 'lg:-translate-x-full'
-        } ${
-          !isPinned && isSidebarShown ? 'lg:shadow-2xl lg:shadow-black/40' : ''
+          !isPinned && isSidebarShown ? 'lg:shadow-2xl lg:shadow-black/30' : ''
         }`}
       >
-        {/* Sidebar Brand & Pin / Hide Header */}
-        <div className="px-3.5 py-3.5 border-b border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between gap-2">
-          <div 
-            className="flex items-center gap-2.5 cursor-pointer group select-none min-w-0"
-            onClick={() => handleNavClick('courses')}
-          >
-            <div className="relative flex items-center justify-center w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 text-white shadow-md shadow-blue-500/20 ring-1 ring-white/20 shrink-0 group-hover:scale-105 transition-transform">
-              <Network className="w-4 h-4 text-white" />
-              <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 ring-2 ring-white dark:ring-[#090e1a]" />
-              </span>
-            </div>
+        {isExpandedView ? (
+          <>
+            {/* Expanded Sidebar Header */}
+            <div className="px-3.5 py-3.5 border-b border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between gap-2">
+              <div
+                className="flex items-center gap-2.5 cursor-pointer group select-none min-w-0"
+                onClick={() => handleNavClick('courses')}
+              >
+                <div className="relative flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 text-white shadow-md shadow-blue-500/25 ring-1 ring-white/20 shrink-0 group-hover:scale-105 transition-transform">
+                  <Network className="w-4 h-4 text-white" />
+                  <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 ring-2 ring-white dark:ring-[#090e1a]" />
+                  </span>
+                </div>
 
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className="text-base font-black tracking-tight bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400 bg-clip-text text-transparent truncate">
-                  Netplus
-                </span>
-                <span className="text-[8px] uppercase font-mono font-bold tracking-wider px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-cyan-950/60 dark:text-cyan-300 border border-blue-200/80 dark:border-cyan-800/50">
-                  Academy
-                </span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base font-black tracking-tight bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400 bg-clip-text text-transparent truncate">
+                      Netplus
+                    </span>
+                    <span className="text-[8px] uppercase font-mono font-bold tracking-wider px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-cyan-950/60 dark:text-cyan-300 border border-blue-200/80 dark:border-cyan-800/50">
+                      Academy
+                    </span>
+                  </div>
+                  <p className="hidden lg:block text-[9px] font-mono text-slate-400 dark:text-slate-500 truncate">
+                    {isPinned ? 'Sidebar Pinned' : 'Auto-hide Active'}
+                  </p>
+                </div>
               </div>
-              <p className="hidden lg:block text-[9px] font-mono text-slate-400 dark:text-slate-500 truncate">
-                {isPinned ? 'Sidebar Pinned' : 'Auto-hide Active'}
-              </p>
-            </div>
-          </div>
 
-          {/* Desktop Pin & Hide Controls */}
-          <div className="hidden lg:flex items-center gap-1 shrink-0">
-            <button
-              onClick={handleTogglePin}
-              className={`p-1.5 rounded-lg transition-colors ${
-                isPinned
-                  ? 'bg-blue-600/15 dark:bg-cyan-500/20 text-blue-600 dark:text-cyan-300 border border-blue-500/30 dark:border-cyan-500/30'
-                  : 'text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-              title={isPinned ? 'Unpin Sidebar (Enable Auto-Hide)' : 'Pin Sidebar Open'}
-            >
-              {isPinned ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
-            </button>
+              {/* Desktop Pin & Collapse-to-Rail Controls */}
+              <div className="hidden lg:flex items-center gap-1 shrink-0">
+                <button
+                  onClick={handleTogglePin}
+                  className={`p-1.5 rounded-lg transition-colors ${
+                    isPinned
+                      ? 'bg-blue-600/15 dark:bg-cyan-500/20 text-blue-600 dark:text-cyan-300 border border-blue-500/30 dark:border-cyan-500/30'
+                      : 'text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                  title={isPinned ? 'Unpin Sidebar (Enable Auto-Hide)' : 'Pin Sidebar Open'}
+                >
+                  {isPinned ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
+                </button>
 
-            <button
-              onClick={handleHideSidebar}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              title="Hide Sidebar"
-            >
-              <PanelLeftClose className="w-3.5 h-3.5" />
-            </button>
-          </div>
+                <button
+                  onClick={handleCollapseToIcons}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  title="Collapse to Icon Rail"
+                >
+                  <PanelLeftClose className="w-3.5 h-3.5" />
+                </button>
+              </div>
 
-          {/* Mobile Close Button */}
-          <button
-            onClick={() => setMobileMenuOpen(false)}
-            className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Search Trigger Bar */}
-        <div className="px-3 pt-3">
-          <button
-            onClick={() => setCommandPaletteOpen(true)}
-            className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs bg-slate-100/90 dark:bg-[#0d1424] border border-slate-200/80 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-blue-400 dark:hover:border-cyan-500/50 transition-colors"
-          >
-            <span className="flex items-center gap-2">
-              <Search className="w-3.5 h-3.5" />
-              <span>Quick Jump...</span>
-            </span>
-            <kbd className="inline-flex items-center text-[9px] font-mono px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-400">
-              <Command className="w-2.5 h-2.5 mr-0.5" />K
-            </kbd>
-          </button>
-        </div>
-
-        {/* Navigation Links */}
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-5">
-          {/* Curriculum */}
-          <div className="space-y-1">
-            <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-              Curriculum
-            </p>
-            <button
-              onClick={() => handleNavClick('courses')}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                currentTab === 'courses'
-                  ? 'bg-blue-600/10 dark:bg-cyan-500/15 text-blue-600 dark:text-cyan-300 border border-blue-500/20 dark:border-cyan-500/30 shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 border border-transparent'
-              }`}
-            >
-              <Layers className="w-4 h-4 shrink-0" />
-              <span>Courses</span>
-            </button>
-
-            <button
-              onClick={() => handleNavClick('dashboard')}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                currentTab === 'dashboard'
-                  ? 'bg-blue-600/10 dark:bg-cyan-500/15 text-blue-600 dark:text-cyan-300 border border-blue-500/20 dark:border-cyan-500/30 shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 border border-transparent'
-              }`}
-            >
-              <UserCheck className="w-4 h-4 shrink-0" />
-              <span>My Learning</span>
-            </button>
-          </div>
-
-          {/* Hands-on Labs */}
-          <div className="space-y-1">
-            <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-              Hands-on Labs
-            </p>
-            <button
-              onClick={() => handleNavClick('lab-sandbox')}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                currentTab === 'lab-sandbox'
-                  ? 'bg-blue-600/10 dark:bg-cyan-500/15 text-blue-600 dark:text-cyan-300 border border-blue-500/20 dark:border-cyan-500/30 shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 border border-transparent'
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Terminal className="w-4 h-4 text-cyan-500 shrink-0" />
-                <span>Cisco CLI Sandbox</span>
-              </span>
-              <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300 font-bold">
-                IOS
-              </span>
-            </button>
-
-            <button
-              onClick={() => handleNavClick('subnet-calc')}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                currentTab === 'subnet-calc'
-                  ? 'bg-blue-600/10 dark:bg-cyan-500/15 text-blue-600 dark:text-cyan-300 border border-blue-500/20 dark:border-cyan-500/30 shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 border border-transparent'
-              }`}
-            >
-              <Calculator className="w-4 h-4 text-blue-500 shrink-0" />
-              <span>Subnet & VLSM Calc</span>
-            </button>
-          </div>
-
-          {/* Community & Credentials */}
-          <div className="space-y-1">
-            <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-              Community & Credentials
-            </p>
-            <button
-              onClick={() => handleNavClick('certificates')}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                currentTab === 'certificates'
-                  ? 'bg-blue-600/10 dark:bg-cyan-500/15 text-blue-600 dark:text-cyan-300 border border-blue-500/20 dark:border-cyan-500/30 shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 border border-transparent'
-              }`}
-            >
-              <Award className="w-4 h-4 text-amber-500 shrink-0" />
-              <span>Certificates</span>
-            </button>
-
-            <button
-              onClick={() => handleNavClick('forum')}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                currentTab === 'forum'
-                  ? 'bg-blue-600/10 dark:bg-cyan-500/15 text-blue-600 dark:text-cyan-300 border border-blue-500/20 dark:border-cyan-500/30 shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 border border-transparent'
-              }`}
-            >
-              <MessageSquare className="w-4 h-4 shrink-0" />
-              <span>Discussion Forum</span>
-            </button>
-          </div>
-
-          {/* Administration (Instructor & Admin) */}
-          {(currentUser.role === 'admin' || currentUser.role === 'instructor') && (
-            <div className="space-y-1">
-              <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                Administration
-              </p>
+              {/* Mobile Close Button */}
               <button
-                onClick={() => handleNavClick('management')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                  currentTab === 'management'
-                    ? 'bg-blue-600/10 dark:bg-cyan-500/15 text-blue-600 dark:text-cyan-300 border border-blue-500/20 dark:border-cyan-500/30 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 border border-transparent'
-                }`}
+                onClick={() => setMobileMenuOpen(false)}
+                className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800"
               >
-                <Settings className="w-4 h-4 text-blue-500 shrink-0" />
-                <span>Course Manager</span>
-              </button>
-
-              <button
-                onClick={() => handleNavClick('analytics')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                  currentTab === 'analytics'
-                    ? 'bg-blue-600/10 dark:bg-cyan-500/15 text-blue-600 dark:text-cyan-300 border border-blue-500/20 dark:border-cyan-500/30 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 border border-transparent'
-                }`}
-              >
-                <BarChart3 className="w-4 h-4 text-emerald-500 shrink-0" />
-                <span>Live Analytics</span>
-              </button>
-
-              <button
-                onClick={() => handleNavClick('lms')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                  currentTab === 'lms'
-                    ? 'bg-blue-600/10 dark:bg-cyan-500/15 text-blue-600 dark:text-cyan-300 border border-blue-500/20 dark:border-cyan-500/30 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 border border-transparent'
-                }`}
-              >
-                <Globe className="w-4 h-4 text-purple-500 shrink-0" />
-                <span>LMS & SCORM API</span>
+                <X className="w-4 h-4" />
               </button>
             </div>
-          )}
-        </div>
 
-        {/* Slim Footer */}
-        <div className="px-3.5 py-2.5 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between text-[10px] font-mono text-slate-400 dark:text-slate-500 bg-slate-50/70 dark:bg-[#070b14]/60">
-          <span>{isPinned ? 'Pinned Mode' : 'Auto-hide (3.5s)'}</span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px]">
-            Ctrl+B
-          </kbd>
-        </div>
+            {/* Search Trigger Bar */}
+            <div className="px-3 pt-3">
+              <button
+                onClick={() => setCommandPaletteOpen(true)}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs bg-slate-100/90 dark:bg-[#0d1424] border border-slate-200/80 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-blue-400 dark:hover:border-cyan-500/50 transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <Search className="w-3.5 h-3.5" />
+                  <span>Quick Jump...</span>
+                </span>
+                <kbd className="inline-flex items-center text-[9px] font-mono px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-400">
+                  <Command className="w-2.5 h-2.5 mr-0.5" />K
+                </kbd>
+              </button>
+            </div>
+
+            {/* Expanded Navigation Links */}
+            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-5">
+              {/* Curriculum */}
+              <div className="space-y-1">
+                <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Curriculum
+                </p>
+                <button
+                  onClick={() => handleNavClick('courses')}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                    currentTab === 'courses'
+                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                  }`}
+                >
+                  <Layers className="w-4 h-4 shrink-0" />
+                  <span>Courses</span>
+                </button>
+
+                <button
+                  onClick={() => handleNavClick('dashboard')}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                    currentTab === 'dashboard'
+                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                  }`}
+                >
+                  <UserCheck className="w-4 h-4 shrink-0" />
+                  <span>My Learning</span>
+                </button>
+              </div>
+
+              {/* Hands-on Labs */}
+              <div className="space-y-1">
+                <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Hands-on Labs
+                </p>
+                <button
+                  onClick={() => handleNavClick('lab-sandbox')}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                    currentTab === 'lab-sandbox'
+                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                  }`}
+                >
+                  <span className="flex items-center gap-2.5">
+                    <Terminal className={`w-4 h-4 shrink-0 ${currentTab === 'lab-sandbox' ? 'text-white' : 'text-cyan-500'}`} />
+                    <span>Cisco CLI Sandbox</span>
+                  </span>
+                  <span
+                    className={`text-[9px] uppercase font-mono px-1.5 py-0.5 rounded font-bold ${
+                      currentTab === 'lab-sandbox'
+                        ? 'bg-white/20 text-white'
+                        : 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300'
+                    }`}
+                  >
+                    IOS
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => handleNavClick('subnet-calc')}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                    currentTab === 'subnet-calc'
+                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                  }`}
+                >
+                  <Calculator className={`w-4 h-4 shrink-0 ${currentTab === 'subnet-calc' ? 'text-white' : 'text-blue-500'}`} />
+                  <span>Subnet & VLSM Calc</span>
+                </button>
+              </div>
+
+              {/* Community & Credentials */}
+              <div className="space-y-1">
+                <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Community & Credentials
+                </p>
+                <button
+                  onClick={() => handleNavClick('certificates')}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                    currentTab === 'certificates'
+                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                  }`}
+                >
+                  <Award className={`w-4 h-4 shrink-0 ${currentTab === 'certificates' ? 'text-white' : 'text-amber-500'}`} />
+                  <span>Certificates</span>
+                </button>
+
+                <button
+                  onClick={() => handleNavClick('forum')}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                    currentTab === 'forum'
+                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                  }`}
+                >
+                  <MessageSquare className="w-4 h-4 shrink-0" />
+                  <span>Discussion Forum</span>
+                </button>
+              </div>
+
+              {/* Administration (Instructor & Admin) */}
+              {isAdminOrInstructor && (
+                <div className="space-y-1">
+                  <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    Administration
+                  </p>
+                  <button
+                    onClick={() => handleNavClick('management')}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                      currentTab === 'management'
+                        ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <Settings className={`w-4 h-4 shrink-0 ${currentTab === 'management' ? 'text-white' : 'text-blue-500'}`} />
+                    <span>Course Manager</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleNavClick('analytics')}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                      currentTab === 'analytics'
+                        ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <BarChart3 className={`w-4 h-4 shrink-0 ${currentTab === 'analytics' ? 'text-white' : 'text-emerald-500'}`} />
+                    <span>Live Analytics</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleNavClick('lms')}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                      currentTab === 'lms'
+                        ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <Globe className={`w-4 h-4 shrink-0 ${currentTab === 'lms' ? 'text-white' : 'text-purple-500'}`} />
+                    <span>LMS & SCORM API</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Slim Footer */}
+            <div className="px-3.5 py-2.5 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between text-[10px] font-mono text-slate-400 dark:text-slate-500 bg-slate-50/70 dark:bg-[#070b14]/60">
+              <span>{isPinned ? 'Pinned Mode' : 'Auto-hide (3.5s)'}</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px]">
+                Ctrl+B
+              </kbd>
+            </div>
+          </>
+        ) : (
+          /* Collapsed Auto-Hide Icon Rail (Desktop) */
+          <div className="flex flex-col items-center h-full py-3.5">
+            {/* Top Brand Symbol */}
+            <div className="w-full flex justify-center pb-3.5 border-b border-slate-200/80 dark:border-slate-800/80">
+              <button
+                onClick={() => handleNavClick('courses')}
+                className="relative flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 text-white shadow-lg shadow-blue-500/25 ring-1 ring-white/20 hover:scale-105 transition-transform"
+                title="Netplus Academy (Hover rail to expand)"
+                aria-label="Netplus Academy Home"
+              >
+                <Network className="w-5 h-5 text-white" />
+              </button>
+            </div>
+
+            {/* Menu Symbol Icons Column */}
+            <div className="flex-1 w-full overflow-y-auto py-3.5 flex flex-col items-center gap-2">
+              {railNavItems.map(item => {
+                const Icon = item.icon;
+                const isActive = currentTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => handleNavClick(item.id)}
+                    title={item.label}
+                    aria-label={item.label}
+                    className={`relative flex items-center justify-center w-12 h-11 rounded-2xl transition-all ${
+                      isActive
+                        ? 'bg-gradient-to-tr from-indigo-600 via-blue-600 to-violet-500 text-white shadow-lg shadow-indigo-500/35'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/70'
+                    }`}
+                  >
+                    <Icon className="w-[18px] h-[18px]" />
+                    {item.dot && !isActive && (
+                      <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-indigo-500 dark:bg-indigo-400 ring-2 ring-white dark:ring-[#090e1a]" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Bottom Rail Controls (Expand & Pin) */}
+            <div className="w-full pt-3 border-t border-slate-200/80 dark:border-slate-800/80 flex flex-col items-center gap-1.5">
+              <button
+                onClick={handleExpandSidebar}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-colors"
+                title="Expand Sidebar"
+                aria-label="Expand Sidebar"
+              >
+                <PanelLeftOpen className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handleTogglePin}
+                className="p-2 rounded-xl text-slate-400 hover:text-blue-600 dark:hover:text-cyan-300 hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-colors"
+                title="Pin Sidebar Open (Ctrl+B)"
+                aria-label="Pin Sidebar Open"
+              >
+                <Pin className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
       </aside>
 
       {/* Global Quick Search / Command Palette Modal */}
