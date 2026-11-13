@@ -60,7 +60,7 @@ export const CertificateViewer: React.FC<CertificateViewerProps> = ({
   };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
+    <div className="w-full space-y-8">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-gradient-to-r from-amber-600 via-amber-700 to-indigo-900 text-white shadow-xl">
         <div>

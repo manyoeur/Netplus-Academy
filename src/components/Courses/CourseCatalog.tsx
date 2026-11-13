@@ -47,7 +47,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
   });
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8">
+    <div className="w-full space-y-8">
       {/* Hero Banner */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-950 via-blue-950 to-indigo-950 text-white p-8 sm:p-12 border border-slate-800 shadow-2xl">
         <div className="absolute top-0 right-0 -mt-10 -mr-10 w-80 h-80 rounded-full bg-blue-600/10 blur-3xl pointer-events-none" />
@@ -120,7 +120,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
       </div>
 
       {/* Course Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
         {filteredCourses.map(course => {
           const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
           const completedCount = course.modules.filter(m => currentUser.completedModuleIds.includes(m.id)).length;

@@ -33,7 +33,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const totalCompletedModules = currentUser.completedModuleIds.length;
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8">
+    <div className="w-full space-y-8">
       {/* Welcome Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-xl">
         <div className="flex items-center gap-4">

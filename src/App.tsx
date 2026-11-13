@@ -111,8 +111,12 @@ const AcademyApp: React.FC = () => {
           </div>
         )}
 
-        {/* Main Content Area */}
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* Main Content Area: tighter margins & full width when sidebar is auto-hidden into icon rail */}
+        <main className={`flex-1 w-full transition-all duration-300 ease-in-out ${
+          isSidebarPinned || isSidebarOpen
+            ? 'max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-7 py-6'
+            : 'max-w-none px-3 sm:px-4 lg:px-5 py-5'
+        }`}>
         
         {/* Learning Player */}
         {currentTab === 'player' && activeCourseId && (
@@ -220,7 +224,11 @@ const AcademyApp: React.FC = () => {
 
       {/* Footer */}
       <footer className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 py-6 text-xs text-slate-500 dark:text-slate-400">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className={`w-full flex flex-col sm:flex-row items-center justify-between gap-3 transition-all duration-300 ${
+          isSidebarPinned || isSidebarOpen
+            ? 'max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-7'
+            : 'max-w-none px-3 sm:px-4 lg:px-5'
+        }`}>
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-800 dark:text-slate-200">Netplus Academy</span>
             <span>• Enterprise Networking Certification LMS</span>

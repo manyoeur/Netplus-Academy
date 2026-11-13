@@ -23,7 +23,7 @@ export const AnalyticsDashboard: React.FC = () => {
   const avgQuiz = Math.round(studentProgressList.reduce((acc, p) => acc + p.quizAverage, 0) / (studentProgressList.length || 1));
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
+    <div className="w-full space-y-6">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-gradient-to-r from-blue-950 via-slate-900 to-indigo-950 text-white shadow-xl border border-slate-800">
         <div>

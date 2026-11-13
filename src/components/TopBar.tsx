@@ -72,7 +72,11 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   return (
     <header className="sticky top-0 z-30 w-full backdrop-blur-2xl bg-white/85 dark:bg-[#070b14]/85 border-b border-slate-200/90 dark:border-slate-800/90 transition-colors">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-2">
+      <div className={`w-full h-14 flex items-center justify-between gap-2 transition-all duration-300 ${
+        isSidebarShown
+          ? 'max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-7'
+          : 'max-w-none px-3 sm:px-4 lg:px-5'
+      }`}>
         
         {/* Top-Left: Mobile Menu + Brand (small screens) OR Sidebar Reveal Controls when unpinned/hidden */}
         <div className="flex items-center gap-2 min-w-0">
