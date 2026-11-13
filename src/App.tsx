@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AcademyProvider, useAcademy } from './context/AcademyContext';
-import { Navbar } from './components/Navbar';
+import { Sidebar } from './components/Sidebar';
+import { TopBar } from './components/TopBar';
 import { CourseCatalog } from './components/Courses/CourseCatalog';
 import { CoursePlayer } from './components/Courses/CoursePlayer';
 import { StudentDashboard } from './components/Dashboard/StudentDashboard';
@@ -14,13 +15,33 @@ import { DiscussionForum } from './components/Forum/DiscussionForum';
 import { NotificationDrawer } from './components/Notifications/NotificationDrawer';
 import { LoginModal } from './components/Auth/LoginModal';
 import { PaymentGatewayModal } from './components/Billing/PaymentGatewayModal';
-import { WifiOff, RefreshCw, Terminal, Layers } from 'lucide-react';
+import { WifiOff, Terminal } from 'lucide-react';
 
 const AcademyApp: React.FC = () => {
   const { isOffline, toggleManualOfflineSim, courses } = useAcademy();
 
   const [currentTab, setCurrentTab] = useState<string>('courses');
   const [activeCourseId, setActiveCourseId] = useState<string | null>(null);
+
+  // Left Sidebar Pin & Auto-Hide State (auto-hide active by default unless pinned)
+  const [isSidebarPinned, setIsSidebarPinned] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('netpulse_academy_sidebar_pinned_v2');
+      return saved !== null ? JSON.parse(saved) : false;
+    } catch {
+      return false;
+    }
+  });
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('netpulse_academy_sidebar_pinned_v2', JSON.stringify(isSidebarPinned));
+    } catch {
+      // ignore storage errors
+    }
+  }, [isSidebarPinned]);
 
   // Modals & Drawers
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -35,26 +56,8 @@ const AcademyApp: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#070b14] text-slate-900 dark:text-slate-100 transition-colors flex flex-col font-sans">
       
-      {/* Offline Alert Bar */}
-      {isOffline && (
-        <div className="bg-amber-600 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between shadow-inner">
-          <div className="flex items-center gap-2">
-            <WifiOff className="w-4 h-4 animate-bounce" />
-            <span>
-              <strong>Offline Mode Active:</strong> All course content, Subnetting calculator, and Cisco CLI terminal sandbox are fully accessible offline.
-            </span>
-          </div>
-          <button
-            onClick={toggleManualOfflineSim}
-            className="px-2.5 py-0.5 rounded bg-white/20 hover:bg-white/30 text-[11px] font-mono transition-colors"
-          >
-            Reconnect Network
-          </button>
-        </div>
-      )}
-
-      {/* Main Top Header */}
-      <Navbar
+      {/* Left Navigation Sidebar */}
+      <Sidebar
         currentTab={currentTab}
         setCurrentTab={(tab) => {
           if (tab === 'pricing') {
@@ -64,12 +67,57 @@ const AcademyApp: React.FC = () => {
             setActiveCourseId(null);
           }
         }}
-        onOpenLogin={() => setIsLoginOpen(true)}
-        onOpenNotifications={() => setIsNotificationsOpen(true)}
+        isPinned={isSidebarPinned}
+        setIsPinned={setIsSidebarPinned}
+        isOpen={isSidebarOpen}
+        setIsOpen={setIsSidebarOpen}
+        mobileMenuOpen={mobileMenuOpen}
+        setMobileMenuOpen={setMobileMenuOpen}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {/* Content Wrapper shifted right when sidebar is pinned */}
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ease-in-out ${isSidebarPinned ? 'lg:pl-64' : 'lg:pl-0'}`}>
+
+        {/* Sticky Top Bar (Top-right Fabric, Mode Toggle, Notifications, User Profile) */}
+        <TopBar
+          onOpenLogin={() => setIsLoginOpen(true)}
+          onOpenNotifications={() => setIsNotificationsOpen(true)}
+          onOpenPricing={() => setIsPaymentOpen(true)}
+          isSidebarPinned={isSidebarPinned}
+          isSidebarOpen={isSidebarOpen}
+          mobileMenuOpen={mobileMenuOpen}
+          setMobileMenuOpen={setMobileMenuOpen}
+          onShowSidebar={() => setIsSidebarOpen(true)}
+          onPinSidebar={() => {
+            setIsSidebarPinned(true);
+            setIsSidebarOpen(true);
+          }}
+          onNavigateHome={() => {
+            setCurrentTab('courses');
+            setActiveCourseId(null);
+          }}
+        />
+
+        {/* Offline Alert Bar */}
+        {isOffline && (
+          <div className="bg-amber-600 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between shadow-inner">
+            <div className="flex items-center gap-2">
+              <WifiOff className="w-4 h-4 animate-bounce" />
+              <span>
+                <strong>Offline Mode Active:</strong> All course content, Subnetting calculator, and Cisco CLI terminal sandbox are fully accessible offline.
+              </span>
+            </div>
+            <button
+              onClick={toggleManualOfflineSim}
+              className="px-2.5 py-0.5 rounded bg-white/20 hover:bg-white/30 text-[11px] font-mono transition-colors"
+            >
+              Reconnect Network
+            </button>
+          </div>
+        )}
+
+        {/* Main Content Area */}
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         
         {/* Learning Player */}
         {currentTab === 'player' && activeCourseId && (
@@ -192,6 +240,7 @@ const AcademyApp: React.FC = () => {
         </div>
       </footer>
 
+      </div>
     </div>
   );
 };

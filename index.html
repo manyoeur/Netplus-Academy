@@ -6,6 +6,17 @@
     <script>
       (function() {
         try {
+          var savedDark = localStorage.getItem('netpulse_academy_dark_mode');
+          var isDark = savedDark !== null ? JSON.parse(savedDark) : true;
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+        } catch (e) {
+          document.documentElement.classList.add('dark');
+        }
+        try {
           var _rawFetch = window.fetch;
           var _boundFetch = _rawFetch ? function() { return _rawFetch.apply(window, arguments); } : undefined;
           Object.defineProperty(window, 'fetch', {
@@ -23,9 +34,9 @@
       })();
     </script>
     <title>Netplus Academy - Enterprise Networking & Certification LMS</title>
-    <meta name="description" content="Netplus Academy - Premier networking academy featuring real-time lab tracking, automated certificates, AI tutoring assistant, subscription billing, interactive CLI/topology, and external LMS integrations." />
+    <meta name="description" content="Netplus Academy - Premier networking academy featuring real-time lab tracking, automated certificates, subscription billing, interactive CLI/topology, and external LMS integrations." />
     <meta property="og:title" content="Netplus Academy - Enterprise Networking & Certification LMS" />
-    <meta property="og:description" content="Netplus Academy - Premier networking academy featuring real-time lab tracking, automated certificates, AI tutoring assistant, subscription billing, interactive CLI/topology, and external LMS integrations." />
+    <meta property="og:description" content="Netplus Academy - Premier networking academy featuring real-time lab tracking, automated certificates, subscription billing, interactive CLI/topology, and external LMS integrations." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
