@@ -53,6 +53,9 @@ interface AcademyContextType {
   updateCourse: (courseId: string, updated: Partial<Course>) => void;
   deleteCourse: (courseId: string) => void;
   addModuleToCourse: (courseId: string, module: CourseModule) => void;
+  updateModuleInCourse: (courseId: string, moduleId: string, updated: Partial<CourseModule>) => void;
+  deleteModuleFromCourse: (courseId: string, moduleId: string) => void;
+  reorderModuleInCourse: (courseId: string, moduleId: string, direction: 'up' | 'down') => void;
   
   // Certificates
   generateCertificate: (courseId: string) => Certificate;
@@ -388,7 +391,28 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const updateCourse = (courseId: string, updated: Partial<Course>) => {
-    setCourses(prev => prev.map(c => c.id === courseId ? { ...c, ...updated, updatedAt: new Date().toISOString().split('T')[0] } : c));
+    const today = new Date().toISOString().split('T')[0];
+    setCourses(prev =>
+      prev.map(c => (c.id === courseId ? { ...c, ...updated, updatedAt: today } : c))
+    );
+    if (updated.code || updated.title) {
+      setStudentProgressList(prev =>
+        prev.map(p =>
+          p.courseId === courseId
+            ? {
+                ...p,
+                courseCode: updated.code ?? p.courseCode,
+                courseTitle: updated.title ?? p.courseTitle
+              }
+            : p
+        )
+      );
+    }
+    triggerSystemNotification(
+      'Course Updated',
+      `Changes to ${updated.code || 'course'} have been saved and published to the curriculum.`,
+      'course'
+    );
   };
 
   const deleteCourse = (courseId: string) => {
@@ -396,17 +420,77 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const addModuleToCourse = (courseId: string, newModule: CourseModule) => {
-    setCourses(prev => prev.map(c => {
-      if (c.id === courseId) {
-        const modules = [...c.modules, newModule];
+    const today = new Date().toISOString().split('T')[0];
+    setCourses(prev =>
+      prev.map(c => {
+        if (c.id === courseId) {
+          const modules = [...c.modules, newModule];
+          return {
+            ...c,
+            modules,
+            modulesCount: modules.length,
+            updatedAt: today
+          };
+        }
+        return c;
+      })
+    );
+  };
+
+  const updateModuleInCourse = (courseId: string, moduleId: string, updated: Partial<CourseModule>) => {
+    const today = new Date().toISOString().split('T')[0];
+    setCourses(prev =>
+      prev.map(c => {
+        if (c.id === courseId) {
+          const modules = c.modules.map(m => (m.id === moduleId ? { ...m, ...updated } : m));
+          return {
+            ...c,
+            modules,
+            updatedAt: today
+          };
+        }
+        return c;
+      })
+    );
+  };
+
+  const deleteModuleFromCourse = (courseId: string, moduleId: string) => {
+    const today = new Date().toISOString().split('T')[0];
+    setCourses(prev =>
+      prev.map(c => {
+        if (c.id === courseId) {
+          const modules = c.modules.filter(m => m.id !== moduleId);
+          return {
+            ...c,
+            modules,
+            modulesCount: modules.length,
+            updatedAt: today
+          };
+        }
+        return c;
+      })
+    );
+  };
+
+  const reorderModuleInCourse = (courseId: string, moduleId: string, direction: 'up' | 'down') => {
+    const today = new Date().toISOString().split('T')[0];
+    setCourses(prev =>
+      prev.map(c => {
+        if (c.id !== courseId) return c;
+        const idx = c.modules.findIndex(m => m.id === moduleId);
+        if (idx === -1) return c;
+        const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if (targetIdx < 0 || targetIdx >= c.modules.length) return c;
+        const modules = [...c.modules];
+        const [moved] = modules.splice(idx, 1);
+        modules.splice(targetIdx, 0, moved);
         return {
           ...c,
           modules,
-          modulesCount: modules.length
+          updatedAt: today
         };
-      }
-      return c;
-    }));
+      })
+    );
   };
 
   // Certificate Generation
@@ -714,6 +798,9 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         updateCourse,
         deleteCourse,
         addModuleToCourse,
+        updateModuleInCourse,
+        deleteModuleFromCourse,
+        reorderModuleInCourse,
         generateCertificate,
         verifyCertificate,
         upgradeSubscription,
