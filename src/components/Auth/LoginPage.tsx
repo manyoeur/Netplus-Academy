@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Network,
   Mail,
@@ -9,10 +9,12 @@ import {
   Sun,
   Moon,
   AlertCircle,
-  ArrowRight
+  ArrowRight,
+  Ticket,
+  CheckCircle2,
+  ShieldCheck
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
-import { UserRole } from '../../types';
 
 const GoogleMark: React.FC = () => (
   <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
@@ -42,6 +44,7 @@ export const LoginPage: React.FC = () => {
     registerUser,
     signInWithGoogle,
     setCurrentUser,
+    findInvitationByCode,
     darkMode,
     toggleDarkMode
   } = useAcademy();
@@ -50,10 +53,54 @@ export const LoginPage: React.FC = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<UserRole>('student');
+  const [inviteCode, setInviteCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  // Parse ?invite=CODE from URL on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const urlInvite = params.get('invite');
+    if (urlInvite && urlInvite.trim()) {
+      const trimmed = urlInvite.trim();
+      setMode('signup');
+      setInviteCode(trimmed);
+      const matched = findInvitationByCode(trimmed);
+      if (matched) {
+        if (matched.fullName) setName(matched.fullName);
+        if (matched.email) setEmail(matched.email);
+      }
+    }
+  }, [findInvitationByCode]);
+
+  const resolvedInvite = useMemo(() => {
+    if (!inviteCode.trim()) return undefined;
+    return findInvitationByCode(inviteCode.trim());
+  }, [inviteCode, findInvitationByCode]);
+
+  const isInviteExpired = Boolean(
+    resolvedInvite?.expiresAt && new Date(resolvedInvite.expiresAt).getTime() < Date.now()
+  );
+  const isInviteUsable = Boolean(
+    resolvedInvite && resolvedInvite.status === 'pending' && !isInviteExpired
+  );
+
+  const handleInviteCodeChange = (val: string) => {
+    setInviteCode(val);
+    const matched = findInvitationByCode(val.trim());
+    if (matched && matched.status === 'pending') {
+      if (!name.trim() && matched.fullName) setName(matched.fullName);
+      if (!email.trim() && matched.email) setEmail(matched.email);
+    }
+  };
+
+  const clearInviteUrlParam = () => {
+    if (typeof window !== 'undefined' && window.location.search.includes('invite=')) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  };
 
   const handleModeSwitch = (nextMode: 'login' | 'signup') => {
     setMode(nextMode);
@@ -63,9 +110,11 @@ export const LoginPage: React.FC = () => {
   const handleGoogleSignIn = async () => {
     setErrorMsg('');
     setIsGoogleLoading(true);
-    const result = await signInWithGoogle();
+    const result = await signInWithGoogle(inviteCode.trim() || undefined);
     setIsGoogleLoading(false);
-    if (!result.success && result.error) {
+    if (result.success) {
+      clearInviteUrlParam();
+    } else if (result.error) {
       setErrorMsg(result.error);
     }
   };
@@ -92,7 +141,12 @@ export const LoginPage: React.FC = () => {
         setErrorMsg('Password must be at least 6 characters.');
         return;
       }
-      registerUser(name, email, role, password);
+      const result = registerUser(name, email, password, inviteCode.trim() || undefined);
+      if (!result.success) {
+        setErrorMsg(result.error || 'Unable to complete registration.');
+        return;
+      }
+      clearInviteUrlParam();
     }
   };
 
@@ -166,6 +220,37 @@ export const LoginPage: React.FC = () => {
               Sign Up
             </button>
           </div>
+
+          {/* Active Invitation Card Banner */}
+          {inviteCode.trim() && resolvedInvite && isInviteUsable && (
+            <div className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 ${
+              resolvedInvite.role === 'instructor'
+                ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800/60 text-indigo-900 dark:text-indigo-200'
+                : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200'
+            }`}>
+              {resolvedInvite.role === 'instructor' ? (
+                <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              )}
+              <div className="space-y-0.5 min-w-0">
+                <p className="font-bold">
+                  {resolvedInvite.role === 'instructor'
+                    ? 'Verified Instructor Invitation'
+                    : 'Verified Student Registration Invite'}
+                </p>
+                <p className="text-[11px] opacity-90 truncate">
+                  Issued for <span className="font-mono font-semibold">{resolvedInvite.email}</span>
+                  {resolvedInvite.cohortOrSpecialty ? ` · ${resolvedInvite.cohortOrSpecialty}` : ''}
+                </p>
+                {resolvedInvite.assignedCourseIds.length > 0 && (
+                  <p className="text-[11px] opacity-80">
+                    Includes {resolvedInvite.assignedCourseIds.length} pre-assigned course(s)
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Google Sign-On Button */}
           <button
@@ -275,22 +360,37 @@ export const LoginPage: React.FC = () => {
 
             {mode === 'signup' && (
               <div>
-                <label
-                  htmlFor="auth-role"
-                  className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
-                >
-                  Role
-                </label>
-                <select
-                  id="auth-role"
-                  value={role}
-                  onChange={(e) => setRole(e.target.value as UserRole)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="student">Student</option>
-                  <option value="instructor">Instructor</option>
-                  <option value="admin">Admin</option>
-                </select>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label
+                    htmlFor="auth-invite-code"
+                    className="font-semibold text-slate-700 dark:text-slate-300"
+                  >
+                    Invitation Code
+                  </label>
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                    Optional for students · Required for instructors
+                  </span>
+                </div>
+                <div className="relative">
+                  <Ticket className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="auth-invite-code"
+                    type="text"
+                    value={inviteCode}
+                    onChange={(e) => handleInviteCodeChange(e.target.value)}
+                    placeholder="e.g. INST-XXXX-XXXX or STUD-XXXX-XXXX"
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-mono placeholder:font-sans placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                {inviteCode.trim() && resolvedInvite && !isInviteUsable && (
+                  <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                    {resolvedInvite.status === 'accepted'
+                      ? 'This invitation code has already been redeemed.'
+                      : resolvedInvite.status === 'revoked'
+                      ? 'This invitation code has been revoked.'
+                      : 'This invitation code has expired.'}
+                  </p>
+                )}
               </div>
             )}
 
@@ -298,7 +398,13 @@ export const LoginPage: React.FC = () => {
               type="submit"
               className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs shadow-md shadow-blue-500/20 transition-colors"
             >
-              <span>{mode === 'login' ? 'Sign In' : 'Create Account'}</span>
+              <span>
+                {mode === 'login'
+                  ? 'Sign In'
+                  : isInviteUsable && resolvedInvite?.role === 'instructor'
+                  ? 'Register as Invited Instructor'
+                  : 'Create Student Account'}
+              </span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>

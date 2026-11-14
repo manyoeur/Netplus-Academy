@@ -20,6 +20,29 @@ export interface User {
   reputationPoints: number;
 }
 
+export type InvitationRole = 'instructor' | 'student';
+export type InvitationStatus = 'pending' | 'accepted' | 'revoked';
+
+export interface Invitation {
+  id: string;
+  code: string;
+  email: string;
+  fullName: string;
+  role: InvitationRole;
+  assignedCourseIds: string[];
+  cohortOrSpecialty: string;
+  subscriptionTier?: SubscriptionTier;
+  welcomeNote?: string;
+  status: InvitationStatus;
+  invitedByUid: string;
+  invitedByName: string;
+  invitedByEmail: string;
+  acceptedByUid?: string;
+  acceptedAt?: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export type ModuleType = 'theory' | 'video' | 'lab' | 'quiz' | 'pcap';
 
 export interface QuizQuestion {

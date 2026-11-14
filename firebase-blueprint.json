@@ -35,6 +35,13 @@
           "description": "Profile avatar URL",
           "maxLength": 500
         },
+        "inviteCode": {
+          "type": "string",
+          "description": "Optional verified invitation code used during onboarding",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -47,12 +54,143 @@
         }
       },
       "required": ["uid", "name", "email", "role", "createdAt", "updatedAt"]
+    },
+    "Invitation": {
+      "title": "Invitation",
+      "description": "Admin-issued onboarding invitation for an instructor or student registration.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Invitation document ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "code": {
+          "type": "string",
+          "description": "Unique invitation code",
+          "minLength": 6,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Invited user email address",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Invited user full name",
+          "maxLength": 120
+        },
+        "role": {
+          "type": "string",
+          "enum": ["instructor", "student"],
+          "description": "Target role granted upon registration"
+        },
+        "assignedCourseIds": {
+          "type": "array",
+          "description": "Pre-assigned or pre-enrolled course IDs"
+        },
+        "cohortOrSpecialty": {
+          "type": "string",
+          "description": "Instructor specialization or student cohort name",
+          "maxLength": 120
+        },
+        "subscriptionTier": {
+          "type": "string",
+          "enum": ["free", "pro", "expert", "enterprise"],
+          "description": "Allocated subscription tier"
+        },
+        "welcomeNote": {
+          "type": "string",
+          "description": "Optional onboarding note from administrator",
+          "maxLength": 500
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "accepted", "revoked"],
+          "description": "Invitation lifecycle status"
+        },
+        "invitedByUid": {
+          "type": "string",
+          "description": "Admin UID who issued the invitation",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "invitedByName": {
+          "type": "string",
+          "description": "Admin display name",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "invitedByEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Admin email address",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "acceptedByUid": {
+          "type": "string",
+          "description": "UID of the user who accepted the invitation",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "acceptedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp when accepted",
+          "maxLength": 64
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO expiration timestamp",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "code",
+        "email",
+        "fullName",
+        "role",
+        "assignedCourseIds",
+        "cohortOrSpecialty",
+        "status",
+        "invitedByUid",
+        "invitedByName",
+        "invitedByEmail",
+        "expiresAt",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "Owner-isolated user profile documents for Netplus Academy authentication."
+    },
+    "/invitations/{inviteId}": {
+      "schema": { "$ref": "#/entities/Invitation" },
+      "description": "Admin-managed instructor and student registration invitations."
     }
   }
 }

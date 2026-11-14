@@ -40,15 +40,57 @@ service cloud.firestore {
 
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'name', 'email', 'role', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'name', 'email', 'role', 'avatar', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'name', 'email', 'role', 'avatar', 'inviteCode', 'createdAt', 'updatedAt'])
         && isValidId(data.uid)
         && data.uid == request.auth.uid
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
         && data.role is string && data.role in ['student', 'instructor', 'admin']
         && (!('avatar' in data) || (data.avatar is string && data.avatar.size() <= 500))
+        && (!('inviteCode' in data) || isValidId(data.inviteCode))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
+    }
+
+    function isValidInvitation(data) {
+      return data.keys().hasAll([
+          'id', 'code', 'email', 'fullName', 'role', 'assignedCourseIds',
+          'cohortOrSpecialty', 'status', 'invitedByUid', 'invitedByName',
+          'invitedByEmail', 'expiresAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'code', 'email', 'fullName', 'role', 'assignedCourseIds',
+          'cohortOrSpecialty', 'subscriptionTier', 'welcomeNote', 'status',
+          'invitedByUid', 'invitedByName', 'invitedByEmail', 'acceptedByUid',
+          'acceptedAt', 'expiresAt', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.code is string && data.code.size() >= 6 && data.code.size() <= 64 && data.code.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.fullName is string && data.fullName.size() <= 120
+        && data.role is string && data.role in ['instructor', 'student']
+        && data.assignedCourseIds is list && data.assignedCourseIds.size() <= 20
+        && (data.assignedCourseIds.size() == 0 || data.assignedCourseIds[0] is string)
+        && data.cohortOrSpecialty is string && data.cohortOrSpecialty.size() <= 120
+        && (!('subscriptionTier' in data) || (data.subscriptionTier is string && data.subscriptionTier in ['free', 'pro', 'expert', 'enterprise']))
+        && (!('welcomeNote' in data) || (data.welcomeNote is string && data.welcomeNote.size() <= 500))
+        && data.status is string && data.status in ['pending', 'accepted', 'revoked']
+        && isValidId(data.invitedByUid)
+        && data.invitedByName is string && data.invitedByName.size() >= 1 && data.invitedByName.size() <= 120
+        && data.invitedByEmail is string && data.invitedByEmail.size() >= 3 && data.invitedByEmail.size() <= 254
+        && (!('acceptedByUid' in data) || isValidId(data.acceptedByUid))
+        && (!('acceptedAt' in data) || (data.acceptedAt is string && data.acceptedAt.size() <= 64))
+        && data.expiresAt is string && data.expiresAt.size() <= 64
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function hasValidInstructorInvite(inviteCode) {
+      return isValidId(inviteCode)
+        && exists(/databases/$(database)/documents/invitations/$(inviteCode))
+        && get(/databases/$(database)/documents/invitations/$(inviteCode)).data.role == 'instructor'
+        && get(/databases/$(database)/documents/invitations/$(inviteCode)).data.email == request.auth.token.email
+        && get(/databases/$(database)/documents/invitations/$(inviteCode)).data.status == 'pending';
     }
 
     match /users/{userId} {
@@ -60,7 +102,11 @@ service cloud.firestore {
         && isOwner(userId)
         && isValidUserProfile(incoming())
         && incoming().uid == userId
-        && (incoming().role == 'student' || isAdmin())
+        && (
+          incoming().role == 'student' ||
+          isAdmin() ||
+          (incoming().role == 'instructor' && ('inviteCode' in incoming()) && hasValidInstructorInvite(incoming().inviteCode))
+        )
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
 
@@ -80,6 +126,43 @@ service cloud.firestore {
         );
 
       allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    match /invitations/{inviteId} {
+      allow get: if isValidId(inviteId) && (isAdmin() || (isVerified() && existing().email == request.auth.token.email));
+      allow list: if isAdmin() || (isVerified() && resource.data.email == request.auth.token.email);
+
+      allow create: if isValidId(inviteId)
+        && isAdmin()
+        && isValidInvitation(incoming())
+        && incoming().id == inviteId
+        && incoming().invitedByUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(inviteId)
+        && isVerified()
+        && isValidInvitation(incoming())
+        && incoming().id == existing().id
+        && incoming().code == existing().code
+        && incoming().email == existing().email
+        && incoming().role == existing().role
+        && incoming().invitedByUid == existing().invitedByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().status == 'pending'
+            && existing().email == request.auth.token.email
+            && incoming().status == 'accepted'
+            && incoming().acceptedByUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'acceptedByUid', 'acceptedAt', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isValidId(inviteId) && isAdmin();
     }
   }
 }

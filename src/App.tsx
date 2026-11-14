@@ -13,15 +13,17 @@ import { AnalyticsDashboard } from './components/Admin/AnalyticsDashboard';
 import { LMSIntegrationPanel } from './components/LMS/LMSIntegrationPanel';
 import { DiscussionForum } from './components/Forum/DiscussionForum';
 import { NotificationDrawer } from './components/Notifications/NotificationDrawer';
-import { LoginModal } from './components/Auth/LoginModal';
 import { LoginPage } from './components/Auth/LoginPage';
 import { PaymentGatewayModal } from './components/Billing/PaymentGatewayModal';
 import { WifiOff, Terminal, Network } from 'lucide-react';
+
+type ManagementSubTab = 'courses' | 'progress' | 'invite-instructors' | 'invite-students';
 
 const AcademyApp: React.FC = () => {
   const { isOffline, toggleManualOfflineSim, courses, isAuthenticated, authReady } = useAcademy();
 
   const [currentTab, setCurrentTab] = useState<string>('courses');
+  const [managementSubTab, setManagementSubTab] = useState<ManagementSubTab>('courses');
   const [activeCourseId, setActiveCourseId] = useState<string | null>(null);
 
   // Left Sidebar Pin & Auto-Hide State (auto-hide active by default unless pinned)
@@ -45,7 +47,6 @@ const AcademyApp: React.FC = () => {
   }, [isSidebarPinned]);
 
   // Modals & Drawers
-  const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
 
@@ -87,6 +88,12 @@ const AcademyApp: React.FC = () => {
             setActiveCourseId(null);
           }
         }}
+        managementSubTab={managementSubTab}
+        onSelectManagementTab={(subTab) => {
+          setManagementSubTab(subTab);
+          setCurrentTab('management');
+          setActiveCourseId(null);
+        }}
         isPinned={isSidebarPinned}
         setIsPinned={setIsSidebarPinned}
         isOpen={isSidebarOpen}
@@ -100,7 +107,6 @@ const AcademyApp: React.FC = () => {
 
         {/* Sticky Top Bar (Top-right Fabric, Mode Toggle, Notifications, User Profile) */}
         <TopBar
-          onOpenLogin={() => setIsLoginOpen(true)}
           onOpenNotifications={() => setIsNotificationsOpen(true)}
           onOpenPricing={() => setIsPaymentOpen(true)}
           isSidebarPinned={isSidebarPinned}
@@ -209,7 +215,7 @@ const AcademyApp: React.FC = () => {
 
         {/* Admin Management Panel */}
         {currentTab === 'management' && (
-          <ManagementPanel />
+          <ManagementPanel initialTab={managementSubTab} />
         )}
 
         {/* Analytics Dashboard */}
@@ -228,12 +234,6 @@ const AcademyApp: React.FC = () => {
       <NotificationDrawer
         isOpen={isNotificationsOpen}
         onClose={() => setIsNotificationsOpen(false)}
-      />
-
-      {/* Login & Role Switcher Modal */}
-      <LoginModal
-        isOpen={isLoginOpen}
-        onClose={() => setIsLoginOpen(false)}
       />
 
       {/* Subscription Checkout Modal */}

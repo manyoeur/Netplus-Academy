@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { 
   User, 
   Course, 
@@ -10,7 +10,8 @@ import {
   LMSConfig, 
   NotificationItem, 
   SubscriptionTier,
-  CourseModule
+  CourseModule,
+  Invitation
 } from '../types';
 import {
   onAuthStateChanged,
@@ -22,7 +23,11 @@ import {
   googleProvider,
   preloadGoogleAuthSdk,
   syncFirebaseUserProfile,
-  testFirestoreConnection
+  testFirestoreConnection,
+  saveInvitationToFirestore,
+  updateInvitationStatusInFirestore,
+  deleteInvitationFromFirestore,
+  fetchInvitationsFromFirestore
 } from '../firebase';
 import { 
   INITIAL_USERS, 
@@ -52,11 +57,36 @@ interface AcademyContextType {
   isAuthenticated: boolean;
   authReady: boolean;
   setCurrentUser: (user: User) => void;
-  switchRole: (role: UserRole) => void;
   loginUser: (email: string, role?: UserRole, password?: string) => boolean;
-  registerUser: (name: string, email: string, role: UserRole, password?: string) => void;
-  signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
+  registerUser: (
+    name: string,
+    email: string,
+    password?: string,
+    inviteCode?: string
+  ) => { success: boolean; error?: string; role?: UserRole };
+  signInWithGoogle: (inviteCode?: string) => Promise<{ success: boolean; error?: string }>;
   logoutUser: () => Promise<void>;
+
+  // Invitations (Admin-managed Instructor & Student Registration)
+  invitations: Invitation[];
+  findInvitationByCode: (code: string) => Invitation | undefined;
+  createInstructorInvite: (params: {
+    fullName: string;
+    email: string;
+    specialty: string;
+    assignedCourseIds: string[];
+    welcomeNote?: string;
+  }) => Invitation;
+  createStudentInvites: (params: {
+    entries: Array<{ fullName: string; email: string }>;
+    cohort: string;
+    assignedCourseIds: string[];
+    subscriptionTier: SubscriptionTier;
+    welcomeNote?: string;
+  }) => Invitation[];
+  resendInvitation: (inviteId: string) => void;
+  revokeInvitation: (inviteId: string) => void;
+  deleteInvitation: (inviteId: string) => void;
   
   // Dark mode & Offline
   toggleDarkMode: () => void;
@@ -167,36 +197,125 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const currentUser = allUsers.find(u => u.id === currentUserId) || allUsers[0];
 
-  const upsertGoogleUser = async (fbUser: {
-    uid: string;
-    displayName: string | null;
-    email: string | null;
-    photoURL: string | null;
-    emailVerified: boolean;
-  }) => {
+  const [invitations, setInvitations] = useState<Invitation[]>(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_PREFIX}invitations`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const invitationsRef = useRef<Invitation[]>(invitations);
+  useEffect(() => {
+    invitationsRef.current = invitations;
+    localStorage.setItem(`${STORAGE_PREFIX}invitations`, JSON.stringify(invitations));
+  }, [invitations]);
+
+  const pendingGoogleInviteCodeRef = useRef<string | undefined>(undefined);
+
+  const findInvitationByCode = (code: string): Invitation | undefined => {
+    const clean = code.trim().toLowerCase();
+    if (!clean) return undefined;
+    return invitationsRef.current.find(
+      inv => inv.code.toLowerCase() === clean || inv.id.toLowerCase() === clean
+    );
+  };
+
+  const mergeFirestoreInvitations = (remoteInvites: Invitation[] | null) => {
+    if (!remoteInvites || remoteInvites.length === 0) return;
+    setInvitations(prev => {
+      const mergedMap = new Map<string, Invitation>();
+      for (const inv of prev) {
+        mergedMap.set(inv.id, inv);
+      }
+      for (const remote of remoteInvites) {
+        mergedMap.set(remote.id, remote);
+      }
+      return Array.from(mergedMap.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+    });
+  };
+
+  const upsertGoogleUser = async (
+    fbUser: {
+      uid: string;
+      displayName: string | null;
+      email: string | null;
+      photoURL: string | null;
+      emailVerified: boolean;
+    },
+    explicitInviteCode?: string
+  ) => {
     if (!fbUser.email) return;
     const normalizedEmail = fbUser.email.toLowerCase();
-    const defaultRole: UserRole = normalizedEmail === 'yoeur.man2010@gmail.com' ? 'admin' : 'student';
+    const isBootstrappedAdmin = normalizedEmail === 'yoeur.man2010@gmail.com';
     const fallbackAvatar = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=256&q=80';
+
+    let candidateInvites = [...invitationsRef.current];
+    if (fbUser.emailVerified) {
+      const remoteInvites = await fetchInvitationsFromFirestore(isBootstrappedAdmin, normalizedEmail);
+      if (remoteInvites && remoteInvites.length > 0) {
+        mergeFirestoreInvitations(remoteInvites);
+        const map = new Map<string, Invitation>();
+        candidateInvites.forEach(i => map.set(i.id, i));
+        remoteInvites.forEach(i => map.set(i.id, i));
+        candidateInvites = Array.from(map.values());
+      }
+    }
+
+    const codeToCheck = (explicitInviteCode || pendingGoogleInviteCodeRef.current || '').trim().toLowerCase();
+    const nowMs = Date.now();
+    const matchedInvite = candidateInvites.find(inv => {
+      if (inv.status !== 'pending') return false;
+      if (inv.expiresAt && new Date(inv.expiresAt).getTime() < nowMs) return false;
+      const emailMatches = inv.email.toLowerCase() === normalizedEmail;
+      if (codeToCheck) {
+        return (inv.code.toLowerCase() === codeToCheck || inv.id.toLowerCase() === codeToCheck) && emailMatches;
+      }
+      return emailMatches;
+    });
+
+    const defaultRole: UserRole = isBootstrappedAdmin
+      ? 'admin'
+      : matchedInvite
+      ? matchedInvite.role
+      : 'student';
 
     let resolvedId = fbUser.uid;
     let resolvedRole: UserRole = defaultRole;
-    let resolvedName = fbUser.displayName || fbUser.email.split('@')[0];
+    let resolvedName = fbUser.displayName || matchedInvite?.fullName || fbUser.email.split('@')[0];
     let resolvedAvatar = fbUser.photoURL || fallbackAvatar;
+
+    const invitedCourseIds = matchedInvite?.assignedCourseIds?.length
+      ? matchedInvite.assignedCourseIds
+      : ['course-ccna-1'];
+    const invitedTier: SubscriptionTier = matchedInvite?.subscriptionTier || 'pro';
 
     setAllUsers(prev => {
       const existing = prev.find(u => u.id === fbUser.uid || u.email.toLowerCase() === normalizedEmail);
       if (existing) {
         resolvedId = existing.id;
-        resolvedRole = existing.role;
+        resolvedRole = isBootstrappedAdmin
+          ? 'admin'
+          : matchedInvite
+          ? matchedInvite.role
+          : existing.role;
         resolvedName = fbUser.displayName || existing.name;
         resolvedAvatar = fbUser.photoURL || existing.avatar;
+        const mergedCourses = Array.from(new Set([...existing.enrolledCourseIds, ...invitedCourseIds]));
         return prev.map(u =>
           u.id === existing.id
             ? {
                 ...u,
                 name: resolvedName,
-                avatar: resolvedAvatar
+                avatar: resolvedAvatar,
+                role: resolvedRole,
+                enrolledCourseIds: mergedCourses,
+                subscription: matchedInvite?.subscriptionTier
+                  ? { ...u.subscription, tier: matchedInvite.subscriptionTier }
+                  : u.subscription
               }
             : u
         );
@@ -205,10 +324,10 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         id: fbUser.uid,
         name: resolvedName,
         email: fbUser.email!,
-        role: defaultRole,
+        role: resolvedRole,
         avatar: resolvedAvatar,
-        subscription: { tier: 'pro', status: 'active' },
-        enrolledCourseIds: ['course-ccna-1'],
+        subscription: { tier: invitedTier, status: 'active' },
+        enrolledCourseIds: invitedCourseIds,
         completedModuleIds: [],
         certificates: [],
         joinedDate: new Date().toISOString().split('T')[0],
@@ -222,14 +341,64 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem(`${STORAGE_PREFIX}authenticated`, 'true');
 
     if (fbUser.emailVerified) {
-      await syncFirebaseUserProfile({
+      const storedRole = await syncFirebaseUserProfile({
         uid: fbUser.uid,
         name: resolvedName,
         email: fbUser.email,
         role: resolvedRole,
-        avatar: resolvedAvatar
+        avatar: resolvedAvatar,
+        inviteCode: matchedInvite?.role === 'instructor' ? matchedInvite.code : undefined
       });
+      if (storedRole && storedRole !== resolvedRole && !matchedInvite && !isBootstrappedAdmin) {
+        setAllUsers(prev => prev.map(u => (u.id === resolvedId ? { ...u, role: storedRole } : u)));
+      }
     }
+
+    if (matchedInvite) {
+      const acceptedAt = new Date().toISOString();
+      setInvitations(prev =>
+        prev.map(inv =>
+          inv.id === matchedInvite.id
+            ? { ...inv, status: 'accepted', acceptedByUid: fbUser.uid, acceptedAt }
+            : inv
+        )
+      );
+      if (fbUser.emailVerified) {
+        await updateInvitationStatusInFirestore(matchedInvite.id, {
+          status: 'accepted',
+          acceptedByUid: fbUser.uid,
+          acceptedAt
+        });
+      }
+      if (matchedInvite.role === 'student') {
+        const enrolledCourses = courses.filter(c => matchedInvite.assignedCourseIds.includes(c.id));
+        if (enrolledCourses.length > 0) {
+          setStudentProgressList(prev => {
+            const additions: StudentProgressRecord[] = enrolledCourses
+              .filter(c => !prev.some(p => p.studentId === resolvedId && p.courseId === c.id))
+              .map(c => ({
+                studentId: resolvedId,
+                studentName: resolvedName,
+                studentEmail: fbUser.email!,
+                avatar: resolvedAvatar,
+                courseId: c.id,
+                courseCode: c.code,
+                courseTitle: c.title,
+                progressPercent: 0,
+                completedModulesCount: 0,
+                totalModulesCount: c.modules.length,
+                quizAverage: 0,
+                lastActive: 'Just now',
+                status: 'active',
+                timeSpentHours: 0
+              }));
+            return additions.length ? [...additions, ...prev] : prev;
+          });
+        }
+      }
+    }
+
+    pendingGoogleInviteCodeRef.current = undefined;
   };
 
   // Boot Firestore connection test, warm Google Auth script, & Firebase Auth state listener
@@ -349,28 +518,182 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem(`${STORAGE_PREFIX}authenticated`, 'true');
   };
 
-  const switchRole = (role: UserRole) => {
-    const targetUser = allUsers.find(u => u.role === role);
-    if (targetUser) {
-      setCurrentUserId(targetUser.id);
-    } else {
-      // Create user if not found
-      const newUser: User = {
-        id: `user-${role}-${Date.now()}`,
-        name: role === 'admin' ? 'System Administrator' : role === 'instructor' ? 'Lead Instructor' : 'Student Engineer',
-        email: `${role}@netpulse.academy`,
-        role,
-        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=256&q=80',
-        subscription: { tier: 'pro', status: 'active' },
-        enrolledCourseIds: ['course-ccna-1'],
-        completedModuleIds: [],
-        certificates: [],
-        joinedDate: new Date().toISOString().split('T')[0],
-        reputationPoints: 100
+  const generateInviteCode = (prefix: 'INST' | 'STUD'): string => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const segment = (len: number) =>
+      Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    return `${prefix}-${segment(4)}-${segment(4)}`;
+  };
+
+  const createInstructorInvite = (params: {
+    fullName: string;
+    email: string;
+    specialty: string;
+    assignedCourseIds: string[];
+    welcomeNote?: string;
+  }): Invitation => {
+    const code = generateInviteCode('INST');
+    const now = new Date();
+    const expires = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const invite: Invitation = {
+      id: code,
+      code,
+      email: params.email.trim().toLowerCase(),
+      fullName: params.fullName.trim(),
+      role: 'instructor',
+      assignedCourseIds: params.assignedCourseIds,
+      cohortOrSpecialty: params.specialty.trim() || 'Network Engineering Faculty',
+      welcomeNote: params.welcomeNote?.trim() || undefined,
+      status: 'pending',
+      invitedByUid: currentUser.id,
+      invitedByName: currentUser.name,
+      invitedByEmail: currentUser.email,
+      createdAt: now.toISOString(),
+      expiresAt: expires.toISOString()
+    };
+
+    setInvitations(prev => [invite, ...prev]);
+    saveInvitationToFirestore(invite).catch(() => {});
+
+    const inviteUrl =
+      typeof window !== 'undefined' ? `${window.location.origin}/?invite=${code}` : `/?invite=${code}`;
+
+    triggerSystemNotification(
+      `Instructor Invitation Sent: ${invite.fullName}`,
+      `Onboarding link and code ${code} prepared for ${invite.email}.`,
+      'system',
+      {
+        subject: `🎓 You're Invited to Join Netplus Academy as an Instructor`,
+        to: invite.email,
+        bodyHtml: `<div style="font-family:sans-serif;padding:24px;background:#f8fafc;border-radius:12px;">
+          <h2 style="color:#4338ca;margin-bottom:8px;">Netplus Academy Faculty Onboarding</h2>
+          <p>Hello <strong>${invite.fullName}</strong>,</p>
+          <p>Administrator <strong>${currentUser.name}</strong> has invited you to join Netplus Academy as an <strong>Instructor</strong> (${invite.cohortOrSpecialty}).</p>
+          ${invite.welcomeNote ? `<p style="padding:12px;background:#eef2ff;border-left:3px solid #4f46e5;border-radius:6px;">${invite.welcomeNote}</p>` : ''}
+          <div style="background:#fff;padding:16px;border:1px solid #e2e8f0;border-radius:8px;margin:16px 0;">
+            <p><strong>Instructor Invite Code:</strong> <code>${code}</code></p>
+            <p><strong>Assigned Courses:</strong> ${invite.assignedCourseIds.length} course(s)</p>
+            <p><strong>Registration Link:</strong> <a href="${inviteUrl}">${inviteUrl}</a></p>
+          </div>
+          <p>Use the link above or enter your invite code during Sign Up or Google Sign-On to activate Instructor privileges.</p>
+        </div>`
+      }
+    );
+
+    return invite;
+  };
+
+  const createStudentInvites = (params: {
+    entries: Array<{ fullName: string; email: string }>;
+    cohort: string;
+    assignedCourseIds: string[];
+    subscriptionTier: SubscriptionTier;
+    welcomeNote?: string;
+  }): Invitation[] => {
+    const now = new Date();
+    const expires = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+    const created: Invitation[] = params.entries.map(entry => {
+      const code = generateInviteCode('STUD');
+      const normalizedEmail = entry.email.trim().toLowerCase();
+      const displayName = entry.fullName.trim() || normalizedEmail.split('@')[0];
+      return {
+        id: code,
+        code,
+        email: normalizedEmail,
+        fullName: displayName,
+        role: 'student',
+        assignedCourseIds: params.assignedCourseIds,
+        cohortOrSpecialty: params.cohort.trim() || 'Enterprise Networking Cohort',
+        subscriptionTier: params.subscriptionTier,
+        welcomeNote: params.welcomeNote?.trim() || undefined,
+        status: 'pending',
+        invitedByUid: currentUser.id,
+        invitedByName: currentUser.name,
+        invitedByEmail: currentUser.email,
+        createdAt: now.toISOString(),
+        expiresAt: expires.toISOString()
       };
-      setAllUsers(prev => [...prev, newUser]);
-      setCurrentUserId(newUser.id);
+    });
+
+    setInvitations(prev => [...created, ...prev]);
+    created.forEach(inv => {
+      saveInvitationToFirestore(inv).catch(() => {});
+    });
+
+    const firstInvite = created[0];
+    if (firstInvite) {
+      const inviteUrl =
+        typeof window !== 'undefined'
+          ? `${window.location.origin}/?invite=${firstInvite.code}`
+          : `/?invite=${firstInvite.code}`;
+
+      triggerSystemNotification(
+        created.length === 1
+          ? `Student Registration Invite Sent: ${firstInvite.fullName}`
+          : `${created.length} Student Registration Invites Dispatched`,
+        created.length === 1
+          ? `Registration code ${firstInvite.code} sent to ${firstInvite.email}.`
+          : `Sent registration invites for cohort "${firstInvite.cohortOrSpecialty}" (${params.assignedCourseIds.length} pre-enrolled course(s)).`,
+        'system',
+        {
+          subject:
+            created.length === 1
+              ? `🚀 Welcome to Netplus Academy — Complete Your Student Registration`
+              : `🚀 ${created.length} Student Invitations Sent (${firstInvite.cohortOrSpecialty})`,
+          to: created.length === 1 ? firstInvite.email : created.map(i => i.email).join(', '),
+          bodyHtml: `<div style="font-family:sans-serif;padding:24px;background:#f8fafc;border-radius:12px;">
+            <h2 style="color:#0284c7;margin-bottom:8px;">Netplus Academy Student Registration</h2>
+            <p>Hello <strong>${created.length === 1 ? firstInvite.fullName : 'Student Cohort'}</strong>,</p>
+            <p>You have been invited to register as a student in cohort <strong>${firstInvite.cohortOrSpecialty}</strong> with <strong>${params.subscriptionTier.toUpperCase()}</strong> access.</p>
+            ${params.welcomeNote ? `<p style="padding:12px;background:#ecfeff;border-left:3px solid #06b6d4;border-radius:6px;">${params.welcomeNote}</p>` : ''}
+            <div style="background:#fff;padding:16px;border:1px solid #e2e8f0;border-radius:8px;margin:16px 0;">
+              <p><strong>Sample Registration Code:</strong> <code>${firstInvite.code}</code></p>
+              <p><strong>Pre-Enrolled Courses:</strong> ${params.assignedCourseIds.length} course(s)</p>
+              <p><strong>Registration Link:</strong> <a href="${inviteUrl}">${inviteUrl}</a></p>
+            </div>
+          </div>`
+        }
+      );
     }
+
+    return created;
+  };
+
+  const resendInvitation = (inviteId: string) => {
+    const target = invitationsRef.current.find(i => i.id === inviteId);
+    if (!target) return;
+    const newExpires = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+    setInvitations(prev =>
+      prev.map(i => (i.id === inviteId ? { ...i, status: 'pending', expiresAt: newExpires } : i))
+    );
+    updateInvitationStatusInFirestore(inviteId, { status: 'pending' }).catch(() => {});
+    const inviteUrl =
+      typeof window !== 'undefined' ? `${window.location.origin}/?invite=${target.code}` : `/?invite=${target.code}`;
+    triggerSystemNotification(
+      `Invitation Resent (${target.role.toUpperCase()})`,
+      `Refreshed registration code ${target.code} for ${target.email}.`,
+      'system',
+      {
+        subject: `Reminder: Your Netplus Academy ${target.role === 'instructor' ? 'Instructor' : 'Student'} Invitation`,
+        to: target.email,
+        bodyHtml: `<div style="font-family:sans-serif;padding:20px;">
+          <p>Hi <strong>${target.fullName}</strong>,</p>
+          <p>Your registration invite code is <code>${target.code}</code>.</p>
+          <p>Complete registration at: <a href="${inviteUrl}">${inviteUrl}</a></p>
+        </div>`
+      }
+    );
+  };
+
+  const revokeInvitation = (inviteId: string) => {
+    setInvitations(prev => prev.map(i => (i.id === inviteId ? { ...i, status: 'revoked' } : i)));
+    updateInvitationStatusInFirestore(inviteId, { status: 'revoked' }).catch(() => {});
+  };
+
+  const deleteInvitation = (inviteId: string) => {
+    setInvitations(prev => prev.filter(i => i.id !== inviteId));
+    deleteInvitationFromFirestore(inviteId).catch(() => {});
   };
 
   const loginUser = (email: string, _role?: UserRole, password?: string): boolean => {
@@ -391,8 +714,58 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return true;
   };
 
-  const registerUser = (name: string, email: string, role: UserRole, password?: string) => {
+  const registerUser = (
+    name: string,
+    email: string,
+    password?: string,
+    inviteCode?: string
+  ): { success: boolean; error?: string; role?: UserRole } => {
     const normalizedEmail = email.trim().toLowerCase();
+    const cleanCode = (inviteCode || '').trim();
+
+    let matchedInvite: Invitation | undefined;
+    if (cleanCode) {
+      const foundInvite = findInvitationByCode(cleanCode);
+      if (!foundInvite) {
+        return {
+          success: false,
+          error: 'Invitation code not found. Verify the code or contact an administrator.'
+        };
+      }
+      if (foundInvite.status === 'revoked') {
+        return {
+          success: false,
+          error: 'This invitation code has been revoked by an administrator.'
+        };
+      }
+      if (foundInvite.status === 'accepted') {
+        return {
+          success: false,
+          error: 'This invitation code has already been redeemed.'
+        };
+      }
+      if (foundInvite.expiresAt && new Date(foundInvite.expiresAt).getTime() < Date.now()) {
+        return {
+          success: false,
+          error: 'This invitation code has expired. Request a new invitation from an administrator.'
+        };
+      }
+      if (foundInvite.email.toLowerCase() !== normalizedEmail) {
+        return {
+          success: false,
+          error: `This invitation was issued for ${foundInvite.email}. Please register with that email address.`
+        };
+      }
+      matchedInvite = foundInvite;
+    } else {
+      matchedInvite = invitationsRef.current.find(
+        inv =>
+          inv.status === 'pending' &&
+          inv.email.toLowerCase() === normalizedEmail &&
+          (!inv.expiresAt || new Date(inv.expiresAt).getTime() >= Date.now())
+      );
+    }
+
     const existing = allUsers.find(u => u.email.toLowerCase() === normalizedEmail);
 
     if (password) {
@@ -400,32 +773,109 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     if (existing) {
+      const nextRole: UserRole = matchedInvite ? matchedInvite.role : existing.role;
+      const mergedCourses = matchedInvite?.assignedCourseIds.length
+        ? Array.from(new Set([...existing.enrolledCourseIds, ...matchedInvite.assignedCourseIds]))
+        : existing.enrolledCourseIds;
+
+      setAllUsers(prev =>
+        prev.map(u =>
+          u.id === existing.id
+            ? {
+                ...u,
+                name: name.trim() || u.name,
+                role: nextRole,
+                enrolledCourseIds: mergedCourses
+              }
+            : u
+        )
+      );
+      if (matchedInvite) {
+        const acceptedAt = new Date().toISOString();
+        setInvitations(prev =>
+          prev.map(i =>
+            i.id === matchedInvite!.id
+              ? { ...i, status: 'accepted', acceptedByUid: existing.id, acceptedAt }
+              : i
+          )
+        );
+      }
       setCurrentUserId(existing.id);
       setIsAuthenticated(true);
       localStorage.setItem(`${STORAGE_PREFIX}authenticated`, 'true');
-      return;
+      return { success: true, role: nextRole };
     }
 
+    const assignedRole: UserRole = matchedInvite ? matchedInvite.role : 'student';
+    const enrolledCourseIds = matchedInvite?.assignedCourseIds.length
+      ? matchedInvite.assignedCourseIds
+      : ['course-ccna-1'];
+    const subscriptionTier: SubscriptionTier = matchedInvite?.subscriptionTier || 'pro';
+    const newUserId = `user-${Date.now()}`;
+    const avatarUrl = `https://images.unsplash.com/photo-${1535000000000 + (Math.floor(Math.random() * 50000))}?auto=format&fit=crop&w=256&q=80`;
+
     const newUser: User = {
-      id: `user-${Date.now()}`,
+      id: newUserId,
       name: name.trim(),
       email: email.trim(),
-      role,
-      avatar: `https://images.unsplash.com/photo-${1535000000000 + (Math.floor(Math.random() * 50000))}?auto=format&fit=crop&w=256&q=80`,
-      subscription: { tier: 'pro', status: 'active' },
-      enrolledCourseIds: ['course-ccna-1'],
+      role: assignedRole,
+      avatar: avatarUrl,
+      subscription: { tier: subscriptionTier, status: 'active' },
+      enrolledCourseIds,
       completedModuleIds: [],
       certificates: [],
       joinedDate: new Date().toISOString().split('T')[0],
       reputationPoints: 50
     };
     setAllUsers(prev => [...prev, newUser]);
-    setCurrentUserId(newUser.id);
+
+    if (matchedInvite) {
+      const acceptedAt = new Date().toISOString();
+      setInvitations(prev =>
+        prev.map(i =>
+          i.id === matchedInvite!.id
+            ? { ...i, status: 'accepted', acceptedByUid: newUserId, acceptedAt }
+            : i
+        )
+      );
+      if (assignedRole === 'student') {
+        const enrolledCourses = courses.filter(c => enrolledCourseIds.includes(c.id));
+        if (enrolledCourses.length > 0) {
+          setStudentProgressList(prev => [
+            ...enrolledCourses.map(c => ({
+              studentId: newUserId,
+              studentName: newUser.name,
+              studentEmail: newUser.email,
+              avatar: avatarUrl,
+              courseId: c.id,
+              courseCode: c.code,
+              courseTitle: c.title,
+              progressPercent: 0,
+              completedModulesCount: 0,
+              totalModulesCount: c.modules.length,
+              quizAverage: 0,
+              lastActive: 'Just now',
+              status: 'active' as const,
+              timeSpentHours: 0
+            })),
+            ...prev
+          ]);
+        }
+      }
+      triggerSystemNotification(
+        `${assignedRole === 'instructor' ? 'Instructor' : 'Student'} Account Activated`,
+        `${newUser.name} redeemed invitation ${matchedInvite.code} and joined as ${assignedRole}.`,
+        'system'
+      );
+    }
+
+    setCurrentUserId(newUserId);
     setIsAuthenticated(true);
     localStorage.setItem(`${STORAGE_PREFIX}authenticated`, 'true');
+    return { success: true, role: assignedRole };
   };
 
-  const signInWithGoogle = async (): Promise<{ success: boolean; error?: string }> => {
+  const signInWithGoogle = async (inviteCode?: string): Promise<{ success: boolean; error?: string }> => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       return {
         success: false,
@@ -433,15 +883,20 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       };
     }
 
+    pendingGoogleInviteCodeRef.current = inviteCode?.trim() || undefined;
+
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      await upsertGoogleUser({
-        uid: result.user.uid,
-        displayName: result.user.displayName,
-        email: result.user.email,
-        photoURL: result.user.photoURL,
-        emailVerified: result.user.emailVerified
-      });
+      await upsertGoogleUser(
+        {
+          uid: result.user.uid,
+          displayName: result.user.displayName,
+          email: result.user.email,
+          photoURL: result.user.photoURL,
+          emailVerified: result.user.emailVerified
+        },
+        inviteCode
+      );
       triggerSystemNotification(
         'Signed In with Google',
         `Welcome to Netplus Academy, ${result.user.displayName || result.user.email}!`,
@@ -449,6 +904,7 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       );
       return { success: true };
     } catch (error: any) {
+      pendingGoogleInviteCodeRef.current = undefined;
       const code = error?.code || '';
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         return { success: false, error: 'Google sign-in popup was closed before completing.' };
@@ -994,11 +1450,17 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         isAuthenticated,
         authReady,
         setCurrentUser,
-        switchRole,
         loginUser,
         registerUser,
         signInWithGoogle,
         logoutUser,
+        invitations,
+        findInvitationByCode,
+        createInstructorInvite,
+        createStudentInvites,
+        resendInvitation,
+        revokeInvitation,
+        deleteInvitation,
         toggleDarkMode,
         toggleManualOfflineSim,
         enrollInCourse,

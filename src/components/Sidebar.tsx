@@ -18,13 +18,17 @@ import {
   Pin,
   PinOff,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  UserPlus,
+  Users
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
 
 interface SidebarProps {
   currentTab: string;
   setCurrentTab: (tab: string) => void;
+  managementSubTab?: 'courses' | 'progress' | 'invite-instructors' | 'invite-students';
+  onSelectManagementTab?: (subTab: 'courses' | 'progress' | 'invite-instructors' | 'invite-students') => void;
   isPinned: boolean;
   setIsPinned: React.Dispatch<React.SetStateAction<boolean>>;
   isOpen: boolean;
@@ -40,6 +44,8 @@ const HOVER_EXPAND_DELAY_MS = 140;
 export const Sidebar: React.FC<SidebarProps> = ({
   currentTab,
   setCurrentTab,
+  managementSubTab = 'courses',
+  onSelectManagementTab,
   isPinned,
   setIsPinned,
   isOpen,
@@ -194,11 +200,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleNavClick = (tabId: string) => {
-    setCurrentTab(tabId);
+    if (tabId === 'invite-instructors') {
+      onSelectManagementTab?.('invite-instructors');
+    } else if (tabId === 'invite-students') {
+      onSelectManagementTab?.('invite-students');
+    } else if (tabId === 'management') {
+      onSelectManagementTab?.('courses');
+    } else {
+      setCurrentTab(tabId);
+    }
     setMobileMenuOpen(false);
     resetInactivityTimer();
   };
 
+  const isAdminOnly = currentUser.role === 'admin';
   const isAdminOrInstructor = currentUser.role === 'admin' || currentUser.role === 'instructor';
 
   const quickJumpItems = [
@@ -209,6 +224,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'certificates', label: 'Verifiable Digital Credentials & Registry', category: 'Certificates', icon: Award },
     { id: 'forum', label: 'Network Engineers Discussion Forum', category: 'Community', icon: MessageSquare },
     { id: 'pricing', label: 'Subscription Tiers & Pro Checkout', category: 'Account', icon: CreditCard },
+    ...(isAdminOnly
+      ? [
+          { id: 'invite-instructors', label: 'Invite Instructors & Faculty Onboarding', category: 'Administration', icon: UserPlus },
+          { id: 'invite-students', label: 'Invite Students & Cohort Registration', category: 'Administration', icon: Users }
+        ]
+      : []),
     ...(isAdminOrInstructor
       ? [
           { id: 'management', label: 'Admin Course Manager & Enrollment Telemetry', category: 'Administration', icon: Settings },
@@ -225,6 +246,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'subnet-calc', label: 'Subnet & VLSM Calc', icon: Calculator, dot: false },
     { id: 'certificates', label: 'Certificates', icon: Award, dot: false },
     { id: 'forum', label: 'Discussion Forum', icon: MessageSquare, dot: false },
+    ...(isAdminOnly
+      ? [
+          { id: 'invite-instructors', label: 'Invite Instructors', icon: UserPlus, dot: false },
+          { id: 'invite-students', label: 'Invite Students', icon: Users, dot: false }
+        ]
+      : []),
     ...(isAdminOrInstructor
       ? [
           { id: 'management', label: 'Course Manager', icon: Settings, dot: true },
@@ -458,15 +485,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                     Administration
                   </p>
+                  {isAdminOnly && (
+                    <>
+                      <button
+                        onClick={() => handleNavClick('invite-instructors')}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                          currentTab === 'management' && managementSubTab === 'invite-instructors'
+                            ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <UserPlus className={`w-4 h-4 shrink-0 ${currentTab === 'management' && managementSubTab === 'invite-instructors' ? 'text-white' : 'text-indigo-500'}`} />
+                        <span>Invite Instructors</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleNavClick('invite-students')}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                          currentTab === 'management' && managementSubTab === 'invite-students'
+                            ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <Users className={`w-4 h-4 shrink-0 ${currentTab === 'management' && managementSubTab === 'invite-students' ? 'text-white' : 'text-cyan-500'}`} />
+                        <span>Invite Students</span>
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={() => handleNavClick('management')}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                      currentTab === 'management'
+                      currentTab === 'management' && (managementSubTab === 'courses' || managementSubTab === 'progress')
                         ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
                     }`}
                   >
-                    <Settings className={`w-4 h-4 shrink-0 ${currentTab === 'management' ? 'text-white' : 'text-blue-500'}`} />
+                    <Settings className={`w-4 h-4 shrink-0 ${currentTab === 'management' && (managementSubTab === 'courses' || managementSubTab === 'progress') ? 'text-white' : 'text-blue-500'}`} />
                     <span>Course Manager</span>
                   </button>
 
@@ -524,7 +578,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="flex-1 w-full overflow-y-auto py-3.5 flex flex-col items-center gap-2">
               {railNavItems.map(item => {
                 const Icon = item.icon;
-                const isActive = currentTab === item.id;
+                const isActive =
+                  item.id === 'invite-instructors'
+                    ? currentTab === 'management' && managementSubTab === 'invite-instructors'
+                    : item.id === 'invite-students'
+                    ? currentTab === 'management' && managementSubTab === 'invite-students'
+                    : item.id === 'management'
+                    ? currentTab === 'management' && (managementSubTab === 'courses' || managementSubTab === 'progress')
+                    : currentTab === item.id;
                 return (
                   <button
                     key={item.id}

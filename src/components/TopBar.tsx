@@ -6,7 +6,6 @@ import {
   Bell,
   WifiOff,
   CreditCard,
-  ShieldCheck,
   ChevronDown,
   ArrowRight,
   Menu,
@@ -14,10 +13,8 @@ import {
   LogOut
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
-import { UserRole } from '../types';
 
 interface TopBarProps {
-  onOpenLogin: () => void;
   onOpenNotifications: () => void;
   onOpenPricing: () => void;
   isSidebarPinned: boolean;
@@ -28,7 +25,6 @@ interface TopBarProps {
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
-  onOpenLogin,
   onOpenNotifications,
   onOpenPricing,
   isSidebarPinned,
@@ -39,7 +35,6 @@ export const TopBar: React.FC<TopBarProps> = ({
 }) => {
   const {
     currentUser,
-    switchRole,
     darkMode,
     toggleDarkMode,
     isOffline,
@@ -222,30 +217,6 @@ export const TopBar: React.FC<TopBarProps> = ({
                   </div>
                 </div>
 
-                <div>
-                  <p className="text-[9px] font-mono font-bold uppercase text-slate-400 mb-1.5 px-1">
-                    Switch Role (RBAC):
-                  </p>
-                  <div className="grid grid-cols-3 gap-1">
-                    {(['student', 'instructor', 'admin'] as UserRole[]).map(r => (
-                      <button
-                        key={r}
-                        onClick={() => {
-                          switchRole(r);
-                          setRoleMenuOpen(false);
-                        }}
-                        className={`py-1.5 rounded-lg text-[11px] font-semibold capitalize text-center transition-colors ${
-                          currentUser.role === r
-                            ? 'bg-blue-600 text-white shadow-xs font-bold'
-                            : 'bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800'
-                        }`}
-                      >
-                        {r}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
                 <div className="border-t border-slate-100 dark:border-slate-800 pt-1.5 space-y-1">
                   <button
                     onClick={() => {
@@ -257,20 +228,6 @@ export const TopBar: React.FC<TopBarProps> = ({
                     <span className="flex items-center gap-2">
                       <CreditCard className="w-3.5 h-3.5 text-blue-500" />
                       <span>Subscription</span>
-                    </span>
-                    <ArrowRight className="w-3 h-3 text-slate-400" />
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setRoleMenuOpen(false);
-                      onOpenLogin();
-                    }}
-                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-                  >
-                    <span className="flex items-center gap-2">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>Switch Account</span>
                     </span>
                     <ArrowRight className="w-3 h-3 text-slate-400" />
                   </button>

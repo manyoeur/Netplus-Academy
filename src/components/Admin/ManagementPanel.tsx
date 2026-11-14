@@ -16,10 +16,33 @@ import {
   ChevronUp,
   ChevronDown,
   Save,
-  ShieldAlert
+  ShieldAlert,
+  UserPlus,
+  Users,
+  Copy,
+  Link2,
+  RefreshCw,
+  Ban,
+  Send,
+  GraduationCap,
+  ShieldCheck
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
-import { Course, CourseModule, ModuleType, QuizQuestion } from '../../types';
+import {
+  Course,
+  CourseModule,
+  Invitation,
+  InvitationStatus,
+  ModuleType,
+  QuizQuestion,
+  SubscriptionTier
+} from '../../types';
+
+type ManagementTab = 'courses' | 'progress' | 'invite-instructors' | 'invite-students';
+
+interface ManagementPanelProps {
+  initialTab?: ManagementTab;
+}
 
 const DEFAULT_LAB_NODES = [
   { id: 'r1', name: 'R1-Core', type: 'router' as const, ip: '10.0.0.1', subnet: '255.255.255.252', status: 'online' as const, x: 25, y: 50 },
@@ -30,7 +53,7 @@ const DEFAULT_LAB_LINKS = [
   { from: 'r1', to: 'sw1', interfaceFrom: 'Gi0/0/0', interfaceTo: 'Gi0/1', status: 'up' as const }
 ];
 
-export const ManagementPanel: React.FC = () => {
+export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = 'courses' }) => {
   const {
     courses,
     addCourse,
@@ -42,12 +65,30 @@ export const ManagementPanel: React.FC = () => {
     reorderModuleInCourse,
     studentProgressList,
     currentUser,
-    switchRole,
-    triggerSystemNotification
+    triggerSystemNotification,
+    invitations,
+    createInstructorInvite,
+    createStudentInvites,
+    resendInvitation,
+    revokeInvitation
   } = useAcademy();
 
-  // Tab: 'courses' | 'progress'
-  const [activeTab, setActiveTab] = useState<'courses' | 'progress'>('courses');
+  const isAdmin = currentUser.role === 'admin';
+
+  // Tab: 'courses' | 'progress' | 'invite-instructors' | 'invite-students'
+  const [activeTab, setActiveTab] = useState<ManagementTab>(
+    !isAdmin && (initialTab === 'invite-instructors' || initialTab === 'invite-students')
+      ? 'courses'
+      : initialTab
+  );
+
+  React.useEffect(() => {
+    if (!isAdmin && (initialTab === 'invite-instructors' || initialTab === 'invite-students')) {
+      setActiveTab('courses');
+    } else {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab, isAdmin]);
 
   // Search & Filters for Student Progress
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,6 +101,177 @@ export const ManagementPanel: React.FC = () => {
     setSaveToast(msg);
     window.setTimeout(() => setSaveToast(null), 3200);
   };
+
+  // Invite Instructors State
+  const [instName, setInstName] = useState('');
+  const [instEmail, setInstEmail] = useState('');
+  const [instSpecialty, setInstSpecialty] = useState('CCNP Enterprise & BGP/OSPF Labs');
+  const [instAssignedCourseIds, setInstAssignedCourseIds] = useState<string[]>(() =>
+    courses.slice(0, 1).map(c => c.id)
+  );
+  const [instWelcomeNote, setInstWelcomeNote] = useState('');
+  const [instSearch, setInstSearch] = useState('');
+  const [instStatusFilter, setInstStatusFilter] = useState<'all' | InvitationStatus>('all');
+  const [latestInstructorInvite, setLatestInstructorInvite] = useState<Invitation | null>(null);
+
+  // Invite Students State
+  const [studentInviteMode, setStudentInviteMode] = useState<'single' | 'bulk'>('single');
+  const [studName, setStudName] = useState('');
+  const [studEmail, setStudEmail] = useState('');
+  const [studBulkText, setStudBulkText] = useState('');
+  const [studCohort, setStudCohort] = useState('Enterprise Networking Cohort 2026');
+  const [studTier, setStudTier] = useState<SubscriptionTier>('pro');
+  const [studCourseIds, setStudCourseIds] = useState<string[]>(() =>
+    courses.slice(0, 1).map(c => c.id)
+  );
+  const [studWelcomeNote, setStudWelcomeNote] = useState('');
+  const [studSearch, setStudSearch] = useState('');
+  const [studStatusFilter, setStudStatusFilter] = useState<'all' | InvitationStatus>('all');
+  const [latestStudentInvites, setLatestStudentInvites] = useState<Invitation[]>([]);
+  const [inviteFormError, setInviteFormError] = useState<string | null>(null);
+
+  const buildInviteUrl = (code: string) =>
+    typeof window !== 'undefined' ? `${window.location.origin}/?invite=${code}` : `/?invite=${code}`;
+
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(`Copied ${label} to clipboard`);
+    } catch {
+      showToast(`${label}: ${text}`);
+    }
+  };
+
+  const toggleCourseInSelection = (courseId: string, setter: React.Dispatch<React.SetStateAction<string[]>>) => {
+    setter(prev => (prev.includes(courseId) ? prev.filter(id => id !== courseId) : [...prev, courseId]));
+  };
+
+  const parseBulkStudentEntries = (raw: string): Array<{ fullName: string; email: string }> => {
+    const tokens = raw
+      .split(/\r?\n|;/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    const entries: Array<{ fullName: string; email: string }> = [];
+    const seen = new Set<string>();
+
+    for (const line of tokens) {
+      const bracketMatch = line.match(/^(.*?)<([^<>\s]+@[^<>\s]+\.[^<>\s]+)>$/);
+      if (bracketMatch) {
+        const email = bracketMatch[2].trim().toLowerCase();
+        const fullName = bracketMatch[1].replace(/["']/g, '').trim() || email.split('@')[0];
+        if (!seen.has(email)) {
+          seen.add(email);
+          entries.push({ fullName, email });
+        }
+        continue;
+      }
+
+      const parts = line.split(',').map(p => p.trim()).filter(Boolean);
+      const emailPart = parts.find(p => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p));
+      if (emailPart) {
+        const email = emailPart.toLowerCase();
+        const namePart = parts.find(p => p !== emailPart) || email.split('@')[0];
+        if (!seen.has(email)) {
+          seen.add(email);
+          entries.push({ fullName: namePart, email });
+        }
+      }
+    }
+    return entries;
+  };
+
+  const parsedBulkStudents = parseBulkStudentEntries(studBulkText);
+
+  const handleSendInstructorInvite = (e: React.FormEvent) => {
+    e.preventDefault();
+    setInviteFormError(null);
+    if (!instName.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(instEmail.trim())) {
+      setInviteFormError('Please enter the instructor full name and a valid email address.');
+      return;
+    }
+    const created = createInstructorInvite({
+      fullName: instName,
+      email: instEmail,
+      specialty: instSpecialty,
+      assignedCourseIds: instAssignedCourseIds,
+      welcomeNote: instWelcomeNote
+    });
+    setLatestInstructorInvite(created);
+    setInstName('');
+    setInstEmail('');
+    setInstWelcomeNote('');
+    showToast(`Instructor invite ${created.code} created for ${created.email}`);
+  };
+
+  const handleSendStudentInvites = (e: React.FormEvent) => {
+    e.preventDefault();
+    setInviteFormError(null);
+
+    let entries: Array<{ fullName: string; email: string }> = [];
+    if (studentInviteMode === 'single') {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(studEmail.trim())) {
+        setInviteFormError('Please enter a valid student email address.');
+        return;
+      }
+      entries = [
+        {
+          fullName: studName.trim() || studEmail.trim().split('@')[0],
+          email: studEmail.trim()
+        }
+      ];
+    } else {
+      if (parsedBulkStudents.length === 0) {
+        setInviteFormError('Add at least one valid email address (e.g. "Jordan Lee <jordan@company.com>" or one email per line).');
+        return;
+      }
+      entries = parsedBulkStudents;
+    }
+
+    const created = createStudentInvites({
+      entries,
+      cohort: studCohort,
+      assignedCourseIds: studCourseIds,
+      subscriptionTier: studTier,
+      welcomeNote: studWelcomeNote
+    });
+    setLatestStudentInvites(created);
+    setStudName('');
+    setStudEmail('');
+    setStudBulkText('');
+    setStudWelcomeNote('');
+    showToast(
+      created.length === 1
+        ? `Student invite ${created[0].code} created for ${created[0].email}`
+        : `Created ${created.length} student registration invitations`
+    );
+  };
+
+  const instructorInvites = invitations.filter(inv => inv.role === 'instructor');
+  const studentInvites = invitations.filter(inv => inv.role === 'student');
+
+  const filteredInstructorInvites = instructorInvites.filter(inv => {
+    const q = instSearch.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      inv.fullName.toLowerCase().includes(q) ||
+      inv.email.toLowerCase().includes(q) ||
+      inv.code.toLowerCase().includes(q) ||
+      inv.cohortOrSpecialty.toLowerCase().includes(q);
+    const matchesStatus = instStatusFilter === 'all' || inv.status === instStatusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  const filteredStudentInvites = studentInvites.filter(inv => {
+    const q = studSearch.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      inv.fullName.toLowerCase().includes(q) ||
+      inv.email.toLowerCase().includes(q) ||
+      inv.code.toLowerCase().includes(q) ||
+      inv.cohortOrSpecialty.toLowerCase().includes(q);
+    const matchesStatus = studStatusFilter === 'all' || inv.status === studStatusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   // Add / Edit Course Modal
   const [showAddCourseModal, setShowAddCourseModal] = useState(false);
@@ -414,28 +626,14 @@ export const ManagementPanel: React.FC = () => {
 
   if (currentUser.role === 'student') {
     return (
-      <div className="w-full p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center space-y-4">
+      <div className="w-full p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center space-y-3">
         <ShieldAlert className="w-10 h-10 text-amber-500 mx-auto" />
         <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-          Instructor or Admin Role Required
+          Instructor or Admin Access Required
         </h2>
         <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-          Course authoring, module editing, and live enrollment telemetry are restricted to Instructor and Admin roles.
+          Course authoring, module editing, live enrollment telemetry, and user invitations are restricted to invited Instructors and Academy Administrators.
         </p>
-        <div className="flex items-center justify-center gap-2">
-          <button
-            onClick={() => switchRole('instructor')}
-            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
-          >
-            Switch to Instructor
-          </button>
-          <button
-            onClick={() => switchRole('admin')}
-            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
-          >
-            Switch to Admin
-          </button>
-        </div>
       </div>
     );
   }
@@ -460,10 +658,18 @@ export const ManagementPanel: React.FC = () => {
             <span className="text-xs text-slate-300">• Academy Management Console</span>
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight">
-            Curriculum Authoring & Live Enrollment Tracking
+            {activeTab === 'invite-instructors'
+              ? 'Instructor Onboarding & Faculty Invitations'
+              : activeTab === 'invite-students'
+              ? 'Student Registration & Cohort Invitations'
+              : 'Curriculum Authoring & Live Enrollment Tracking'}
           </h1>
           <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-            Edit course metadata, update module markdown/labs/quizzes/videos, reorder modules, and monitor real-time participant progress.
+            {activeTab === 'invite-instructors'
+              ? 'Issue verified faculty invitation codes and assign teaching courses separately from student cohort registrations.'
+              : activeTab === 'invite-students'
+              ? 'Send individual or bulk student registration invitations with pre-enrolled tracks and subscription tiers.'
+              : 'Edit course metadata, update module markdown/labs/quizzes/videos, reorder modules, and monitor real-time participant progress.'}
           </p>
         </div>
 
@@ -479,9 +685,12 @@ export const ManagementPanel: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-slate-200 dark:border-slate-800">
+      <div className="flex flex-wrap border-b border-slate-200 dark:border-slate-800">
         <button
-          onClick={() => setActiveTab('courses')}
+          onClick={() => {
+            setInviteFormError(null);
+            setActiveTab('courses');
+          }}
           className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-all ${
             activeTab === 'courses'
               ? 'border-blue-600 text-blue-600 dark:text-cyan-400 dark:border-cyan-400'
@@ -493,7 +702,10 @@ export const ManagementPanel: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('progress')}
+          onClick={() => {
+            setInviteFormError(null);
+            setActiveTab('progress');
+          }}
           className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-all ${
             activeTab === 'progress'
               ? 'border-blue-600 text-blue-600 dark:text-cyan-400 dark:border-cyan-400'
@@ -503,10 +715,810 @@ export const ManagementPanel: React.FC = () => {
           <Activity className="w-4 h-4" />
           <span>Real-Time Enrollment Progress ({studentProgressList.length})</span>
         </button>
+
+        {isAdmin && (
+          <>
+            <button
+              onClick={() => {
+                setInviteFormError(null);
+                setActiveTab('invite-instructors');
+              }}
+              className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-all ${
+                activeTab === 'invite-instructors'
+                  ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Invite Instructors ({instructorInvites.length})</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setInviteFormError(null);
+                setActiveTab('invite-students');
+              }}
+              className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-all ${
+                activeTab === 'invite-students'
+                  ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400 dark:border-emerald-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span>Invite Students ({studentInvites.length})</span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'progress' ? (
+      {activeTab === 'invite-instructors' && isAdmin ? (
+        <div className="space-y-6">
+          {/* Instructor Invite Composer Card */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <form
+              onSubmit={handleSendInstructorInvite}
+              className="lg:col-span-7 p-5 sm:p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 text-xs"
+            >
+              <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                    <ShieldCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Invite New Instructor
+                    </h2>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Grants faculty privileges to author modules, edit CLI labs, and review student cohorts.
+                    </p>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 font-mono text-[10px] font-bold">
+                  ROLE: INSTRUCTOR
+                </span>
+              </div>
+
+              {inviteFormError && (
+                <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs">
+                  {inviteFormError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Instructor Full Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={instName}
+                    onChange={(e) => setInstName(e.target.value)}
+                    placeholder="Dr. Elena Rostova, CCIE"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Google / Work Email Address
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={instEmail}
+                    onChange={(e) => setInstEmail(e.target.value)}
+                    placeholder="instructor@company.com"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Teaching Specialization / Certification Track
+                </label>
+                <input
+                  type="text"
+                  value={instSpecialty}
+                  onChange={(e) => setInstSpecialty(e.target.value)}
+                  placeholder="e.g. CCNP Enterprise, BGP EVPN & Security Firewalls"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Assigned Courses to Teach & Author ({instAssignedCourseIds.length} selected)
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {courses.map(course => {
+                    const selected = instAssignedCourseIds.includes(course.id);
+                    return (
+                      <button
+                        key={course.id}
+                        type="button"
+                        onClick={() => toggleCourseInSelection(course.id, setInstAssignedCourseIds)}
+                        className={`px-3 py-1.5 rounded-xl border text-[11px] font-semibold transition-all ${
+                          selected
+                            ? 'bg-indigo-600 border-indigo-600 text-white shadow-xs'
+                            : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-indigo-400'
+                        }`}
+                      >
+                        <span className="font-mono">{course.code}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Onboarding Welcome Note (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  value={instWelcomeNote}
+                  onChange={(e) => setInstWelcomeNote(e.target.value)}
+                  placeholder="Add lab curriculum instructions or schedule details for the instructor..."
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="submit"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow-md shadow-indigo-500/20 transition-all"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Generate & Send Instructor Invite</span>
+                </button>
+              </div>
+            </form>
+
+            {/* Instructor Onboarding Preview & Verification Card */}
+            <div className="lg:col-span-5 p-5 sm:p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between space-y-4 text-xs">
+              {latestInstructorInvite ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-mono text-[10px] font-bold">
+                      INVITATION READY
+                    </span>
+                    <span className="text-[11px] font-mono text-slate-400">
+                      Expires {new Date(latestInstructorInvite.expiresAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      {latestInstructorInvite.fullName}
+                    </h3>
+                    <p className="text-slate-500 dark:text-slate-400 font-mono text-[11px]">
+                      {latestInstructorInvite.email}
+                    </p>
+                    <p className="text-[11px] text-indigo-600 dark:text-indigo-400 mt-1">
+                      Track: {latestInstructorInvite.cohortOrSpecialty}
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                    <div>
+                      <p className="text-[10px] font-mono uppercase text-slate-400">Instructor Invite Code</p>
+                      <div className="flex items-center justify-between gap-2 mt-1">
+                        <code className="text-sm font-mono font-bold text-indigo-600 dark:text-indigo-300">
+                          {latestInstructorInvite.code}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(latestInstructorInvite.code, 'invite code')}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold hover:border-indigo-500"
+                        >
+                          <Copy className="w-3 h-3" />
+                          <span>Copy</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                      <p className="text-[10px] font-mono uppercase text-slate-400">Direct Registration URL</p>
+                      <div className="flex items-center justify-between gap-2 mt-1">
+                        <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300 truncate">
+                          {buildInviteUrl(latestInstructorInvite.code)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            copyToClipboard(buildInviteUrl(latestInstructorInvite.code), 'registration link')
+                          }
+                          className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-500"
+                        >
+                          <Link2 className="w-3 h-3" />
+                          <span>Copy Link</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                    <Mail className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Zero-Trust Instructor Onboarding
+                  </h3>
+                  <p className="text-slate-500 dark:text-slate-400 leading-relaxed">
+                    Instructors cannot self-register from the public sign-up page. Each invitation binds a single-use{' '}
+                    <code className="font-mono text-indigo-600 dark:text-indigo-400">INST-XXXX-XXXX</code> code to the instructor&apos;s verified email address.
+                  </p>
+                  <ul className="space-y-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>Works with Google Sign-On or Email Sign-Up</span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>Enforced in Firestore security rules</span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>Instant revocation &amp; re-issue tracking</span>
+                    </li>
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Instructor Invitations Directory */}
+          <div className="space-y-3">
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="relative w-full sm:w-80">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={instSearch}
+                  onChange={(e) => setInstSearch(e.target.value)}
+                  placeholder="Search instructor name, email, or code..."
+                  className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <select
+                value={instStatusFilter}
+                onChange={(e) => setInstStatusFilter(e.target.value as 'all' | InvitationStatus)}
+                className="w-full sm:w-auto px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200"
+              >
+                <option value="all">All Statuses</option>
+                <option value="pending">Pending</option>
+                <option value="accepted">Accepted</option>
+                <option value="revoked">Revoked</option>
+              </select>
+            </div>
+
+            <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[11px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      <th className="py-3 px-4">Instructor</th>
+                      <th className="py-3 px-4">Specialization</th>
+                      <th className="py-3 px-4">Assigned Courses</th>
+                      <th className="py-3 px-4">Invite Code</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                    {filteredInstructorInvites.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-8 px-4 text-center text-slate-400">
+                          No instructor invitations yet. Use the form above to invite a new instructor.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredInstructorInvites.map(inv => (
+                        <tr key={inv.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                          <td className="py-3.5 px-4">
+                            <p className="font-semibold text-slate-900 dark:text-white">{inv.fullName}</p>
+                            <p className="text-[11px] font-mono text-slate-400">{inv.email}</p>
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300">
+                            {inv.cohortOrSpecialty}
+                          </td>
+                          <td className="py-3.5 px-4 font-mono text-slate-600 dark:text-slate-300">
+                            {inv.assignedCourseIds.length} course(s)
+                          </td>
+                          <td className="py-3.5 px-4 font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                            {inv.code}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span
+                              className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-bold uppercase ${
+                                inv.status === 'accepted'
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                  : inv.status === 'revoked'
+                                  ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                                  : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                              }`}
+                            >
+                              {inv.status}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(inv.code, 'code')}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                title="Copy Invite Code"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(buildInviteUrl(inv.code), 'invite link')}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                title="Copy Registration Link"
+                              >
+                                <Link2 className="w-3.5 h-3.5" />
+                              </button>
+                              {inv.status !== 'accepted' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    resendInvitation(inv.id);
+                                    showToast(`Resent instructor invite to ${inv.email}`);
+                                  }}
+                                  className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                  title="Resend Invite"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {inv.status === 'pending' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    revokeInvitation(inv.id);
+                                    showToast(`Revoked invite ${inv.code}`);
+                                  }}
+                                  className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                  title="Revoke Invite"
+                                >
+                                  <Ban className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : activeTab === 'invite-students' && isAdmin ? (
+        <div className="space-y-6">
+          {/* Student Registration Invite Composer Card */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <form
+              onSubmit={handleSendStudentInvites}
+              className="lg:col-span-7 p-5 sm:p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 text-xs"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                    <GraduationCap className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Invite Students for Registration
+                    </h2>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Issue single or bulk cohort registration links with pre-enrolled courses.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Single vs Bulk Mode Switcher */}
+                <div className="flex p-0.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-[11px] font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInviteFormError(null);
+                      setStudentInviteMode('single');
+                    }}
+                    className={`px-3 py-1 rounded-lg transition-colors ${
+                      studentInviteMode === 'single'
+                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                        : 'text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    Single Student
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInviteFormError(null);
+                      setStudentInviteMode('bulk');
+                    }}
+                    className={`px-3 py-1 rounded-lg transition-colors ${
+                      studentInviteMode === 'bulk'
+                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                        : 'text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    Bulk Cohort
+                  </button>
+                </div>
+              </div>
+
+              {inviteFormError && (
+                <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs">
+                  {inviteFormError}
+                </div>
+              )}
+
+              {studentInviteMode === 'single' ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Student Full Name
+                    </label>
+                    <input
+                      type="text"
+                      value={studName}
+                      onChange={(e) => setStudName(e.target.value)}
+                      placeholder="Jordan Taylor"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Student Email Address
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={studEmail}
+                      onChange={(e) => setStudEmail(e.target.value)}
+                      placeholder="student@company.com"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-semibold text-slate-700 dark:text-slate-300">
+                      Student Cohort Roster (one recipient per line)
+                    </label>
+                    <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-bold">
+                      {parsedBulkStudents.length} valid email(s) detected
+                    </span>
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={studBulkText}
+                    onChange={(e) => setStudBulkText(e.target.value)}
+                    placeholder={`Jordan Taylor <jordan@company.com>\nMaya Patel, maya@company.com\nliam.chen@company.com`}
+                    className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Cohort / Batch Label
+                  </label>
+                  <input
+                    type="text"
+                    value={studCohort}
+                    onChange={(e) => setStudCohort(e.target.value)}
+                    placeholder="Fall 2026 CCNA Bootcamp"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Initial Subscription Tier
+                  </label>
+                  <select
+                    value={studTier}
+                    onChange={(e) => setStudTier(e.target.value as SubscriptionTier)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="free">Free Starter</option>
+                    <option value="pro">Pro Lab Access</option>
+                    <option value="expert">Expert Certification</option>
+                    <option value="enterprise">Enterprise Cohort</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Pre-Enrolled Courses ({studCourseIds.length} selected)
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {courses.map(course => {
+                    const selected = studCourseIds.includes(course.id);
+                    return (
+                      <button
+                        key={course.id}
+                        type="button"
+                        onClick={() => toggleCourseInSelection(course.id, setStudCourseIds)}
+                        className={`px-3 py-1.5 rounded-xl border text-[11px] font-semibold transition-all ${
+                          selected
+                            ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                            : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-emerald-400'
+                        }`}
+                      >
+                        <span className="font-mono">{course.code}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Registration Welcome Note (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  value={studWelcomeNote}
+                  onChange={(e) => setStudWelcomeNote(e.target.value)}
+                  placeholder="Optional cohort start date or orientation message..."
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="submit"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-md shadow-emerald-500/20 transition-all"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>
+                    {studentInviteMode === 'bulk' && parsedBulkStudents.length > 1
+                      ? `Send ${parsedBulkStudents.length} Student Invites`
+                      : 'Send Student Registration Invite'}
+                  </span>
+                </button>
+              </div>
+            </form>
+
+            {/* Student Registration Invite Ready Summary */}
+            <div className="lg:col-span-5 p-5 sm:p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between space-y-4 text-xs">
+              {latestStudentInvites.length > 0 ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-mono text-[10px] font-bold">
+                      {latestStudentInvites.length === 1
+                        ? 'STUDENT INVITE READY'
+                        : `${latestStudentInvites.length} INVITES DISPATCHED`}
+                    </span>
+                    <span className="text-[11px] font-mono text-slate-400">
+                      Tier: {(latestStudentInvites[0].subscriptionTier || 'pro').toUpperCase()}
+                    </span>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      {latestStudentInvites.length === 1
+                        ? latestStudentInvites[0].fullName
+                        : `${latestStudentInvites[0].cohortOrSpecialty}`}
+                    </h3>
+                    <p className="text-slate-500 dark:text-slate-400 font-mono text-[11px]">
+                      {latestStudentInvites.length === 1
+                        ? latestStudentInvites[0].email
+                        : `${latestStudentInvites.length} unique registration links generated`}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {latestStudentInvites.map(inv => (
+                      <div
+                        key={inv.id}
+                        className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                            {inv.email}
+                          </span>
+                          <code className="text-[11px] font-mono font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
+                            {inv.code}
+                          </code>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(inv.code, 'student code')}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[10px] font-semibold hover:border-emerald-500"
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>Copy Code</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(buildInviteUrl(inv.code), 'registration link')}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-semibold hover:bg-emerald-500"
+                          >
+                            <Link2 className="w-3 h-3" />
+                            <span>Copy Link</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                    <Users className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Streamlined Cohort Registration
+                  </h3>
+                  <p className="text-slate-500 dark:text-slate-400 leading-relaxed">
+                    Student invitations generate{' '}
+                    <code className="font-mono text-emerald-600 dark:text-emerald-400">STUD-XXXX-XXXX</code> codes that automatically enroll learners into selected courses and initialize their progress tracker upon sign-up.
+                  </p>
+                  <ul className="space-y-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>Strict student-only permissions (never grants faculty access)</span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>Bulk roster paste for fast bootcamp onboarding</span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>Automatic enrollment &amp; tier provisioning</span>
+                    </li>
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Student Registration Invitations Directory */}
+          <div className="space-y-3">
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="relative w-full sm:w-80">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={studSearch}
+                  onChange={(e) => setStudSearch(e.target.value)}
+                  placeholder="Search student name, email, cohort, or code..."
+                  className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <select
+                value={studStatusFilter}
+                onChange={(e) => setStudStatusFilter(e.target.value as 'all' | InvitationStatus)}
+                className="w-full sm:w-auto px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200"
+              >
+                <option value="all">All Statuses</option>
+                <option value="pending">Pending</option>
+                <option value="accepted">Accepted</option>
+                <option value="revoked">Revoked</option>
+              </select>
+            </div>
+
+            <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[11px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      <th className="py-3 px-4">Student</th>
+                      <th className="py-3 px-4">Cohort</th>
+                      <th className="py-3 px-4">Pre-Enrolled</th>
+                      <th className="py-3 px-4">Tier</th>
+                      <th className="py-3 px-4">Registration Code</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                    {filteredStudentInvites.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 px-4 text-center text-slate-400">
+                          No student registration invitations yet. Invite individual students or a bulk cohort above.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredStudentInvites.map(inv => (
+                        <tr key={inv.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                          <td className="py-3.5 px-4">
+                            <p className="font-semibold text-slate-900 dark:text-white">{inv.fullName}</p>
+                            <p className="text-[11px] font-mono text-slate-400">{inv.email}</p>
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300">
+                            {inv.cohortOrSpecialty}
+                          </td>
+                          <td className="py-3.5 px-4 font-mono text-slate-600 dark:text-slate-300">
+                            {inv.assignedCourseIds.length} course(s)
+                          </td>
+                          <td className="py-3.5 px-4 font-mono uppercase text-[10px] font-bold text-slate-700 dark:text-slate-300">
+                            {inv.subscriptionTier || 'pro'}
+                          </td>
+                          <td className="py-3.5 px-4 font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                            {inv.code}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span
+                              className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-bold uppercase ${
+                                inv.status === 'accepted'
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                  : inv.status === 'revoked'
+                                  ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                                  : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                              }`}
+                            >
+                              {inv.status}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(inv.code, 'code')}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                title="Copy Registration Code"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(buildInviteUrl(inv.code), 'registration link')}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                title="Copy Registration Link"
+                              >
+                                <Link2 className="w-3.5 h-3.5" />
+                              </button>
+                              {inv.status !== 'accepted' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    resendInvitation(inv.id);
+                                    showToast(`Resent student invite to ${inv.email}`);
+                                  }}
+                                  className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                  title="Resend Invite"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {inv.status === 'pending' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    revokeInvitation(inv.id);
+                                    showToast(`Revoked invite ${inv.code}`);
+                                  }}
+                                  className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                  title="Revoke Invite"
+                                >
+                                  <Ban className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : activeTab === 'progress' ? (
         <div className="space-y-4">
           {/* Filters Bar */}
           <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
