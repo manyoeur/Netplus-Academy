@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { CourseThumbnail } from '../Courses/CourseThumbnail';
+import { CourseRadialProgressChart } from './CourseRadialProgressChart';
 
 interface StudentDashboardProps {
   onSelectCourse: (courseId: string) => void;
@@ -126,6 +127,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </p>
         </div>
       </div>
+
+      {/* D3.js Radial Progress Analytics */}
+      <CourseRadialProgressChart
+        courses={enrolledCourses}
+        completedModuleIds={currentUser.completedModuleIds}
+        onSelectCourse={onSelectCourse}
+      />
 
       {/* Enrolled Courses Progress Section */}
       <div className="space-y-4">
