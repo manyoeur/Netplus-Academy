@@ -1,4 +1,8 @@
 import { Course, User, ForumPost, StudentProgressRecord, LMSConfig, NotificationItem, RealtimeActivityItem } from '../types';
+import thumbRouting from '../assets/images/course_thumb_routing_1794636856652.jpg';
+import thumbSecurity from '../assets/images/course_thumb_security_1794636856867.jpg';
+import thumbCloud from '../assets/images/course_thumb_cloud_1794636857791.jpg';
+import thumbPacket from '../assets/images/course_thumb_packet_1794636857450.jpg';
 
 export const INITIAL_USERS: User[] = [
   {
@@ -94,7 +98,7 @@ export const INITIAL_COURSES: Course[] = [
     enrolledCount: 3840,
     price: 149,
     bannerColor: 'from-blue-600 via-indigo-700 to-slate-900',
-    thumbnail: 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800',
+    thumbnail: thumbRouting,
     badge: 'Best Seller',
     description: 'Master core networking concepts: IPv4/IPv6 addressing, subnetting, OSPF routing protocol, VLAN segmentation, Spanning Tree Protocol (802.1w), DHCP relay, and first-hop redundancy protocols (HSRP).',
     prerequisites: ['Basic computer hardware understanding', 'Familiarity with IP addresses'],
@@ -269,7 +273,7 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
     enrolledCount: 2190,
     price: 189,
     bannerColor: 'from-emerald-700 via-teal-800 to-slate-900',
-    thumbnail: 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=800',
+    thumbnail: thumbSecurity,
     badge: 'Popular',
     description: 'Learn modern network perimeter defense, stateful inspection, Deep Packet Inspection (DPI), site-to-site IPsec VPNs, SSL/TLS decryption, and hardening edge routers against DDoS attacks.',
     prerequisites: ['CCNA knowledge or equivalent', 'Understanding of TCP/IP handshakes'],
@@ -317,7 +321,7 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
     enrolledCount: 1670,
     price: 199,
     bannerColor: 'from-purple-700 via-violet-800 to-slate-900',
-    thumbnail: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=800',
+    thumbnail: thumbCloud,
     badge: 'Trending',
     description: 'Design modern Software-Defined WAN fabrics using vManage, vSmart, and vEdge controllers. Implement dynamic path selection, Direct Internet Access (DIA), and cloud on-ramps.',
     prerequisites: ['BGP fundamentals', 'Enterprise routing knowledge'],
@@ -357,7 +361,7 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
     enrolledCount: 4210,
     price: 99,
     bannerColor: 'from-amber-600 via-orange-700 to-slate-900',
-    thumbnail: 'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&q=80&w=800',
+    thumbnail: thumbPacket,
     badge: 'Staff Pick',
     description: 'Stop guessing what happens on your network wire. Learn to read raw hex dumps, TCP flag combinations, DNS tunneling, TLS 1.3 handshake negotiations, and diagnose latency bottlenecks.',
     prerequisites: ['Basic networking knowledge'],

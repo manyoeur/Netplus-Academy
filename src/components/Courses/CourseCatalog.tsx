@@ -1,26 +1,28 @@
-import React, { useState } from 'react';
-import { 
-  Layers, 
-  Search, 
-  Star, 
-  Clock, 
-  Users, 
-  CheckCircle, 
-  Award, 
-  ArrowRight, 
-  Filter, 
-  Terminal, 
-  ShieldCheck, 
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Search,
+  Star,
+  Clock,
+  CheckCircle2,
+  ArrowRight,
   Sparkles,
-  BookOpen
+  LayoutGrid,
+  List,
+  X,
+  ArrowUpDown
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
-import { Course } from '../../types';
+import { CourseThumbnail } from './CourseThumbnail';
 
 interface CourseCatalogProps {
   onSelectCourse: (courseId: string) => void;
   onOpenPaymentModal: () => void;
 }
+
+type CatalogViewMode = 'grid' | 'list';
+type SortOption = 'recommended' | 'rating' | 'enrolled' | 'duration';
+
+const CATALOG_VIEW_STORAGE_KEY = 'netpulse_academy_catalog_view';
 
 export const CourseCatalog: React.FC<CourseCatalogProps> = ({
   onSelectCourse,
@@ -28,37 +30,91 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
 }) => {
   const { courses, currentUser, enrollInCourse } = useAcademy();
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedLevel, setSelectedLevel] = useState<string>('All');
+  const [sortBy, setSortBy] = useState<SortOption>('recommended');
   const [searchQuery, setSearchQuery] = useState('');
-
-  const categories = [
-    'All',
-    'Enterprise Routing & Switching',
-    'Network Security & Firewalls',
-    'Cloud & SD-WAN',
-    'Packet Analysis & Forensics'
-  ];
-
-  const filteredCourses = courses.filter(c => {
-    const matchesCat = selectedCategory === 'All' || c.category === selectedCategory;
-    const matchesSearch = c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          c.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          c.subtitle.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCat && matchesSearch;
+  const [viewMode, setViewMode] = useState<CatalogViewMode>(() => {
+    try {
+      const saved = localStorage.getItem(CATALOG_VIEW_STORAGE_KEY);
+      return saved === 'list' ? 'list' : 'grid';
+    } catch {
+      return 'grid';
+    }
   });
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(CATALOG_VIEW_STORAGE_KEY, viewMode);
+    } catch {
+      // Ignore storage write errors in restricted browsing contexts
+    }
+  }, [viewMode]);
+
+  const categories = useMemo(() => {
+    const base = [
+      'All',
+      'Enterprise Routing & Switching',
+      'Network Security & Firewalls',
+      'Cloud & SD-WAN',
+      'Packet Analysis & Forensics'
+    ];
+    const extras = courses
+      .map(c => c.category)
+      .filter(cat => !base.includes(cat));
+    return Array.from(new Set([...base, ...extras]));
+  }, [courses]);
+
+  const levels = ['All', 'Beginner', 'Intermediate', 'Advanced', 'Expert'];
+
+  const filteredCourses = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const filtered = courses.filter(c => {
+      const matchesCat = selectedCategory === 'All' || c.category === selectedCategory;
+      const matchesLevel = selectedLevel === 'All' || c.level === selectedLevel;
+      const matchesSearch =
+        !q ||
+        c.title.toLowerCase().includes(q) ||
+        c.code.toLowerCase().includes(q) ||
+        c.subtitle.toLowerCase().includes(q) ||
+        c.instructor.name.toLowerCase().includes(q);
+      return matchesCat && matchesLevel && matchesSearch;
+    });
+
+    if (sortBy === 'recommended') return filtered;
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'rating') return b.rating - a.rating;
+      if (sortBy === 'enrolled') return b.enrolledCount - a.enrolledCount;
+      if (sortBy === 'duration') return b.durationHours - a.durationHours;
+      return 0;
+    });
+  }, [courses, selectedCategory, selectedLevel, searchQuery, sortBy]);
+
+  const hasActiveFilters =
+    selectedCategory !== 'All' || selectedLevel !== 'All' || searchQuery.trim() !== '';
+
+  const resetFilters = () => {
+    setSelectedCategory('All');
+    setSelectedLevel('All');
+    setSearchQuery('');
+  };
+
   return (
-    <div className="w-full space-y-8">
+    <div className="w-full space-y-6">
       {/* Hero Banner */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-950 via-blue-950 to-indigo-950 text-white p-8 sm:p-12 border border-slate-800 shadow-2xl">
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-950 via-blue-950 to-indigo-950 text-white p-8 sm:p-11 border border-slate-800 shadow-2xl">
         <div className="absolute top-0 right-0 -mt-10 -mr-10 w-80 h-80 rounded-full bg-blue-600/10 blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 left-1/3 -mb-10 w-80 h-80 rounded-full bg-cyan-500/10 blur-3xl pointer-events-none" />
 
         <div className="relative z-10 max-w-3xl space-y-4">
-          <div className="flex items-center gap-2">
-            <span className="px-3 py-1 rounded-full bg-blue-500/20 text-cyan-300 font-mono text-xs font-semibold border border-blue-500/30">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300 font-medium">
+            <span className="font-mono text-cyan-300 font-semibold">
               CCIE-Authoritative Curriculum
             </span>
-            <span className="text-xs text-slate-300 font-medium">• Enterprise Certifications</span>
+            <span>·</span>
+            <span>Enterprise Certifications</span>
+            <span>·</span>
+            <span className="tabular-nums">{courses.length} Active Tracks</span>
           </div>
 
           <h1 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight">
@@ -72,7 +128,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
           <div className="flex flex-wrap items-center gap-3 pt-2">
             <button
               onClick={() => onSelectCourse('course-ccna-1')}
-              className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg shadow-blue-500/25 transition-all flex items-center gap-2"
+              className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg shadow-blue-500/25 transition-all flex items-center gap-2 whitespace-nowrap shrink-0"
             >
               <span>Explore CCNA 200-301 Masterclass</span>
               <ArrowRight className="w-4 h-4" />
@@ -80,7 +136,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
 
             <button
               onClick={onOpenPaymentModal}
-              className="px-5 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold backdrop-blur-sm border border-white/10 transition-all flex items-center gap-1.5"
+              className="px-5 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold backdrop-blur-sm border border-white/10 transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
             >
               <Sparkles className="w-4 h-4 text-amber-300" />
               <span>Unlock All Labs with Pro Tier ($29/mo)</span>
@@ -89,118 +145,390 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
         </div>
       </div>
 
-      {/* Category Pills & Search */}
-      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto pb-1 text-xs">
-          {categories.map(cat => (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-3 py-1.5 rounded-xl font-medium whitespace-nowrap transition-all ${
-                selectedCategory === cat
-                  ? 'bg-blue-600 text-white font-semibold shadow-sm'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
+      {/* Filter Toolbar & View Mode Switcher */}
+      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          {/* Category Filter Buttons */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0 text-xs">
+            {categories.map(cat => (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`px-3 py-1.5 rounded-xl font-medium whitespace-nowrap shrink-0 transition-all ${
+                  selectedCategory === cat
+                    ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+
+          {/* Search, Level, Sort & Grid/List Switcher */}
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 shrink-0">
+            <div className="relative flex-1 sm:w-56 md:w-64 min-w-[180px]">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search courses, BGP, OSPF..."
+                className="w-full pl-9 pr-8 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  aria-label="Clear search"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            <select
+              value={selectedLevel}
+              onChange={(e) => setSelectedLevel(e.target.value)}
+              aria-label="Filter by difficulty level"
+              className="px-3 py-2 rounded-xl text-xs font-medium bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 shrink-0"
             >
-              {cat}
-            </button>
-          ))}
+              {levels.map(lvl => (
+                <option key={lvl} value={lvl}>
+                  {lvl === 'All' ? 'All Levels' : lvl}
+                </option>
+              ))}
+            </select>
+
+            <div className="relative flex items-center shrink-0">
+              <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 pointer-events-none" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortOption)}
+                aria-label="Sort courses"
+                className="pl-8 pr-3 py-2 rounded-xl text-xs font-medium bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="recommended">Recommended</option>
+                <option value="rating">Highest Rated</option>
+                <option value="enrolled">Most Enrolled</option>
+                <option value="duration">Longest Duration</option>
+              </select>
+            </div>
+
+            {/* Thumbnail Grid / List View Segmented Toggle */}
+            <div
+              role="group"
+              aria-label="Course display view"
+              className="inline-flex items-center p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0"
+            >
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                aria-pressed={viewMode === 'grid'}
+                title="Thumbnail view"
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all ${
+                  viewMode === 'grid'
+                    ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-cyan-400 shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Thumbnails</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('list')}
+                aria-pressed={viewMode === 'list'}
+                title="List view"
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all ${
+                  viewMode === 'list'
+                    ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-cyan-400 shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <List className="w-3.5 h-3.5" />
+                <span>List</span>
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="relative w-full md:w-72">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search courses, BGP, OSPF..."
-            className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+        {/* Results Count Bar */}
+        <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800/80 text-xs text-slate-500 dark:text-slate-400">
+          <span className="tabular-nums">
+            Showing <strong className="text-slate-900 dark:text-slate-100">{filteredCourses.length}</strong> of{' '}
+            <strong className="text-slate-900 dark:text-slate-100">{courses.length}</strong> courses
+          </span>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="text-blue-600 dark:text-cyan-400 font-semibold hover:underline whitespace-nowrap shrink-0"
+            >
+              Reset filters
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Course Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
-        {filteredCourses.map(course => {
-          const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
-          const totalModules = course.modules.length;
-          const completedCount = course.modules.filter(m => currentUser.completedModuleIds.includes(m.id)).length;
-          const progressPercent = totalModules > 0 ? Math.round((completedCount / totalModules) * 100) : 0;
-          const defaultThumb = 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800';
+      {/* Empty State */}
+      {filteredCourses.length === 0 ? (
+        <div className="p-12 rounded-2xl bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+          <p className="text-sm font-semibold text-slate-900 dark:text-white">
+            No courses match your current filters
+          </p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Try clearing your search query or switching back to all difficulty levels and tracks.
+          </p>
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all"
+          >
+            Show All Courses
+          </button>
+        </div>
+      ) : viewMode === 'grid' ? (
+        /* THUMBNAIL GRID VIEW */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
+          {filteredCourses.map(course => {
+            const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
+            const totalModules = course.modules.length;
+            const completedCount = course.modules.filter(m =>
+              currentUser.completedModuleIds.includes(m.id)
+            ).length;
+            const progressPercent =
+              totalModules > 0 ? Math.round((completedCount / totalModules) * 100) : 0;
 
-          return (
-            <div
-              key={course.id}
-              onClick={() => onSelectCourse(course.id)}
-              className="bg-white dark:bg-[#0c1220] rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:shadow-xl hover:border-blue-400 dark:hover:border-cyan-500/50 transition-all flex flex-col group cursor-pointer"
-            >
-              {/* Course Thumbnail Image Header */}
-              <div className="relative overflow-hidden aspect-video bg-slate-950">
-                <img
-                  src={course.thumbnail || defaultThumb}
-                  alt={course.title}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  loading="lazy"
-                />
-                
-                {/* Top-Left Category Badge */}
-                <span className="absolute top-3 left-3 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-900/80 dark:bg-[#070b14]/85 backdrop-blur-md text-white border border-white/10 shadow-sm">
-                  {course.category}
-                </span>
-
-                {/* Top-Right Badges */}
-                <div className="absolute top-3 right-3 flex items-center gap-1.5">
-                  <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-blue-600 text-white shadow-sm">
-                    {course.level}
-                  </span>
-                </div>
-
-                {/* Bottom Overlay Pill for Course Code & Completion */}
-                <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between gap-2">
-                  <span className="px-2 py-0.5 rounded-md bg-slate-900/80 backdrop-blur-md text-[10px] font-mono text-cyan-300 font-bold border border-cyan-500/30">
-                    {course.code}
-                  </span>
-                  {progressPercent === 100 && (
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-600/90 backdrop-blur-md text-[10px] font-mono text-white font-bold">
-                      100% Done
+            return (
+              <div
+                key={course.id}
+                onClick={() => onSelectCourse(course.id)}
+                className="bg-white dark:bg-[#0c1220] rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:shadow-xl hover:border-blue-400 dark:hover:border-cyan-500/50 transition-all flex flex-col group cursor-pointer"
+              >
+                {/* 16:9 Thumbnail Image Header with Scrim */}
+                <CourseThumbnail
+                  course={course}
+                  className="aspect-video"
+                  imgClassName="group-hover:scale-[1.03] transition-transform duration-300"
+                >
+                  <div className="absolute bottom-2.5 left-3.5 right-3.5 flex items-center justify-between gap-2 z-10">
+                    <span className="font-mono text-[11px] font-bold tracking-wider text-cyan-300">
+                      {course.code}
                     </span>
-                  )}
-                </div>
-              </div>
+                    {progressPercent === 100 && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-300">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Completed</span>
+                      </span>
+                    )}
+                  </div>
+                </CourseThumbnail>
 
-              {/* Card Body */}
-              <div className="p-5 flex-1 flex flex-col justify-between space-y-3">
-                <div>
-                  {/* Star Rating & Enrolled Count */}
-                  <div className="flex items-center gap-1 text-amber-400 text-xs font-bold mb-1">
-                    <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                    <span>{course.rating.toFixed(1)}</span>
-                    <span className="text-slate-400 font-normal">
-                      ({course.enrolledCount.toLocaleString()} students)
-                    </span>
+                {/* Card Body */}
+                <div className="p-5 flex-1 flex flex-col justify-between space-y-3">
+                  <div className="space-y-1.5">
+                    {/* Quiet inline category & level metadata */}
+                    <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate">
+                      {course.category} · {course.level}
+                    </p>
+
+                    {/* Course Title */}
+                    <h3 className="font-bold text-slate-900 dark:text-white text-base line-clamp-2 leading-snug group-hover:text-blue-600 dark:group-hover:text-cyan-400 transition-colors">
+                      {course.title}
+                    </h3>
+
+                    {/* Instructor & Rating/Enrollment */}
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                      <span className="inline-flex items-center gap-1 font-bold text-amber-500 dark:text-amber-400">
+                        <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                        {course.rating.toFixed(1)}
+                      </span>
+                      <span>·</span>
+                      <span>{course.enrolledCount.toLocaleString()} students</span>
+                      <span>·</span>
+                      <span className="text-slate-700 dark:text-slate-300 font-medium truncate">
+                        {course.instructor.name}
+                      </span>
+                    </div>
+
+                    {/* Brief Subtitle */}
+                    <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 pt-0.5 leading-relaxed">
+                      {course.subtitle}
+                    </p>
+
+                    {/* Visual Completion Progress Bar */}
+                    <div className="pt-3 mt-1 border-t border-slate-100 dark:border-slate-800/80">
+                      <div className="flex items-center justify-between text-[11px] font-mono tabular-nums mb-1.5">
+                        <span className="text-slate-500 dark:text-slate-400">
+                          {isEnrolled
+                            ? `${completedCount}/${totalModules} modules`
+                            : `${totalModules} modules · Not enrolled`}
+                        </span>
+                        <span
+                          className={`font-bold ${
+                            progressPercent === 100
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : progressPercent > 0
+                              ? 'text-blue-600 dark:text-cyan-400'
+                              : 'text-slate-400 dark:text-slate-500'
+                          }`}
+                        >
+                          {progressPercent}%
+                        </span>
+                      </div>
+                      <div
+                        role="progressbar"
+                        aria-valuenow={progressPercent}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`${course.title} completion ${progressPercent}%`}
+                        className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden"
+                      >
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            progressPercent === 100
+                              ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                              : 'bg-gradient-to-r from-blue-600 to-cyan-400'
+                          }`}
+                          style={{ width: `${progressPercent}%` }}
+                        />
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Course Title */}
-                  <h3 className="font-bold text-slate-900 dark:text-white text-base line-clamp-2 leading-snug group-hover:text-blue-600 dark:group-hover:text-cyan-400 transition-colors">
-                    {course.title}
-                  </h3>
-
-                  {/* Instructor Name */}
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    Instructor: <span className="font-medium text-slate-700 dark:text-slate-300">{course.instructor.name}</span>
-                  </p>
-
-                  {/* Brief Subtitle */}
-                  <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 mt-1 leading-relaxed">
-                    {course.subtitle}
-                  </p>
-
-                  {/* Visual Completion Progress Bar */}
-                  <div className="mt-3.5 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
-                    <div className="flex items-center justify-between text-[11px] font-mono mb-1.5">
-                      <span className="text-slate-500 dark:text-slate-400">
-                        {isEnrolled ? `${completedCount}/${totalModules} modules` : `${totalModules} modules • Not enrolled`}
+                  {/* Footer Metadata & Action Button */}
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
+                    <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5 font-mono tabular-nums">
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        {course.durationHours}h · {totalModules} mod
                       </span>
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isEnrolled) {
+                          enrollInCourse(course.id);
+                        }
+                        onSelectCourse(course.id);
+                      }}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition-all ${
+                        isEnrolled
+                          ? 'bg-blue-50 text-blue-600 dark:bg-cyan-950/40 dark:text-cyan-300 hover:bg-blue-600 hover:text-white dark:hover:bg-cyan-500 dark:hover:text-slate-950 border border-blue-200/60 dark:border-cyan-800/50'
+                          : 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-500/20'
+                      }`}
+                    >
+                      {progressPercent === 100
+                        ? 'Review Course'
+                        : isEnrolled
+                        ? 'Resume Course'
+                        : 'Enroll Now'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        /* LIST VIEW */
+        <div className="space-y-4">
+          {filteredCourses.map(course => {
+            const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
+            const totalModules = course.modules.length;
+            const completedCount = course.modules.filter(m =>
+              currentUser.completedModuleIds.includes(m.id)
+            ).length;
+            const progressPercent =
+              totalModules > 0 ? Math.round((completedCount / totalModules) * 100) : 0;
+
+            return (
+              <div
+                key={course.id}
+                onClick={() => onSelectCourse(course.id)}
+                className="bg-white dark:bg-[#0c1220] rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:shadow-lg hover:border-blue-400 dark:hover:border-cyan-500/50 transition-all flex flex-col md:flex-row group cursor-pointer"
+              >
+                {/* Left Thumbnail */}
+                <CourseThumbnail
+                  course={course}
+                  className="w-full md:w-64 lg:w-72 shrink-0 aspect-video md:aspect-auto md:min-h-[176px]"
+                  imgClassName="group-hover:scale-[1.03] transition-transform duration-300"
+                >
+                  <div className="absolute bottom-2.5 left-3.5 right-3.5 flex items-center justify-between gap-2 z-10">
+                    <span className="font-mono text-[11px] font-bold tracking-wider text-cyan-300">
+                      {course.code}
+                    </span>
+                    {progressPercent === 100 && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-300">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Completed</span>
+                      </span>
+                    )}
+                  </div>
+                </CourseThumbnail>
+
+                {/* Center Content */}
+                <div className="flex-1 p-5 flex flex-col justify-between min-w-0 space-y-3">
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate">
+                      {course.category} · {course.level} · Updated {course.updatedAt}
+                    </p>
+
+                    <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white leading-snug group-hover:text-blue-600 dark:group-hover:text-cyan-400 transition-colors">
+                      {course.title}
+                    </h3>
+
+                    <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 leading-relaxed">
+                      {course.subtitle}
+                    </p>
+
+                    {course.learningOutcomes.length > 0 && (
+                      <div className="pt-1.5 grid grid-cols-1 xl:grid-cols-2 gap-x-4 gap-y-1">
+                        {course.learningOutcomes.slice(0, 2).map((outcome, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300 min-w-0"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            <span className="truncate">{outcome}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Instructor & Stats Inline Line */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400 tabular-nums pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                    <span className="font-medium text-slate-700 dark:text-slate-300">
+                      {course.instructor.name}
+                    </span>
+                    <span>·</span>
+                    <span className="inline-flex items-center gap-1 font-bold text-amber-500 dark:text-amber-400">
+                      <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                      {course.rating.toFixed(1)}
+                    </span>
+                    <span className="text-slate-400">({course.reviewsCount})</span>
+                    <span>·</span>
+                    <span>{course.enrolledCount.toLocaleString()} enrolled</span>
+                    <span>·</span>
+                    <span className="inline-flex items-center gap-1 font-mono">
+                      <Clock className="w-3.5 h-3.5" />
+                      {course.durationHours}h
+                    </span>
+                    <span>·</span>
+                    <span className="font-mono">{totalModules} modules</span>
+                  </div>
+                </div>
+
+                {/* Right Progress & Action Column */}
+                <div className="md:w-56 shrink-0 p-5 pt-0 md:pt-5 md:border-l md:border-slate-100 md:dark:border-slate-800/80 flex flex-col justify-between gap-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs font-mono tabular-nums">
+                      <span className="text-slate-500 dark:text-slate-400">Progress</span>
                       <span
                         className={`font-bold ${
                           progressPercent === 100
@@ -213,6 +541,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                         {progressPercent}%
                       </span>
                     </div>
+
                     <div
                       role="progressbar"
                       aria-valuenow={progressPercent}
@@ -230,17 +559,16 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                         style={{ width: `${progressPercent}%` }}
                       />
                     </div>
-                  </div>
-                </div>
 
-                {/* Footer Metadata & Action Button */}
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
-                  <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1 font-mono">
-                    <Clock className="w-3.5 h-3.5" />
-                    <span>{course.durationHours} Hours</span>
-                  </span>
+                    <p className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                      {isEnrolled
+                        ? `${completedCount} of ${totalModules} modules done`
+                        : `${totalModules} modules · Not enrolled`}
+                    </p>
+                  </div>
 
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       if (!isEnrolled) {
@@ -248,20 +576,28 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                       }
                       onSelectCourse(course.id);
                     }}
-                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    className={`w-full px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
                       isEnrolled
                         ? 'bg-blue-50 text-blue-600 dark:bg-cyan-950/40 dark:text-cyan-300 hover:bg-blue-600 hover:text-white dark:hover:bg-cyan-500 dark:hover:text-slate-950 border border-blue-200/60 dark:border-cyan-800/50'
                         : 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-500/20'
                     }`}
                   >
-                    {isEnrolled ? 'Resume Course' : 'Enroll Now'}
+                    <span>
+                      {progressPercent === 100
+                        ? 'Review Course'
+                        : isEnrolled
+                        ? 'Resume Course'
+                        : 'Enroll Now'}
+                    </span>
+                    <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
+
