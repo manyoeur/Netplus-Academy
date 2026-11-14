@@ -78,6 +78,41 @@ export async function testFirestoreConnection(): Promise<void> {
   }
 }
 
+let gapiPreloadStarted = false;
+export function preloadGoogleAuthSdk(): void {
+  if (gapiPreloadStarted || typeof document === 'undefined') return;
+  const win = window as Window & {
+    gapi?: {
+      load?: (name: string, cbOrConfig: (() => void) | { callback?: () => void }) => void;
+      iframes?: { Iframe?: unknown };
+    };
+  };
+  if (win.gapi?.iframes?.Iframe) return;
+  gapiPreloadStarted = true;
+
+  const warmIframes = () => {
+    try {
+      win.gapi?.load?.('gapi.iframes', () => {});
+    } catch {
+      // ignore warmup errors
+    }
+  };
+
+  if (win.gapi?.load) {
+    warmIframes();
+    return;
+  }
+
+  if (!document.querySelector('script[src^="https://apis.google.com/js/api.js"]')) {
+    const script = document.createElement('script');
+    script.src = 'https://apis.google.com/js/api.js';
+    script.async = true;
+    script.defer = true;
+    script.onload = warmIframes;
+    document.head?.appendChild(script);
+  }
+}
+
 export async function syncFirebaseUserProfile(params: {
   uid: string;
   name: string;

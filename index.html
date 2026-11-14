@@ -17,19 +17,25 @@
           document.documentElement.classList.add('dark');
         }
         try {
-          var _rawFetch = window.fetch;
-          var _boundFetch = _rawFetch ? function() { return _rawFetch.apply(window, arguments); } : undefined;
-          Object.defineProperty(window, 'fetch', {
-            get: function() {
-              return _boundFetch;
-            },
-            set: function(fn) {
-              _rawFetch = fn;
-              _boundFetch = fn;
-            },
-            configurable: true,
-            enumerable: true
-          });
+          if (!window.__netplusFetchShimInstalled) {
+            window.__netplusFetchShimInstalled = true;
+            var _initialFetch = window.fetch;
+            var _currentFetch = _initialFetch
+              ? function() { return _initialFetch.apply(window, arguments); }
+              : undefined;
+            Object.defineProperty(window, 'fetch', {
+              get: function() {
+                return _currentFetch;
+              },
+              set: function(fn) {
+                _currentFetch = typeof fn === 'function'
+                  ? function() { return fn.apply(window, arguments); }
+                  : fn;
+              },
+              configurable: true,
+              enumerable: true
+            });
+          }
         } catch (e) {}
       })();
     </script>
@@ -41,6 +47,9 @@
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://apis.google.com" crossorigin>
+    <link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://gen-lang-client-0504359688.firebaseapp.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   </head>
   <body>

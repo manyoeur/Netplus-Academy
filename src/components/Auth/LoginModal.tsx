@@ -101,10 +101,16 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
           <span>{googleBusy ? 'Signing in with Google...' : 'Continue with Google'}</span>
         </button>
 
+        {errorMsg && activeTab !== 'login' && (
+          <div className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950 text-red-600 dark:text-red-300 text-xs">
+            {errorMsg}
+          </div>
+        )}
+
         {/* Tab switcher */}
         <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-semibold">
           <button
-            onClick={() => setActiveTab('demo')}
+            onClick={() => { setActiveTab('demo'); setErrorMsg(''); }}
             className={`flex-1 py-1.5 rounded-lg transition-all ${
               activeTab === 'demo' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-cyan-400 shadow-sm' : 'text-slate-500'
             }`}
@@ -112,7 +118,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
             Quick Demo Accounts
           </button>
           <button
-            onClick={() => setActiveTab('login')}
+            onClick={() => { setActiveTab('login'); setErrorMsg(''); }}
             className={`flex-1 py-1.5 rounded-lg transition-all ${
               activeTab === 'login' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-cyan-400 shadow-sm' : 'text-slate-500'
             }`}
@@ -120,7 +126,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
             Sign In
           </button>
           <button
-            onClick={() => setActiveTab('signup')}
+            onClick={() => { setActiveTab('signup'); setErrorMsg(''); }}
             className={`flex-1 py-1.5 rounded-lg transition-all ${
               activeTab === 'signup' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-cyan-400 shadow-sm' : 'text-slate-500'
             }`}

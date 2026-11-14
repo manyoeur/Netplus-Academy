@@ -20,6 +20,7 @@ import {
 import {
   auth,
   googleProvider,
+  preloadGoogleAuthSdk,
   syncFirebaseUserProfile,
   testFirestoreConnection
 } from '../firebase';
@@ -231,9 +232,10 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  // Boot Firestore connection test & Firebase Auth state listener
+  // Boot Firestore connection test, warm Google Auth script, & Firebase Auth state listener
   useEffect(() => {
     testFirestoreConnection();
+    preloadGoogleAuthSdk();
     const unsubscribe = onAuthStateChanged(auth, async fbUser => {
       if (fbUser && fbUser.email) {
         await upsertGoogleUser({
@@ -424,6 +426,13 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const signInWithGoogle = async (): Promise<{ success: boolean; error?: string }> => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return {
+        success: false,
+        error: 'You appear to be offline. Please check your internet connection and try again.'
+      };
+    }
+
     try {
       const result = await signInWithPopup(auth, googleProvider);
       await upsertGoogleUser({
@@ -441,11 +450,30 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return { success: true };
     } catch (error: any) {
       const code = error?.code || '';
-      if (code === 'auth/popup-closed-by-user') {
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         return { success: false, error: 'Google sign-in popup was closed before completing.' };
       }
       if (code === 'auth/popup-blocked') {
         return { success: false, error: 'Popup was blocked by your browser. Please allow popups and try again.' };
+      }
+      if (code === 'auth/network-request-failed') {
+        return {
+          success: false,
+          error:
+            'Network error connecting to Google Sign-In. Check your connection or disable browser extensions blocking googleapis.com / firebaseapp.com and try again.'
+        };
+      }
+      if (code === 'auth/unauthorized-domain') {
+        return {
+          success: false,
+          error: 'This domain is not authorized for Google Sign-In in Firebase Authentication settings.'
+        };
+      }
+      if (code === 'auth/operation-not-allowed') {
+        return {
+          success: false,
+          error: 'Google Sign-In is not enabled in Firebase Authentication providers.'
+        };
       }
       return { success: false, error: error?.message || 'Google sign-in failed. Please try again.' };
     }
