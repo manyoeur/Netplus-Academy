@@ -10,7 +10,8 @@ import {
   ChevronDown,
   ArrowRight,
   Menu,
-  X
+  X,
+  LogOut
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
 import { UserRole } from '../types';
@@ -43,7 +44,8 @@ export const TopBar: React.FC<TopBarProps> = ({
     toggleDarkMode,
     isOffline,
     toggleManualOfflineSim,
-    unreadNotifsCount
+    unreadNotifsCount,
+    logoutUser
   } = useAcademy();
 
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
@@ -271,6 +273,20 @@ export const TopBar: React.FC<TopBarProps> = ({
                       <span>Switch Account</span>
                     </span>
                     <ArrowRight className="w-3 h-3 text-slate-400" />
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      setRoleMenuOpen(false);
+                      await logoutUser();
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
+                  >
+                    <span className="flex items-center gap-2">
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Sign Out</span>
+                    </span>
+                    <ArrowRight className="w-3 h-3 opacity-60" />
                   </button>
                 </div>
               </div>

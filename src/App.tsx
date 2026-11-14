@@ -14,11 +14,12 @@ import { LMSIntegrationPanel } from './components/LMS/LMSIntegrationPanel';
 import { DiscussionForum } from './components/Forum/DiscussionForum';
 import { NotificationDrawer } from './components/Notifications/NotificationDrawer';
 import { LoginModal } from './components/Auth/LoginModal';
+import { LoginPage } from './components/Auth/LoginPage';
 import { PaymentGatewayModal } from './components/Billing/PaymentGatewayModal';
-import { WifiOff, Terminal } from 'lucide-react';
+import { WifiOff, Terminal, Network } from 'lucide-react';
 
 const AcademyApp: React.FC = () => {
-  const { isOffline, toggleManualOfflineSim, courses } = useAcademy();
+  const { isOffline, toggleManualOfflineSim, courses, isAuthenticated, authReady } = useAcademy();
 
   const [currentTab, setCurrentTab] = useState<string>('courses');
   const [activeCourseId, setActiveCourseId] = useState<string | null>(null);
@@ -52,6 +53,25 @@ const AcademyApp: React.FC = () => {
     setActiveCourseId(courseId);
     setCurrentTab('player');
   };
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-[#070b14] text-slate-900 dark:text-slate-100 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center text-white shadow-lg">
+            <Network className="w-5 h-5 animate-pulse" />
+          </div>
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+            Loading Netplus Academy...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#070b14] text-slate-900 dark:text-slate-100 transition-colors flex flex-col font-sans">

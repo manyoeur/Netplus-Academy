@@ -125,8 +125,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {enrolledCourses.map(course => {
+              const totalModules = course.modules.length;
               const completedCount = course.modules.filter(m => currentUser.completedModuleIds.includes(m.id)).length;
-              const progressPercent = Math.round((completedCount / course.modules.length) * 100);
+              const progressPercent = totalModules > 0 ? Math.round((completedCount / totalModules) * 100) : 0;
               const defaultThumb = 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800';
 
               return (
@@ -165,14 +166,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       )}
                     </div>
 
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono font-medium">
-                        <span className="text-slate-500 dark:text-slate-400">{completedCount} of {course.modules.length} Modules Done</span>
-                        <span className="font-bold text-blue-600 dark:text-cyan-400">{progressPercent}%</span>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-mono font-medium">
+                        <span className="text-slate-500 dark:text-slate-400">{completedCount} of {totalModules} Modules Done</span>
+                        <span
+                          className={`font-bold px-1.5 py-0.5 rounded ${
+                            progressPercent === 100
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400'
+                              : progressPercent > 0
+                              ? 'bg-blue-50 text-blue-600 dark:bg-cyan-950/60 dark:text-cyan-400'
+                              : 'text-slate-400 dark:text-slate-500'
+                          }`}
+                        >
+                          {progressPercent}%
+                        </span>
                       </div>
-                      <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                      <div
+                        role="progressbar"
+                        aria-valuenow={progressPercent}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`${course.title} completion ${progressPercent}%`}
+                        className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden"
+                      >
                         <div
-                          className="h-full bg-gradient-to-r from-blue-600 to-cyan-400 rounded-full transition-all"
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            progressPercent === 100
+                              ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                              : 'bg-gradient-to-r from-blue-600 to-cyan-400'
+                          }`}
                           style={{ width: `${progressPercent}%` }}
                         />
                       </div>

@@ -123,9 +123,9 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
         {filteredCourses.map(course => {
           const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
+          const totalModules = course.modules.length;
           const completedCount = course.modules.filter(m => currentUser.completedModuleIds.includes(m.id)).length;
-          const progressPercent = Math.round((completedCount / (course.modules.length || 1)) * 100);
-          const isInstructor = currentUser.role === 'admin' || currentUser.role === 'instructor';
+          const progressPercent = totalModules > 0 ? Math.round((completedCount / totalModules) * 100) : 0;
           const defaultThumb = 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800';
 
           return (
@@ -155,9 +155,16 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                   </span>
                 </div>
 
-                {/* Bottom Overlay Pill for Course Code */}
-                <div className="absolute bottom-2.5 left-3 px-2 py-0.5 rounded-md bg-slate-900/80 backdrop-blur-md text-[10px] font-mono text-cyan-300 font-bold border border-cyan-500/30">
-                  {course.code}
+                {/* Bottom Overlay Pill for Course Code & Completion */}
+                <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between gap-2">
+                  <span className="px-2 py-0.5 rounded-md bg-slate-900/80 backdrop-blur-md text-[10px] font-mono text-cyan-300 font-bold border border-cyan-500/30">
+                    {course.code}
+                  </span>
+                  {progressPercent === 100 && (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-600/90 backdrop-blur-md text-[10px] font-mono text-white font-bold">
+                      100% Done
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -188,21 +195,42 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                     {course.subtitle}
                   </p>
 
-                  {/* Enrolled Progress Bar */}
-                  {isEnrolled && (
-                    <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
-                      <div className="flex justify-between text-[11px] font-mono font-semibold mb-1">
-                        <span className="text-slate-500 dark:text-slate-400">Progress</span>
-                        <span className="text-blue-600 dark:text-cyan-400">{progressPercent}%</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-blue-600 to-cyan-400 rounded-full transition-all"
-                          style={{ width: `${progressPercent}%` }}
-                        />
-                      </div>
+                  {/* Visual Completion Progress Bar */}
+                  <div className="mt-3.5 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
+                    <div className="flex items-center justify-between text-[11px] font-mono mb-1.5">
+                      <span className="text-slate-500 dark:text-slate-400">
+                        {isEnrolled ? `${completedCount}/${totalModules} modules` : `${totalModules} modules • Not enrolled`}
+                      </span>
+                      <span
+                        className={`font-bold ${
+                          progressPercent === 100
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : progressPercent > 0
+                            ? 'text-blue-600 dark:text-cyan-400'
+                            : 'text-slate-400 dark:text-slate-500'
+                        }`}
+                      >
+                        {progressPercent}%
+                      </span>
                     </div>
-                  )}
+                    <div
+                      role="progressbar"
+                      aria-valuenow={progressPercent}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={`${course.title} completion ${progressPercent}%`}
+                      className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden"
+                    >
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          progressPercent === 100
+                            ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                            : 'bg-gradient-to-r from-blue-600 to-cyan-400'
+                        }`}
+                        style={{ width: `${progressPercent}%` }}
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 {/* Footer Metadata & Action Button */}

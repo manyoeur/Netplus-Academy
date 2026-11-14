@@ -18,7 +18,7 @@ interface LoginModalProps {
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
-  const { allUsers, loginUser, registerUser, setCurrentUser } = useAcademy();
+  const { allUsers, loginUser, registerUser, setCurrentUser, signInWithGoogle } = useAcademy();
   const [activeTab, setActiveTab] = useState<'login' | 'signup' | 'demo'>('demo');
 
   // Form states
@@ -27,24 +27,37 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
   const [name, setName] = useState('');
   const [role, setRole] = useState<UserRole>('student');
   const [errorMsg, setErrorMsg] = useState('');
+  const [googleBusy, setGoogleBusy] = useState(false);
 
   if (!isOpen) return null;
+
+  const handleGoogleClick = async () => {
+    setErrorMsg('');
+    setGoogleBusy(true);
+    const res = await signInWithGoogle();
+    setGoogleBusy(false);
+    if (res.success) {
+      onClose();
+    } else if (res.error) {
+      setErrorMsg(res.error);
+    }
+  };
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
-    const success = loginUser(email, role);
+    const success = loginUser(email, role, password);
     if (success) {
       onClose();
     } else {
-      setErrorMsg('No user registered with this email. Switch to Demo Accounts or Sign Up.');
+      setErrorMsg('Invalid email or password. Try Demo Accounts or Sign Up.');
     }
   };
 
   const handleSignupSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !email.trim()) return;
-    registerUser(name, email, role);
+    registerUser(name, email, role, password || undefined);
     onClose();
   };
 
@@ -73,10 +86,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
             </div>
           </div>
 
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 dark:hover:text-white">
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Google Sign-On Button */}
+        <button
+          type="button"
+          onClick={handleGoogleClick}
+          disabled={googleBusy}
+          className="w-full py-2.5 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-900 dark:text-white text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+        >
+          <span>{googleBusy ? 'Signing in with Google...' : 'Continue with Google'}</span>
+        </button>
 
         {/* Tab switcher */}
         <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-semibold">

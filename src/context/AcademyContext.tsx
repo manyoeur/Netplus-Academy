@@ -12,6 +12,17 @@ import {
   SubscriptionTier,
   CourseModule
 } from '../types';
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut
+} from 'firebase/auth';
+import {
+  auth,
+  googleProvider,
+  syncFirebaseUserProfile,
+  testFirestoreConnection
+} from '../firebase';
 import { 
   INITIAL_USERS, 
   INITIAL_COURSES, 
@@ -37,10 +48,14 @@ interface AcademyContextType {
   manualOfflineSim: boolean;
   
   // Auth & Roles
+  isAuthenticated: boolean;
+  authReady: boolean;
   setCurrentUser: (user: User) => void;
   switchRole: (role: UserRole) => void;
-  loginUser: (email: string, role?: UserRole) => boolean;
-  registerUser: (name: string, email: string, role: UserRole) => void;
+  loginUser: (email: string, role?: UserRole, password?: string) => boolean;
+  registerUser: (name: string, email: string, role: UserRole, password?: string) => void;
+  signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
+  logoutUser: () => Promise<void>;
   
   // Dark mode & Offline
   toggleDarkMode: () => void;
@@ -119,6 +134,25 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem(`${STORAGE_PREFIX}dark_mode`, JSON.stringify(darkMode));
   }, [darkMode]);
 
+  // Auth State (startup requires login/signup unless authenticated)
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}authenticated`) === 'true';
+  });
+  const [authReady, setAuthReady] = useState<boolean>(false);
+
+  const [credentialsMap, setCredentialsMap] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_PREFIX}credentials`);
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}credentials`, JSON.stringify(credentialsMap));
+  }, [credentialsMap]);
+
   // Core Data State
   const [allUsers, setAllUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}users`);
@@ -131,6 +165,89 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   });
 
   const currentUser = allUsers.find(u => u.id === currentUserId) || allUsers[0];
+
+  const upsertGoogleUser = async (fbUser: {
+    uid: string;
+    displayName: string | null;
+    email: string | null;
+    photoURL: string | null;
+    emailVerified: boolean;
+  }) => {
+    if (!fbUser.email) return;
+    const normalizedEmail = fbUser.email.toLowerCase();
+    const defaultRole: UserRole = normalizedEmail === 'yoeur.man2010@gmail.com' ? 'admin' : 'student';
+    const fallbackAvatar = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=256&q=80';
+
+    let resolvedId = fbUser.uid;
+    let resolvedRole: UserRole = defaultRole;
+    let resolvedName = fbUser.displayName || fbUser.email.split('@')[0];
+    let resolvedAvatar = fbUser.photoURL || fallbackAvatar;
+
+    setAllUsers(prev => {
+      const existing = prev.find(u => u.id === fbUser.uid || u.email.toLowerCase() === normalizedEmail);
+      if (existing) {
+        resolvedId = existing.id;
+        resolvedRole = existing.role;
+        resolvedName = fbUser.displayName || existing.name;
+        resolvedAvatar = fbUser.photoURL || existing.avatar;
+        return prev.map(u =>
+          u.id === existing.id
+            ? {
+                ...u,
+                name: resolvedName,
+                avatar: resolvedAvatar
+              }
+            : u
+        );
+      }
+      const created: User = {
+        id: fbUser.uid,
+        name: resolvedName,
+        email: fbUser.email!,
+        role: defaultRole,
+        avatar: resolvedAvatar,
+        subscription: { tier: 'pro', status: 'active' },
+        enrolledCourseIds: ['course-ccna-1'],
+        completedModuleIds: [],
+        certificates: [],
+        joinedDate: new Date().toISOString().split('T')[0],
+        reputationPoints: 100
+      };
+      return [...prev, created];
+    });
+
+    setCurrentUserId(resolvedId);
+    setIsAuthenticated(true);
+    localStorage.setItem(`${STORAGE_PREFIX}authenticated`, 'true');
+
+    if (fbUser.emailVerified) {
+      await syncFirebaseUserProfile({
+        uid: fbUser.uid,
+        name: resolvedName,
+        email: fbUser.email,
+        role: resolvedRole,
+        avatar: resolvedAvatar
+      });
+    }
+  };
+
+  // Boot Firestore connection test & Firebase Auth state listener
+  useEffect(() => {
+    testFirestoreConnection();
+    const unsubscribe = onAuthStateChanged(auth, async fbUser => {
+      if (fbUser && fbUser.email) {
+        await upsertGoogleUser({
+          uid: fbUser.uid,
+          displayName: fbUser.displayName,
+          email: fbUser.email,
+          photoURL: fbUser.photoURL,
+          emailVerified: fbUser.emailVerified
+        });
+      }
+      setAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const [courses, setCourses] = useState<Course[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}courses`);
@@ -226,6 +343,8 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Auth Helpers
   const setCurrentUser = (user: User) => {
     setCurrentUserId(user.id);
+    setIsAuthenticated(true);
+    localStorage.setItem(`${STORAGE_PREFIX}authenticated`, 'true');
   };
 
   const switchRole = (role: UserRole) => {
@@ -252,25 +371,43 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  const loginUser = (email: string, role?: UserRole): boolean => {
-    const found = allUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (found) {
-      setCurrentUserId(found.id);
-      return true;
+  const loginUser = (email: string, _role?: UserRole, password?: string): boolean => {
+    const normalizedEmail = email.trim().toLowerCase();
+    const found = allUsers.find(u => u.email.toLowerCase() === normalizedEmail);
+    if (!found) {
+      return false;
     }
-    // Auto register if role provided
-    if (role) {
-      registerUser(email.split('@')[0], email, role);
-      return true;
+
+    const storedPassword = credentialsMap[normalizedEmail];
+    if (storedPassword && password !== undefined && storedPassword !== password) {
+      return false;
     }
-    return false;
+
+    setCurrentUserId(found.id);
+    setIsAuthenticated(true);
+    localStorage.setItem(`${STORAGE_PREFIX}authenticated`, 'true');
+    return true;
   };
 
-  const registerUser = (name: string, email: string, role: UserRole) => {
+  const registerUser = (name: string, email: string, role: UserRole, password?: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = allUsers.find(u => u.email.toLowerCase() === normalizedEmail);
+
+    if (password) {
+      setCredentialsMap(prev => ({ ...prev, [normalizedEmail]: password }));
+    }
+
+    if (existing) {
+      setCurrentUserId(existing.id);
+      setIsAuthenticated(true);
+      localStorage.setItem(`${STORAGE_PREFIX}authenticated`, 'true');
+      return;
+    }
+
     const newUser: User = {
       id: `user-${Date.now()}`,
-      name,
-      email,
+      name: name.trim(),
+      email: email.trim(),
       role,
       avatar: `https://images.unsplash.com/photo-${1535000000000 + (Math.floor(Math.random() * 50000))}?auto=format&fit=crop&w=256&q=80`,
       subscription: { tier: 'pro', status: 'active' },
@@ -282,6 +419,46 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
     setAllUsers(prev => [...prev, newUser]);
     setCurrentUserId(newUser.id);
+    setIsAuthenticated(true);
+    localStorage.setItem(`${STORAGE_PREFIX}authenticated`, 'true');
+  };
+
+  const signInWithGoogle = async (): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      await upsertGoogleUser({
+        uid: result.user.uid,
+        displayName: result.user.displayName,
+        email: result.user.email,
+        photoURL: result.user.photoURL,
+        emailVerified: result.user.emailVerified
+      });
+      triggerSystemNotification(
+        'Signed In with Google',
+        `Welcome to Netplus Academy, ${result.user.displayName || result.user.email}!`,
+        'system'
+      );
+      return { success: true };
+    } catch (error: any) {
+      const code = error?.code || '';
+      if (code === 'auth/popup-closed-by-user') {
+        return { success: false, error: 'Google sign-in popup was closed before completing.' };
+      }
+      if (code === 'auth/popup-blocked') {
+        return { success: false, error: 'Popup was blocked by your browser. Please allow popups and try again.' };
+      }
+      return { success: false, error: error?.message || 'Google sign-in failed. Please try again.' };
+    }
+  };
+
+  const logoutUser = async (): Promise<void> => {
+    try {
+      await signOut(auth);
+    } catch {
+      // ignore if not signed in via Firebase
+    }
+    localStorage.removeItem(`${STORAGE_PREFIX}authenticated`);
+    setIsAuthenticated(false);
   };
 
   const toggleDarkMode = () => setDarkMode(prev => !prev);
@@ -786,10 +963,14 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         darkMode,
         isOffline,
         manualOfflineSim,
+        isAuthenticated,
+        authReady,
         setCurrentUser,
         switchRole,
         loginUser,
         registerUser,
+        signInWithGoogle,
+        logoutUser,
         toggleDarkMode,
         toggleManualOfflineSim,
         enrollInCourse,
