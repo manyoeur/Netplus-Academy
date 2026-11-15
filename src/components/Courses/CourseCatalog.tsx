@@ -9,10 +9,19 @@ import {
   LayoutGrid,
   List,
   X,
-  ArrowUpDown
+  ArrowUpDown,
+  Calendar,
+  AlertTriangle,
+  XCircle
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { CourseThumbnail } from './CourseThumbnail';
+import {
+  DEFAULT_ENROLLMENT_DAYS,
+  resolveCourseEnrollment,
+  formatEnrollmentDateRange,
+  getEnrollmentExpirationInfo
+} from '../../utils/enrollmentDates';
 
 interface CourseCatalogProps {
   onSelectCourse: (courseId: string) => void;
@@ -294,6 +303,8 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
           {filteredCourses.map(course => {
             const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
+            const enrollment = resolveCourseEnrollment(currentUser, course);
+            const expiryInfo = enrollment ? getEnrollmentExpirationInfo(enrollment) : null;
             const totalModules = course.modules.length;
             const completedCount = course.modules.filter(m =>
               currentUser.completedModuleIds.includes(m.id)
@@ -399,6 +410,39 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                           style={{ width: `${progressPercent}%` }}
                         />
                       </div>
+
+                      {enrollment && expiryInfo ? (
+                        <div
+                          className={`mt-2 flex flex-wrap items-center gap-1.5 text-[11px] tabular-nums ${
+                            expiryInfo.status === 'expired'
+                              ? 'text-red-600 dark:text-red-400'
+                              : expiryInfo.status === 'expiring_soon'
+                              ? 'text-amber-600 dark:text-amber-400'
+                              : 'text-slate-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {expiryInfo.status === 'expired' ? (
+                            <XCircle className="w-3.5 h-3.5 shrink-0" />
+                          ) : expiryInfo.status === 'expiring_soon' ? (
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          ) : (
+                            <Clock className="w-3.5 h-3.5 shrink-0" />
+                          )}
+                          <span className="font-medium">
+                            {formatEnrollmentDateRange(enrollment)}
+                          </span>
+                          {(expiryInfo.status === 'expiring_soon' || expiryInfo.status === 'expired') && (
+                            <span className="font-semibold">
+                              · {expiryInfo.countdownLabel}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-[10px] font-mono tabular-nums text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                          <Calendar className="w-3 h-3 shrink-0" />
+                          <span>{course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS}d access upon enrollment</span>
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -443,6 +487,8 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
         <div className="space-y-4">
           {filteredCourses.map(course => {
             const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
+            const enrollment = resolveCourseEnrollment(currentUser, course);
+            const expiryInfo = enrollment ? getEnrollmentExpirationInfo(enrollment) : null;
             const totalModules = course.modules.length;
             const completedCount = course.modules.filter(m =>
               currentUser.completedModuleIds.includes(m.id)
@@ -571,8 +617,36 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                     <p className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
                       {isEnrolled
                         ? `${completedCount} of ${totalModules} modules done`
-                        : `${totalModules} modules · Not enrolled`}
+                        : `${totalModules} modules · ${course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS}d access`}
                     </p>
+
+                    {enrollment && expiryInfo && (
+                      <div
+                        className={`pt-2 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center gap-1.5 text-[11px] tabular-nums ${
+                          expiryInfo.status === 'expired'
+                            ? 'text-red-600 dark:text-red-400'
+                            : expiryInfo.status === 'expiring_soon'
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {expiryInfo.status === 'expired' ? (
+                          <XCircle className="w-3.5 h-3.5 shrink-0" />
+                        ) : expiryInfo.status === 'expiring_soon' ? (
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        ) : (
+                          <Clock className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0" />
+                        )}
+                        <span className="font-medium">
+                          {formatEnrollmentDateRange(enrollment)}
+                        </span>
+                        {(expiryInfo.status === 'expiring_soon' || expiryInfo.status === 'expired') && (
+                          <span className="font-semibold">
+                            · {expiryInfo.countdownLabel}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <button

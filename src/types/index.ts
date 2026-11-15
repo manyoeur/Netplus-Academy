@@ -2,6 +2,13 @@ export type UserRole = 'student' | 'instructor' | 'admin';
 
 export type SubscriptionTier = 'free' | 'pro' | 'expert' | 'enterprise';
 
+export interface CourseEnrollment {
+  courseId: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+  expiresAt: string; // YYYY-MM-DD
+}
+
 export interface User {
   id: string;
   name: string;
@@ -14,6 +21,7 @@ export interface User {
     renewsAt?: string;
   };
   enrolledCourseIds: string[];
+  courseEnrollments?: Record<string, CourseEnrollment>;
   completedModuleIds: string[];
   certificates: Certificate[];
   joinedDate: string;
@@ -123,6 +131,7 @@ export interface Course {
   modules: CourseModule[];
   isPublished: boolean;
   updatedAt: string;
+  defaultAccessDays?: number;
 }
 
 export interface Certificate {
@@ -190,6 +199,9 @@ export interface StudentProgressRecord {
   lastActive: string;
   status: 'active' | 'completed' | 'behind' | 'inactive';
   timeSpentHours: number;
+  startDate?: string;
+  endDate?: string;
+  expiresAt?: string;
 }
 
 export interface RealtimeActivityItem {

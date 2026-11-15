@@ -11,8 +11,10 @@ import {
   NotificationItem, 
   SubscriptionTier,
   CourseModule,
-  Invitation
+  Invitation,
+  CourseEnrollment
 } from '../types';
+import { createDefaultCourseEnrollment } from '../utils/enrollmentDates';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -101,6 +103,7 @@ interface AcademyContextType {
       subscriptionTier?: SubscriptionTier;
       subscriptionStatus?: User['subscription']['status'];
       enrolledCourseIds?: string[];
+      courseEnrollments?: Record<string, CourseEnrollment>;
     }
   ) => Promise<void>;
   deleteUserAccount: (userId: string) => Promise<void>;
@@ -110,7 +113,7 @@ interface AcademyContextType {
   toggleManualOfflineSim: () => void;
   
   // Courses & Learning
-  enrollInCourse: (courseId: string) => void;
+  enrollInCourse: (courseId: string, customDates?: Partial<Omit<CourseEnrollment, 'courseId'>>) => void;
   completeModule: (courseId: string, moduleId: string) => void;
   addCourse: (course: Course) => void;
   updateCourse: (courseId: string, updated: Partial<Course>) => void;
@@ -202,9 +205,43 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [credentialsMap]);
 
   // Core Data State
+  const buildNormalizedCourseEnrollments = (
+    user: User,
+    courseIds: string[],
+    availableCourses: Course[] = INITIAL_COURSES
+  ): Record<string, CourseEnrollment> => {
+    const seedUser = INITIAL_USERS.find(su => su.id === user.id || su.email.toLowerCase() === user.email.toLowerCase());
+    const result: Record<string, CourseEnrollment> = {};
+    for (const courseId of courseIds) {
+      const existing = user.courseEnrollments?.[courseId];
+      if (existing && existing.startDate && existing.expiresAt) {
+        result[courseId] = {
+          courseId,
+          startDate: existing.startDate,
+          endDate: existing.endDate || existing.expiresAt,
+          expiresAt: existing.expiresAt
+        };
+      } else if (seedUser?.courseEnrollments?.[courseId]) {
+        result[courseId] = { ...seedUser.courseEnrollments[courseId] };
+      } else {
+        const course = availableCourses.find(c => c.id === courseId);
+        result[courseId] = createDefaultCourseEnrollment(
+          courseId,
+          course?.defaultAccessDays,
+          user.joinedDate
+        );
+      }
+    }
+    return result;
+  };
+
   const [allUsers, setAllUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}users`);
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
+    const parsed: User[] = saved ? JSON.parse(saved) : INITIAL_USERS;
+    return parsed.map(u => ({
+      ...u,
+      courseEnrollments: buildNormalizedCourseEnrollments(u, u.enrolledCourseIds || [])
+    }));
   });
 
   const [currentUserId, setCurrentUserId] = useState<string>(() => {
@@ -322,6 +359,13 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         resolvedName = fbUser.displayName || existing.name;
         resolvedAvatar = fbUser.photoURL || existing.avatar;
         const mergedCourses = Array.from(new Set([...existing.enrolledCourseIds, ...invitedCourseIds]));
+        const nextEnrollments: Record<string, CourseEnrollment> = { ...(existing.courseEnrollments || {}) };
+        for (const cid of mergedCourses) {
+          if (!nextEnrollments[cid]) {
+            const c = courses.find(item => item.id === cid);
+            nextEnrollments[cid] = createDefaultCourseEnrollment(cid, c?.defaultAccessDays);
+          }
+        }
         return prev.map(u =>
           u.id === existing.id
             ? {
@@ -330,12 +374,18 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 avatar: resolvedAvatar,
                 role: resolvedRole,
                 enrolledCourseIds: mergedCourses,
+                courseEnrollments: nextEnrollments,
                 subscription: matchedInvite?.subscriptionTier
                   ? { ...u.subscription, tier: matchedInvite.subscriptionTier }
                   : u.subscription
               }
             : u
         );
+      }
+      const createdEnrollments: Record<string, CourseEnrollment> = {};
+      for (const cid of invitedCourseIds) {
+        const c = courses.find(item => item.id === cid);
+        createdEnrollments[cid] = createDefaultCourseEnrollment(cid, c?.defaultAccessDays);
       }
       const created: User = {
         id: fbUser.uid,
@@ -345,6 +395,7 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         avatar: resolvedAvatar,
         subscription: { tier: invitedTier, status: 'active' },
         enrolledCourseIds: invitedCourseIds,
+        courseEnrollments: createdEnrollments,
         completedModuleIds: [],
         certificates: [],
         joinedDate: new Date().toISOString().split('T')[0],
@@ -393,22 +444,28 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           setStudentProgressList(prev => {
             const additions: StudentProgressRecord[] = enrolledCourses
               .filter(c => !prev.some(p => p.studentId === resolvedId && p.courseId === c.id))
-              .map(c => ({
-                studentId: resolvedId,
-                studentName: resolvedName,
-                studentEmail: fbUser.email!,
-                avatar: resolvedAvatar,
-                courseId: c.id,
-                courseCode: c.code,
-                courseTitle: c.title,
-                progressPercent: 0,
-                completedModulesCount: 0,
-                totalModulesCount: c.modules.length,
-                quizAverage: 0,
-                lastActive: 'Just now',
-                status: 'active',
-                timeSpentHours: 0
-              }));
+              .map(c => {
+                const dates = createDefaultCourseEnrollment(c.id, c.defaultAccessDays);
+                return {
+                  studentId: resolvedId,
+                  studentName: resolvedName,
+                  studentEmail: fbUser.email!,
+                  avatar: resolvedAvatar,
+                  courseId: c.id,
+                  courseCode: c.code,
+                  courseTitle: c.title,
+                  progressPercent: 0,
+                  completedModulesCount: 0,
+                  totalModulesCount: c.modules.length,
+                  quizAverage: 0,
+                  lastActive: 'Just now',
+                  status: 'active',
+                  timeSpentHours: 0,
+                  startDate: dates.startDate,
+                  endDate: dates.endDate,
+                  expiresAt: dates.expiresAt
+                };
+              });
             return additions.length ? [...additions, ...prev] : prev;
           });
         }
@@ -740,6 +797,7 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
             avatar: remote.avatar || next[idx].avatar
           };
         } else {
+          const defaultCourse = courses.find(c => c.id === 'course-ccna-1');
           next.push({
             id: remote.uid,
             name: remote.name,
@@ -748,6 +806,9 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
             avatar: remote.avatar || fallbackAvatar,
             subscription: { tier: 'pro', status: 'active' },
             enrolledCourseIds: ['course-ccna-1'],
+            courseEnrollments: {
+              'course-ccna-1': createDefaultCourseEnrollment('course-ccna-1', defaultCourse?.defaultAccessDays, remote.joinedDate)
+            },
             completedModuleIds: [],
             certificates: [],
             joinedDate: remote.joinedDate,
@@ -769,6 +830,7 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       subscriptionTier?: SubscriptionTier;
       subscriptionStatus?: User['subscription']['status'];
       enrolledCourseIds?: string[];
+      courseEnrollments?: Record<string, CourseEnrollment>;
     }
   ): Promise<void> => {
     const targetUser = allUsers.find(u => u.id === userId);
@@ -776,6 +838,31 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const cleanName = updates.name !== undefined ? updates.name.trim() || targetUser.name : targetUser.name;
     const nextRole = updates.role ?? targetUser.role;
+    const nextEnrolledCourseIds = updates.enrolledCourseIds ?? targetUser.enrolledCourseIds;
+
+    const mergedEnrollments: Record<string, CourseEnrollment> = {};
+    for (const cid of nextEnrolledCourseIds) {
+      const provided = updates.courseEnrollments?.[cid];
+      const existing = targetUser.courseEnrollments?.[cid];
+      if (provided && provided.startDate && provided.expiresAt) {
+        mergedEnrollments[cid] = {
+          courseId: cid,
+          startDate: provided.startDate,
+          endDate: provided.endDate || provided.expiresAt,
+          expiresAt: provided.expiresAt
+        };
+      } else if (existing && existing.startDate && existing.expiresAt) {
+        mergedEnrollments[cid] = {
+          courseId: cid,
+          startDate: existing.startDate,
+          endDate: existing.endDate || existing.expiresAt,
+          expiresAt: existing.expiresAt
+        };
+      } else {
+        const course = courses.find(c => c.id === cid);
+        mergedEnrollments[cid] = createDefaultCourseEnrollment(cid, course?.defaultAccessDays);
+      }
+    }
 
     setAllUsers(prev =>
       prev.map(u => {
@@ -784,7 +871,8 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           ...u,
           name: cleanName,
           role: nextRole,
-          enrolledCourseIds: updates.enrolledCourseIds ?? u.enrolledCourseIds,
+          enrolledCourseIds: nextEnrolledCourseIds,
+          courseEnrollments: mergedEnrollments,
           subscription: {
             ...u.subscription,
             tier: updates.subscriptionTier ?? u.subscription.tier,
@@ -794,9 +882,23 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       })
     );
 
-    if (updates.name !== undefined) {
+    if (updates.name !== undefined || updates.courseEnrollments !== undefined || updates.enrolledCourseIds !== undefined) {
       setStudentProgressList(prev =>
-        prev.map(p => (p.studentId === userId ? { ...p, studentName: cleanName } : p))
+        prev.map(p => {
+          if (p.studentId !== userId) return p;
+          const dates = mergedEnrollments[p.courseId];
+          return {
+            ...p,
+            studentName: cleanName,
+            ...(dates
+              ? {
+                  startDate: dates.startDate,
+                  endDate: dates.endDate,
+                  expiresAt: dates.expiresAt
+                }
+              : {})
+          };
+        })
       );
     }
 
@@ -910,6 +1012,13 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const mergedCourses = matchedInvite?.assignedCourseIds.length
         ? Array.from(new Set([...existing.enrolledCourseIds, ...matchedInvite.assignedCourseIds]))
         : existing.enrolledCourseIds;
+      const nextEnrollments: Record<string, CourseEnrollment> = { ...(existing.courseEnrollments || {}) };
+      for (const cid of mergedCourses) {
+        if (!nextEnrollments[cid]) {
+          const c = courses.find(item => item.id === cid);
+          nextEnrollments[cid] = createDefaultCourseEnrollment(cid, c?.defaultAccessDays);
+        }
+      }
 
       setAllUsers(prev =>
         prev.map(u =>
@@ -918,7 +1027,8 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 ...u,
                 name: name.trim() || u.name,
                 role: nextRole,
-                enrolledCourseIds: mergedCourses
+                enrolledCourseIds: mergedCourses,
+                courseEnrollments: nextEnrollments
               }
             : u
         )
@@ -946,6 +1056,11 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const subscriptionTier: SubscriptionTier = matchedInvite?.subscriptionTier || 'pro';
     const newUserId = `user-${Date.now()}`;
     const avatarUrl = `https://images.unsplash.com/photo-${1535000000000 + (Math.floor(Math.random() * 50000))}?auto=format&fit=crop&w=256&q=80`;
+    const newEnrollments: Record<string, CourseEnrollment> = {};
+    for (const cid of enrolledCourseIds) {
+      const c = courses.find(item => item.id === cid);
+      newEnrollments[cid] = createDefaultCourseEnrollment(cid, c?.defaultAccessDays);
+    }
 
     const newUser: User = {
       id: newUserId,
@@ -955,6 +1070,7 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       avatar: avatarUrl,
       subscription: { tier: subscriptionTier, status: 'active' },
       enrolledCourseIds,
+      courseEnrollments: newEnrollments,
       completedModuleIds: [],
       certificates: [],
       joinedDate: new Date().toISOString().split('T')[0],
@@ -975,22 +1091,28 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const enrolledCourses = courses.filter(c => enrolledCourseIds.includes(c.id));
         if (enrolledCourses.length > 0) {
           setStudentProgressList(prev => [
-            ...enrolledCourses.map(c => ({
-              studentId: newUserId,
-              studentName: newUser.name,
-              studentEmail: newUser.email,
-              avatar: avatarUrl,
-              courseId: c.id,
-              courseCode: c.code,
-              courseTitle: c.title,
-              progressPercent: 0,
-              completedModulesCount: 0,
-              totalModulesCount: c.modules.length,
-              quizAverage: 0,
-              lastActive: 'Just now',
-              status: 'active' as const,
-              timeSpentHours: 0
-            })),
+            ...enrolledCourses.map(c => {
+              const dates = newEnrollments[c.id] || createDefaultCourseEnrollment(c.id, c.defaultAccessDays);
+              return {
+                studentId: newUserId,
+                studentName: newUser.name,
+                studentEmail: newUser.email,
+                avatar: avatarUrl,
+                courseId: c.id,
+                courseCode: c.code,
+                courseTitle: c.title,
+                progressPercent: 0,
+                completedModulesCount: 0,
+                totalModulesCount: c.modules.length,
+                quizAverage: 0,
+                lastActive: 'Just now',
+                status: 'active' as const,
+                timeSpentHours: 0,
+                startDate: dates.startDate,
+                endDate: dates.endDate,
+                expiresAt: dates.expiresAt
+              };
+            }),
             ...prev
           ]);
         }
@@ -1082,27 +1204,47 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const toggleManualOfflineSim = () => setManualOfflineSim(prev => !prev);
 
   // Course Actions
-  const enrollInCourse = (courseId: string) => {
+  const enrollInCourse = (
+    courseId: string,
+    customDates?: Partial<Omit<CourseEnrollment, 'courseId'>>
+  ) => {
+    const course = courses.find(c => c.id === courseId);
+    const defaultDates = createDefaultCourseEnrollment(courseId, course?.defaultAccessDays);
+    const enrollmentDates: CourseEnrollment = {
+      courseId,
+      startDate: customDates?.startDate || defaultDates.startDate,
+      endDate: customDates?.endDate || customDates?.expiresAt || defaultDates.endDate,
+      expiresAt: customDates?.expiresAt || customDates?.endDate || defaultDates.expiresAt
+    };
+
     setAllUsers(prev => prev.map(u => {
-      if (u.id === currentUser.id && !u.enrolledCourseIds.includes(courseId)) {
+      if (u.id === currentUser.id) {
+        const nextIds = u.enrolledCourseIds.includes(courseId)
+          ? u.enrolledCourseIds
+          : [...u.enrolledCourseIds, courseId];
         return {
           ...u,
-          enrolledCourseIds: [...u.enrolledCourseIds, courseId]
+          enrolledCourseIds: nextIds,
+          courseEnrollments: {
+            ...(u.courseEnrollments || {}),
+            [courseId]: enrollmentDates
+          }
         };
       }
       return u;
     }));
 
     // Update course student count
-    setCourses(prev => prev.map(c => {
-      if (c.id === courseId) {
-        return { ...c, enrolledCount: c.enrolledCount + 1 };
-      }
-      return c;
-    }));
+    if (!currentUser.enrolledCourseIds.includes(courseId)) {
+      setCourses(prev => prev.map(c => {
+        if (c.id === courseId) {
+          return { ...c, enrolledCount: c.enrolledCount + 1 };
+        }
+        return c;
+      }));
+    }
 
     // Add to student progress records
-    const course = courses.find(c => c.id === courseId);
     if (course) {
       const newProgress: StudentProgressRecord = {
         studentId: currentUser.id,
@@ -1118,13 +1260,16 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         quizAverage: 0,
         lastActive: 'Just now',
         status: 'active',
-        timeSpentHours: 0.1
+        timeSpentHours: 0.1,
+        startDate: enrollmentDates.startDate,
+        endDate: enrollmentDates.endDate,
+        expiresAt: enrollmentDates.expiresAt
       };
       setStudentProgressList(prev => [newProgress, ...prev.filter(p => !(p.studentId === currentUser.id && p.courseId === courseId))]);
       
       triggerSystemNotification(
         `Enrolled in ${course.code}`,
-        `You have successfully registered for ${course.title}. Start with Module 1!`,
+        `You have successfully registered for ${course.title}. Access active from ${enrollmentDates.startDate} until ${enrollmentDates.expiresAt}.`,
         'course'
       );
     }

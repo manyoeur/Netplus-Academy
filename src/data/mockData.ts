@@ -17,6 +17,20 @@ export const INITIAL_USERS: User[] = [
       renewsAt: '2026-11-20T00:00:00Z',
     },
     enrolledCourseIds: ['course-ccna-1', 'course-sec-1'],
+    courseEnrollments: {
+      'course-ccna-1': {
+        courseId: 'course-ccna-1',
+        startDate: '2026-08-20',
+        endDate: '2026-11-24',
+        expiresAt: '2026-11-25'
+      },
+      'course-sec-1': {
+        courseId: 'course-sec-1',
+        startDate: '2026-10-15',
+        endDate: '2027-04-13',
+        expiresAt: '2027-04-13'
+      }
+    },
     completedModuleIds: ['mod-ccna-1', 'mod-ccna-2', 'mod-sec-1'],
     certificates: [
       {
@@ -55,6 +69,12 @@ export const INITIAL_USERS: User[] = [
       status: 'active',
     },
     enrolledCourseIds: ['course-ccna-1', 'course-sec-1', 'course-sdwan-1', 'course-wireshark-1'],
+    courseEnrollments: {
+      'course-ccna-1': { courseId: 'course-ccna-1', startDate: '2026-01-10', endDate: '2027-01-10', expiresAt: '2027-01-10' },
+      'course-sec-1': { courseId: 'course-sec-1', startDate: '2026-01-10', endDate: '2027-01-10', expiresAt: '2027-01-10' },
+      'course-sdwan-1': { courseId: 'course-sdwan-1', startDate: '2026-01-10', endDate: '2027-01-10', expiresAt: '2027-01-10' },
+      'course-wireshark-1': { courseId: 'course-wireshark-1', startDate: '2026-01-10', endDate: '2027-01-10', expiresAt: '2027-01-10' }
+    },
     completedModuleIds: [],
     certificates: [],
     joinedDate: '2024-01-10',
@@ -111,6 +131,7 @@ export const INITIAL_COURSES: Course[] = [
     ],
     isPublished: true,
     updatedAt: '2026-10-18',
+    defaultAccessDays: 180,
     modules: [
       {
         id: 'mod-ccna-1',
@@ -285,6 +306,7 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
     ],
     isPublished: true,
     updatedAt: '2026-10-14',
+    defaultAccessDays: 180,
     modules: [
       {
         id: 'mod-sec-1',
@@ -332,6 +354,7 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
     ],
     isPublished: true,
     updatedAt: '2026-10-10',
+    defaultAccessDays: 180,
     modules: [
       {
         id: 'mod-sdwan-1',
@@ -372,6 +395,7 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
     ],
     isPublished: true,
     updatedAt: '2026-10-08',
+    defaultAccessDays: 120,
     modules: [
       {
         id: 'mod-ws-1',
@@ -478,7 +502,10 @@ export const INITIAL_STUDENT_PROGRESS: StudentProgressRecord[] = [
     quizAverage: 94,
     lastActive: '12 minutes ago',
     status: 'active',
-    timeSpentHours: 34.5
+    timeSpentHours: 34.5,
+    startDate: '2026-08-20',
+    endDate: '2026-11-24',
+    expiresAt: '2026-11-25'
   },
   {
     studentId: 'user-student-2',
@@ -494,7 +521,10 @@ export const INITIAL_STUDENT_PROGRESS: StudentProgressRecord[] = [
     quizAverage: 82,
     lastActive: '3 hours ago',
     status: 'active',
-    timeSpentHours: 16.2
+    timeSpentHours: 16.2,
+    startDate: '2026-09-15',
+    endDate: '2027-03-14',
+    expiresAt: '2027-03-14'
   },
   {
     studentId: 'user-student-3',
@@ -510,7 +540,10 @@ export const INITIAL_STUDENT_PROGRESS: StudentProgressRecord[] = [
     quizAverage: 98,
     lastActive: '1 day ago',
     status: 'completed',
-    timeSpentHours: 38.0
+    timeSpentHours: 38.0,
+    startDate: '2026-07-01',
+    endDate: '2026-12-28',
+    expiresAt: '2026-12-28'
   },
   {
     studentId: 'user-student-4',
@@ -526,7 +559,10 @@ export const INITIAL_STUDENT_PROGRESS: StudentProgressRecord[] = [
     quizAverage: 71,
     lastActive: '5 days ago',
     status: 'behind',
-    timeSpentHours: 8.5
+    timeSpentHours: 8.5,
+    startDate: '2026-05-01',
+    endDate: '2026-10-28',
+    expiresAt: '2026-10-28'
   }
 ];
 

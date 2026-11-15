@@ -26,11 +26,15 @@ import {
   Send,
   GraduationCap,
   ShieldCheck,
-  UserCog
+  UserCog,
+  Calendar,
+  AlertTriangle,
+  XCircle
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import {
   Course,
+  CourseEnrollment,
   CourseModule,
   Invitation,
   InvitationStatus,
@@ -40,6 +44,13 @@ import {
   User,
   UserRole
 } from '../../types';
+import {
+  DEFAULT_ENROLLMENT_DAYS,
+  createDefaultCourseEnrollment,
+  resolveCourseEnrollment,
+  formatEnrollmentDate,
+  getEnrollmentExpirationInfo
+} from '../../utils/enrollmentDates';
 
 type ManagementTab = 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students';
 
@@ -122,12 +133,14 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     subscriptionTier: SubscriptionTier;
     subscriptionStatus: User['subscription']['status'];
     enrolledCourseIds: string[];
+    courseEnrollments: Record<string, CourseEnrollment>;
   }>({
     name: '',
     role: 'student',
     subscriptionTier: 'pro',
     subscriptionStatus: 'active',
-    enrolledCourseIds: []
+    enrolledCourseIds: [],
+    courseEnrollments: {}
   });
 
   const handleSyncUsersDirectory = async () => {
@@ -147,13 +160,25 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
   };
 
   const openEditAccountModal = (user: User) => {
+    const initialEnrollments: Record<string, CourseEnrollment> = {};
+    for (const cid of user.enrolledCourseIds || []) {
+      const course = courses.find(c => c.id === cid);
+      const resolved = resolveCourseEnrollment(user, {
+        id: cid,
+        defaultAccessDays: course?.defaultAccessDays
+      });
+      if (resolved) {
+        initialEnrollments[cid] = resolved;
+      }
+    }
     setEditingAccountUser(user);
     setAccountForm({
       name: user.name,
       role: user.role,
       subscriptionTier: user.subscription?.tier || 'free',
       subscriptionStatus: user.subscription?.status || 'active',
-      enrolledCourseIds: [...(user.enrolledCourseIds || [])]
+      enrolledCourseIds: [...(user.enrolledCourseIds || [])],
+      courseEnrollments: initialEnrollments
     });
   };
 
@@ -170,7 +195,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
         role: isProtectedAdmin ? editingAccountUser.role : accountForm.role,
         subscriptionTier: accountForm.subscriptionTier,
         subscriptionStatus: accountForm.subscriptionStatus,
-        enrolledCourseIds: accountForm.enrolledCourseIds
+        enrolledCourseIds: accountForm.enrolledCourseIds,
+        courseEnrollments: accountForm.courseEnrollments
       });
       showToast(`Updated account for ${accountForm.name.trim()}`);
       setEditingAccountUser(null);
@@ -393,6 +419,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     category: Course['category'];
     level: Course['level'];
     durationHours: number;
+    defaultAccessDays: number;
     price: number;
     badge: string;
     thumbnail: string;
@@ -406,6 +433,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     category: 'Enterprise Routing & Switching',
     level: 'Advanced',
     durationHours: 35,
+    defaultAccessDays: DEFAULT_ENROLLMENT_DAYS,
     price: 179,
     badge: 'New Release',
     thumbnail: 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800',
@@ -459,6 +487,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       category: 'Enterprise Routing & Switching',
       level: 'Advanced',
       durationHours: 35,
+      defaultAccessDays: DEFAULT_ENROLLMENT_DAYS,
       price: 179,
       badge: 'New Release',
       thumbnail: 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800',
@@ -478,6 +507,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       category: course.category,
       level: course.level,
       durationHours: course.durationHours,
+      defaultAccessDays: course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS,
       price: course.price,
       badge: course.badge || '',
       thumbnail: course.thumbnail || '',
@@ -509,6 +539,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
         category: courseForm.category,
         level: courseForm.level,
         durationHours: Number(courseForm.durationHours) || 10,
+        defaultAccessDays: Math.max(1, Number(courseForm.defaultAccessDays) || DEFAULT_ENROLLMENT_DAYS),
         price: Number(courseForm.price) || 0,
         badge: courseForm.badge.trim() || 'Updated',
         thumbnail: courseForm.thumbnail.trim() || 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800',
@@ -533,6 +564,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
         rating: 5.0,
         reviewsCount: 1,
         durationHours: Number(courseForm.durationHours) || 20,
+        defaultAccessDays: Math.max(1, Number(courseForm.defaultAccessDays) || DEFAULT_ENROLLMENT_DAYS),
         modulesCount: 1,
         enrolledCount: 0,
         price: Number(courseForm.price) || 99,
@@ -1947,6 +1979,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                   <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[11px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     <th className="py-3 px-4">Student</th>
                     <th className="py-3 px-4">Enrolled Course</th>
+                    <th className="py-3 px-4">Access Window</th>
                     <th className="py-3 px-4">Modules Completed</th>
                     <th className="py-3 px-4">Progress</th>
                     <th className="py-3 px-4">Quiz Avg</th>
@@ -1955,78 +1988,126 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                  {filteredProgress.map((record, index) => (
-                    <tr key={index} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-2.5">
-                          <img
-                            src={record.avatar}
-                            alt={record.studentName}
-                            className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200 dark:ring-slate-700"
-                          />
-                          <div>
-                            <p className="font-semibold text-slate-900 dark:text-slate-100">{record.studentName}</p>
-                            <p className="text-[11px] text-slate-400">{record.studentEmail}</p>
-                          </div>
-                        </div>
-                      </td>
+                  {filteredProgress.map((record, index) => {
+                    const matchedUser = allUsers.find(u => u.id === record.studentId);
+                    const matchedCourse = courses.find(c => c.id === record.courseId);
+                    const enrollment = record.startDate && record.expiresAt
+                      ? {
+                          courseId: record.courseId,
+                          startDate: record.startDate,
+                          endDate: record.endDate || record.expiresAt,
+                          expiresAt: record.expiresAt
+                        }
+                      : matchedUser && matchedCourse
+                      ? resolveCourseEnrollment(matchedUser, matchedCourse)
+                      : null;
+                    const expiryInfo = enrollment ? getEnrollmentExpirationInfo(enrollment) : null;
 
-                      <td className="py-3.5 px-4 font-mono font-medium text-slate-700 dark:text-slate-300">
-                        <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 text-[10px] mr-1.5">
-                          {record.courseCode}
-                        </span>
-                        <span className="truncate max-w-[200px] inline-block align-bottom">{record.courseTitle}</span>
-                      </td>
-
-                      <td className="py-3.5 px-4 font-mono">
-                        {record.completedModulesCount} / {record.totalModulesCount}
-                      </td>
-
-                      <td className="py-3.5 px-4">
-                        <div className="w-36">
-                          <div className="flex justify-between text-[11px] font-mono font-bold mb-1">
-                            <span>{record.progressPercent}%</span>
-                            <span className={record.progressPercent === 100 ? 'text-emerald-500' : 'text-blue-500'}>
-                              {record.status.toUpperCase()}
-                            </span>
-                          </div>
-                          <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all ${
-                                record.progressPercent === 100
-                                  ? 'bg-emerald-500'
-                                  : record.progressPercent < 30
-                                  ? 'bg-amber-500'
-                                  : 'bg-blue-600'
-                              }`}
-                              style={{ width: `${record.progressPercent}%` }}
+                    return (
+                      <tr key={index} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-2.5">
+                            <img
+                              src={record.avatar}
+                              alt={record.studentName}
+                              className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200 dark:ring-slate-700"
                             />
+                            <div>
+                              <p className="font-semibold text-slate-900 dark:text-slate-100">{record.studentName}</p>
+                              <p className="text-[11px] text-slate-400">{record.studentEmail}</p>
+                            </div>
                           </div>
-                        </div>
-                      </td>
+                        </td>
 
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-800 dark:text-slate-200">
-                        {record.quizAverage}%
-                      </td>
+                        <td className="py-3.5 px-4 font-mono font-medium text-slate-700 dark:text-slate-300">
+                          <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 text-[10px] mr-1.5">
+                            {record.courseCode}
+                          </span>
+                          <span className="truncate max-w-[200px] inline-block align-bottom">{record.courseTitle}</span>
+                        </td>
 
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400">{record.lastActive}</span>
-                        </div>
-                      </td>
+                        <td className="py-3.5 px-4 font-mono text-[11px] tabular-nums">
+                          {enrollment && expiryInfo ? (
+                            <div className="space-y-0.5">
+                              <div className="text-slate-700 dark:text-slate-300">
+                                {formatEnrollmentDate(enrollment.startDate)} → {formatEnrollmentDate(enrollment.expiresAt)}
+                              </div>
+                              <div
+                                className={`inline-flex items-center gap-1 font-sans text-[10px] font-semibold ${
+                                  expiryInfo.status === 'expired'
+                                    ? 'text-red-600 dark:text-red-400'
+                                    : expiryInfo.status === 'expiring_soon'
+                                    ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-emerald-600 dark:text-emerald-400'
+                                }`}
+                              >
+                                {expiryInfo.status === 'expired' ? (
+                                  <XCircle className="w-3 h-3 shrink-0" />
+                                ) : expiryInfo.status === 'expiring_soon' ? (
+                                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                                ) : (
+                                  <Calendar className="w-3 h-3 shrink-0" />
+                                )}
+                                <span>{expiryInfo.statusLabel}</span>
+                                <span>·</span>
+                                <span>{expiryInfo.countdownLabel}</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
 
-                      <td className="py-3.5 px-4 text-right">
-                        <button
-                          onClick={() => handleSendReminderEmail(record.studentEmail, record.studentName, record.courseTitle)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                          title="Send Email Notification"
-                        >
-                          <Mail className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                        <td className="py-3.5 px-4 font-mono">
+                          {record.completedModulesCount} / {record.totalModulesCount}
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <div className="w-36">
+                            <div className="flex justify-between text-[11px] font-mono font-bold mb-1">
+                              <span>{record.progressPercent}%</span>
+                              <span className={record.progressPercent === 100 ? 'text-emerald-500' : 'text-blue-500'}>
+                                {record.status.toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${
+                                  record.progressPercent === 100
+                                    ? 'bg-emerald-500'
+                                    : record.progressPercent < 30
+                                    ? 'bg-amber-500'
+                                    : 'bg-blue-600'
+                                }`}
+                                style={{ width: `${record.progressPercent}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4 font-mono font-bold text-slate-800 dark:text-slate-200">
+                          {record.quizAverage}%
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400">{record.lastActive}</span>
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            onClick={() => handleSendReminderEmail(record.studentEmail, record.studentName, record.courseTitle)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                            title="Send Email Notification"
+                          >
+                            <Mail className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -2187,6 +2268,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
 
                 <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono">
                   <span>Enrolled: {course.enrolledCount.toLocaleString()}</span>
+                  <span>Access: {course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS}d</span>
                   <span>Price: ${course.price}</span>
                   <span>Hours: {course.durationHours}h • Updated {course.updatedAt}</span>
                 </div>
@@ -2311,13 +2393,24 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                 )}
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Estimated Hours</label>
                   <input
                     type="number"
                     value={courseForm.durationHours}
                     onChange={(e) => setCourseForm({ ...courseForm, durationHours: parseInt(e.target.value, 10) || 0 })}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Access Days</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={3650}
+                    value={courseForm.defaultAccessDays}
+                    onChange={(e) => setCourseForm({ ...courseForm, defaultAccessDays: parseInt(e.target.value, 10) || DEFAULT_ENROLLMENT_DAYS })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                   />
                 </div>
@@ -2790,12 +2883,24 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                         key={course.id}
                         type="button"
                         onClick={() =>
-                          setAccountForm(prev => ({
-                            ...prev,
-                            enrolledCourseIds: prev.enrolledCourseIds.includes(course.id)
+                          setAccountForm(prev => {
+                            const isRemoving = prev.enrolledCourseIds.includes(course.id);
+                            const nextIds = isRemoving
                               ? prev.enrolledCourseIds.filter(id => id !== course.id)
-                              : [...prev.enrolledCourseIds, course.id]
-                          }))
+                              : [...prev.enrolledCourseIds, course.id];
+                            const nextEnrollments = { ...prev.courseEnrollments };
+                            if (!isRemoving && !nextEnrollments[course.id]) {
+                              nextEnrollments[course.id] = createDefaultCourseEnrollment(
+                                course.id,
+                                course.defaultAccessDays
+                              );
+                            }
+                            return {
+                              ...prev,
+                              enrolledCourseIds: nextIds,
+                              courseEnrollments: nextEnrollments
+                            };
+                          })
                         }
                         className={`px-3 py-1.5 rounded-xl border text-[11px] font-semibold transition-all ${
                           selected
@@ -2808,6 +2913,122 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                     );
                   })}
                 </div>
+
+                {accountForm.enrolledCourseIds.length > 0 && (
+                  <div className="mt-3 space-y-2.5">
+                    <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                      Course Enrollment Schedule &amp; Expiration Dates
+                    </p>
+                    <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                      {accountForm.enrolledCourseIds.map(cid => {
+                        const course = courses.find(c => c.id === cid);
+                        const sched =
+                          accountForm.courseEnrollments[cid] ||
+                          createDefaultCourseEnrollment(cid, course?.defaultAccessDays);
+                        const info = getEnrollmentExpirationInfo(sched);
+
+                        return (
+                          <div
+                            key={cid}
+                            className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-mono text-[11px] font-bold text-slate-800 dark:text-slate-100">
+                                {course ? `${course.code} · ${course.title}` : cid}
+                              </span>
+                              <span
+                                className={`text-[10px] font-mono font-bold tabular-nums ${
+                                  info.status === 'expired'
+                                    ? 'text-red-600 dark:text-red-400'
+                                    : info.status === 'expiring_soon'
+                                    ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-emerald-600 dark:text-emerald-400'
+                                }`}
+                              >
+                                {info.statusLabel} · {info.countdownLabel}
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <div>
+                                <label className="block text-[10px] font-mono text-slate-500 dark:text-slate-400 mb-0.5">
+                                  Start Date
+                                </label>
+                                <input
+                                  type="date"
+                                  value={sched.startDate}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setAccountForm(prev => ({
+                                      ...prev,
+                                      courseEnrollments: {
+                                        ...prev.courseEnrollments,
+                                        [cid]: {
+                                          ...(prev.courseEnrollments[cid] || sched),
+                                          startDate: val
+                                        }
+                                      }
+                                    }));
+                                  }}
+                                  className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-mono text-[11px]"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] font-mono text-slate-500 dark:text-slate-400 mb-0.5">
+                                  End Date
+                                </label>
+                                <input
+                                  type="date"
+                                  value={sched.endDate}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setAccountForm(prev => ({
+                                      ...prev,
+                                      courseEnrollments: {
+                                        ...prev.courseEnrollments,
+                                        [cid]: {
+                                          ...(prev.courseEnrollments[cid] || sched),
+                                          endDate: val
+                                        }
+                                      }
+                                    }));
+                                  }}
+                                  className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-mono text-[11px]"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] font-mono text-slate-500 dark:text-slate-400 mb-0.5">
+                                  Expiration Date
+                                </label>
+                                <input
+                                  type="date"
+                                  value={sched.expiresAt}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setAccountForm(prev => ({
+                                      ...prev,
+                                      courseEnrollments: {
+                                        ...prev.courseEnrollments,
+                                        [cid]: {
+                                          ...(prev.courseEnrollments[cid] || sched),
+                                          expiresAt: val,
+                                          endDate: prev.courseEnrollments[cid]?.endDate || val
+                                        }
+                                      }
+                                    }));
+                                  }}
+                                  className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-mono text-[11px]"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">

@@ -8,11 +8,22 @@ import {
   Sparkles,
   ShieldCheck,
   LayoutGrid,
-  List
+  List,
+  Calendar,
+  Clock,
+  AlertTriangle,
+  XCircle,
+  Play,
+  Building2
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { CourseThumbnail } from '../Courses/CourseThumbnail';
 import { CourseRadialProgressChart } from './CourseRadialProgressChart';
+import {
+  resolveCourseEnrollment,
+  formatEnrollmentDateRange,
+  getEnrollmentExpirationInfo
+} from '../../utils/enrollmentDates';
 
 interface StudentDashboardProps {
   onSelectCourse: (courseId: string) => void;
@@ -50,6 +61,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const enrolledCourses = courses.filter(c => currentUser.enrolledCourseIds.includes(c.id));
   const totalCompletedModules = currentUser.completedModuleIds.length;
+
+  const enrolledItems = enrolledCourses.map(course => {
+    const enrollment = resolveCourseEnrollment(currentUser, course);
+    const expiryInfo = enrollment ? getEnrollmentExpirationInfo(enrollment) : null;
+    return { course, enrollment, expiryInfo };
+  });
+
+  const expiringSoonCount = enrolledItems.filter(i => i.expiryInfo?.status === 'expiring_soon').length;
+  const expiredCount = enrolledItems.filter(i => i.expiryInfo?.status === 'expired').length;
+  const activeCount = enrolledItems.length - expiredCount;
 
   return (
     <div className="w-full space-y-8">
@@ -138,12 +159,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {/* Enrolled Courses Progress Section */}
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
               Current Enrolled Curriculums
             </h2>
             <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
-              {enrolledCourses.length} Active
+              {activeCount} Active
+              {expiringSoonCount > 0 ? ` · ${expiringSoonCount} Expiring Soon` : ''}
+              {expiredCount > 0 ? ` · ${expiredCount} Expired` : ''}
             </span>
           </div>
 
@@ -185,14 +208,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           )}
         </div>
 
-        {enrolledCourses.length === 0 ? (
+        {enrolledItems.length === 0 ? (
           <div className="p-8 text-center rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
             <p className="text-xs text-slate-500">You are not enrolled in any networking courses yet.</p>
           </div>
         ) : viewMode === 'grid' ? (
           /* THUMBNAIL GRID VIEW */
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {enrolledCourses.map(course => {
+            {enrolledItems.map(({ course, enrollment, expiryInfo }) => {
               const totalModules = course.modules.length;
               const completedCount = course.modules.filter(m =>
                 currentUser.completedModuleIds.includes(m.id)
@@ -214,6 +237,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     className="aspect-video"
                     imgClassName="group-hover:scale-[1.03] transition-transform duration-300"
                   >
+                    <span className="absolute top-2.5 left-3 z-10 px-2 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-wider shadow-sm">
+                      {course.level}
+                    </span>
                     <div className="absolute bottom-2.5 left-3.5 right-3.5 flex items-center justify-between gap-2 z-10">
                       <span className="font-mono text-[11px] font-bold tracking-wider text-cyan-300">
                         {course.code}
@@ -230,7 +256,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
                     <div className="space-y-1">
                       <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate">
-                        {course.category} · {course.level}
+                        {course.category} · {course.code}
                       </p>
                       <h3 className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1 group-hover:text-blue-600 dark:group-hover:text-cyan-400 transition-colors">
                         {course.title}
@@ -239,6 +265,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         {nextModule ? `Next: ${nextModule.title}` : 'All curriculum modules completed'}
                       </p>
                     </div>
+
+                    {enrollment && expiryInfo && (
+                      <div
+                        className={`flex flex-wrap items-center gap-1.5 text-xs tabular-nums ${
+                          expiryInfo.status === 'expired'
+                            ? 'text-red-600 dark:text-red-400'
+                            : expiryInfo.status === 'expiring_soon'
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {expiryInfo.status === 'expired' ? (
+                          <XCircle className="w-4 h-4 shrink-0" />
+                        ) : expiryInfo.status === 'expiring_soon' ? (
+                          <AlertTriangle className="w-4 h-4 shrink-0" />
+                        ) : (
+                          <Clock className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                        )}
+                        <span className="font-medium">
+                          {formatEnrollmentDateRange(enrollment)}
+                        </span>
+                        {(expiryInfo.status === 'expiring_soon' || expiryInfo.status === 'expired') && (
+                          <span className="text-[11px] font-semibold">
+                            · {expiryInfo.countdownLabel}
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     <div className="space-y-1.5 pt-2 border-t border-slate-100 dark:border-slate-800/80">
                       <div className="flex items-center justify-between text-[11px] font-mono tabular-nums font-medium">
@@ -277,17 +331,31 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     </div>
 
                     <div className="pt-1 flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSelectCourse(course.id);
-                        }}
-                        className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
-                      >
-                        <BookOpen className="w-3.5 h-3.5" />
-                        <span>{progressPercent === 100 ? 'Review' : 'Continue Lesson'}</span>
-                      </button>
+                      {expiryInfo?.status === 'expired' ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenPricing();
+                          }}
+                          className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>Renew Access</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectCourse(course.id);
+                          }}
+                          className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                        >
+                          <BookOpen className="w-3.5 h-3.5" />
+                          <span>{progressPercent === 100 ? 'Review' : 'Continue Lesson'}</span>
+                        </button>
+                      )}
 
                       <button
                         type="button"
@@ -308,61 +376,77 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             })}
           </div>
         ) : (
-          /* LIST VIEW */
-          <div className="space-y-3">
-            {enrolledCourses.map(course => {
+          /* LIST VIEW (clean reference card + progress bar) */
+          <div className="space-y-4">
+            {enrolledItems.map(({ course, enrollment, expiryInfo }) => {
               const totalModules = course.modules.length;
               const completedCount = course.modules.filter(m =>
                 currentUser.completedModuleIds.includes(m.id)
               ).length;
               const progressPercent =
                 totalModules > 0 ? Math.round((completedCount / totalModules) * 100) : 0;
-              const nextModule = course.modules.find(
-                m => !currentUser.completedModuleIds.includes(m.id)
-              );
 
               return (
                 <div
                   key={course.id}
                   onClick={() => onSelectCourse(course.id)}
-                  className="p-4 rounded-2xl bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-blue-400 dark:hover:border-cyan-500/40 transition-all flex flex-col sm:flex-row sm:items-center gap-4 group cursor-pointer"
+                  className="rounded-2xl bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-blue-400 dark:hover:border-cyan-500/40 transition-all overflow-hidden flex flex-col sm:flex-row group cursor-pointer"
                 >
+                  {/* Left Thumbnail with Level Tag & Centered Play Button */}
                   <CourseThumbnail
                     course={course}
-                    className="w-full sm:w-44 aspect-video sm:aspect-[16/10] rounded-xl shrink-0"
+                    className="w-full sm:w-56 md:w-64 aspect-video sm:aspect-auto sm:min-h-[184px] shrink-0"
                     imgClassName="group-hover:scale-[1.03] transition-transform duration-300"
                   >
-                    <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between z-10">
+                    <span className="absolute top-2.5 left-2.5 z-10 px-2.5 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-wider shadow-sm">
+                      {course.level}
+                    </span>
+
+                    <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+                      <div className="w-11 h-11 rounded-full bg-slate-950/45 border-2 border-white/90 flex items-center justify-center text-white shadow-lg group-hover:scale-105 transition-transform">
+                        <Play className="w-5 h-5 ml-0.5 fill-white/90" />
+                      </div>
+                    </div>
+
+                    <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between z-10">
                       <span className="font-mono text-[10px] font-bold tracking-wider text-cyan-300">
                         {course.code}
                       </span>
+                      {progressPercent === 100 && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-300">
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>Certified</span>
+                        </span>
+                      )}
                     </div>
                   </CourseThumbnail>
 
-                  <div className="flex-1 min-w-0 space-y-2">
-                    <div className="space-y-0.5">
-                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                        <span>{course.category}</span>
-                        <span>·</span>
-                        <span>{course.level}</span>
-                        {progressPercent === 100 && (
-                          <>
-                            <span>·</span>
-                            <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              Certified
-                            </span>
-                          </>
-                        )}
+                  {/* Right Content Area */}
+                  <div className="flex-1 min-w-0 p-4 sm:p-5 flex flex-col justify-between gap-3">
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                        <span className="inline-flex items-center gap-1.5 font-medium text-slate-600 dark:text-slate-300">
+                          <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>{course.category}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <BookOpen className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>Course</span>
+                          <span className="text-slate-300 dark:text-slate-700">|</span>
+                          <span>{course.instructor.name}</span>
+                        </span>
                       </div>
-                      <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-cyan-400 transition-colors">
+
+                      <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white leading-snug group-hover:text-blue-600 dark:group-hover:text-cyan-400 transition-colors">
                         {course.title}
                       </h3>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                        {nextModule ? `Next: ${nextModule.title}` : 'All curriculum modules completed'}
+
+                      <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">
+                        {course.subtitle}
                       </p>
                     </div>
 
+                    {/* Progress Bar (kept along in list view mode) */}
                     <div className="flex items-center gap-3">
                       <div
                         role="progressbar"
@@ -394,33 +478,83 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         </strong>
                       </span>
                     </div>
-                  </div>
 
-                  <div className="flex sm:flex-col items-center sm:items-stretch justify-end gap-2 sm:w-40 shrink-0">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectCourse(course.id);
-                      }}
-                      className="flex-1 sm:flex-none px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center justify-center gap-1.5 whitespace-nowrap"
-                    >
-                      <BookOpen className="w-3.5 h-3.5" />
-                      <span>{progressPercent === 100 ? 'Review' : 'Continue Lesson'}</span>
-                    </button>
+                    {/* Footer: Simple Clock Date Range + Actions */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                      {enrollment && expiryInfo ? (
+                        <div
+                          className={`flex flex-wrap items-center gap-2 text-xs tabular-nums ${
+                            expiryInfo.status === 'expired'
+                              ? 'text-red-600 dark:text-red-400'
+                              : expiryInfo.status === 'expiring_soon'
+                              ? 'text-amber-600 dark:text-amber-400'
+                              : 'text-slate-600 dark:text-slate-300'
+                          }`}
+                        >
+                          {expiryInfo.status === 'expired' ? (
+                            <XCircle className="w-4 h-4 shrink-0" />
+                          ) : expiryInfo.status === 'expiring_soon' ? (
+                            <AlertTriangle className="w-4 h-4 shrink-0" />
+                          ) : (
+                            <Clock className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                          )}
+                          <span className="font-medium">
+                            {formatEnrollmentDateRange(enrollment)}
+                          </span>
+                          {(expiryInfo.status === 'expiring_soon' || expiryInfo.status === 'expired') && (
+                            <span className="text-[11px] font-semibold">
+                              · {expiryInfo.countdownLabel}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400 flex items-center gap-1.5">
+                          <Calendar className="w-4 h-4 shrink-0" />
+                          <span>Enrolled</span>
+                        </span>
+                      )}
 
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpenCliLab();
-                      }}
-                      className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium flex items-center justify-center gap-1.5 whitespace-nowrap"
-                      title="Open CLI Sandbox"
-                    >
-                      <Terminal className="w-3.5 h-3.5 text-cyan-500" />
-                      <span>CLI Lab</span>
-                    </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenCliLab();
+                          }}
+                          className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium flex items-center gap-1.5 whitespace-nowrap"
+                          title="Open CLI Sandbox"
+                        >
+                          <Terminal className="w-3.5 h-3.5 text-cyan-500" />
+                          <span>CLI Lab</span>
+                        </button>
+
+                        {expiryInfo?.status === 'expired' ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenPricing();
+                            }}
+                            className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Renew Access</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectCourse(course.id);
+                            }}
+                            className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
+                          >
+                            <BookOpen className="w-3.5 h-3.5" />
+                            <span>{progressPercent === 100 ? 'Review' : 'Continue Lesson'}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               );

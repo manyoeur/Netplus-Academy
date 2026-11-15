@@ -153,6 +153,7 @@ const AcademyApp: React.FC = () => {
               setCurrentTab('courses');
             }}
             onViewCertificates={() => setCurrentTab('certificates')}
+            onOpenPricing={() => setIsPaymentOpen(true)}
           />
         )}
 

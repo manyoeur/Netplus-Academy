@@ -8,16 +8,26 @@ import {
   Award,
   BookmarkCheck,
   ArrowUp,
-  X
+  X,
+  Calendar,
+  AlertTriangle,
+  XCircle,
+  Clock
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { InteractiveCliTerminal } from '../Lab/InteractiveCliTerminal';
 import { CourseThumbnail } from './CourseThumbnail';
+import {
+  resolveCourseEnrollment,
+  formatEnrollmentDate,
+  getEnrollmentExpirationInfo
+} from '../../utils/enrollmentDates';
 
 interface CoursePlayerProps {
   courseId: string;
   onBack: () => void;
   onViewCertificates: () => void;
+  onOpenPricing?: () => void;
 }
 
 interface ModuleReadingProgress {
@@ -62,7 +72,8 @@ function writeReadingStore(userId: string, store: ReadingStore): void {
 export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   courseId,
   onBack,
-  onViewCertificates
+  onViewCertificates,
+  onOpenPricing
 }) => {
   const { courses, currentUser, completeModule, enrollInCourse } = useAcademy();
   const course = courses.find(c => c.id === courseId) || courses[0];
@@ -343,6 +354,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const completedCount = course.modules.filter(m => isModuleCompleted(m.id)).length;
   const progressPercent = Math.round((completedCount / course.modules.length) * 100);
   const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
+  const enrollment = resolveCourseEnrollment(currentUser, course);
+  const expiryInfo = enrollment ? getEnrollmentExpirationInfo(enrollment) : null;
 
   const handleSelectModule = (idx: number) => {
     flushCurrentModuleProgress();
@@ -511,8 +524,67 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             })}
           </div>
 
-          {/* Quick Enrolled status */}
-          {!isEnrolled && (
+          {/* Enrollment Window or Preview Status */}
+          {isEnrolled && enrollment && expiryInfo ? (
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2 text-[11px] tabular-nums">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-slate-700 dark:text-slate-200">
+                  Enrollment Window
+                </span>
+                <span
+                  className={`inline-flex items-center gap-1 font-semibold ${
+                    expiryInfo.status === 'expired'
+                      ? 'text-red-600 dark:text-red-400'
+                      : expiryInfo.status === 'expiring_soon'
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : expiryInfo.status === 'upcoming'
+                      ? 'text-blue-600 dark:text-cyan-400'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                  }`}
+                >
+                  {expiryInfo.status === 'expired' ? (
+                    <XCircle className="w-3.5 h-3.5 shrink-0" />
+                  ) : expiryInfo.status === 'expiring_soon' ? (
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  ) : expiryInfo.status === 'upcoming' ? (
+                    <Clock className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <Calendar className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  <span>{expiryInfo.statusLabel}</span>
+                </span>
+              </div>
+
+              <div className="space-y-1 font-mono text-[10px] text-slate-500 dark:text-slate-400">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Start Date</span>
+                  <span className="text-slate-800 dark:text-slate-200 font-semibold">
+                    {formatEnrollmentDate(enrollment.startDate)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span>End Date</span>
+                  <span className="text-slate-800 dark:text-slate-200 font-semibold">
+                    {formatEnrollmentDate(enrollment.endDate)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70 dark:border-slate-700/70">
+                  <span>Expires</span>
+                  <span
+                    className={`font-bold ${
+                      expiryInfo.status === 'expired'
+                        ? 'text-red-600 dark:text-red-400'
+                        : expiryInfo.status === 'expiring_soon'
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-slate-800 dark:text-slate-200'
+                    }`}
+                  >
+                    {formatEnrollmentDate(enrollment.expiresAt)} · {expiryInfo.countdownLabel}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : (
             <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300">
               <p className="font-bold mb-1">Preview Mode</p>
               <button
@@ -527,6 +599,52 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
         {/* Right Column: Module Learning Workspace */}
         <div ref={moduleContentRef} className="lg:col-span-3 space-y-4">
+          {/* Course Expiration Notice Banner */}
+          {isEnrolled && enrollment && expiryInfo && (expiryInfo.status === 'expiring_soon' || expiryInfo.status === 'expired') && (
+            <div
+              className={`px-4 py-3 rounded-2xl border shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs ${
+                expiryInfo.status === 'expired'
+                  ? 'bg-red-50 dark:bg-red-950/35 border-red-200 dark:border-red-900/60 text-red-800 dark:text-red-200'
+                  : 'bg-amber-50 dark:bg-amber-950/35 border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-200'
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                {expiryInfo.status === 'expired' ? (
+                  <XCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                )}
+                <p className="tabular-nums">
+                  {expiryInfo.status === 'expired' ? (
+                    <>
+                      <strong>Course access expired on {formatEnrollmentDate(enrollment.expiresAt)}</strong>{' '}
+                      ({expiryInfo.countdownLabel}). Renew your plan or contact an administrator to extend enrollment.
+                    </>
+                  ) : (
+                    <>
+                      <strong>Course access expires on {formatEnrollmentDate(enrollment.expiresAt)}</strong>{' '}
+                      ({expiryInfo.countdownLabel}). Complete your remaining modules and earn your certificate before the end date.
+                    </>
+                  )}
+                </p>
+              </div>
+
+              {onOpenPricing && (
+                <button
+                  type="button"
+                  onClick={onOpenPricing}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 text-white transition-colors ${
+                    expiryInfo.status === 'expired'
+                      ? 'bg-red-600 hover:bg-red-500'
+                      : 'bg-amber-600 hover:bg-amber-500'
+                  }`}
+                >
+                  {expiryInfo.status === 'expired' ? 'Renew Access' : 'Extend Plan'}
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Reading Progress & Resume Banner */}
           <div className="px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
