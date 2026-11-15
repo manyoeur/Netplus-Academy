@@ -14,6 +14,7 @@ import {
   Search,
   Command,
   ArrowRight,
+  ChevronRight,
   Globe,
   Pin,
   PinOff,
@@ -21,7 +22,8 @@ import {
   PanelLeftOpen,
   UserPlus,
   Users,
-  UserCog
+  UserCog,
+  LucideIcon
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
 
@@ -38,9 +40,24 @@ interface SidebarProps {
   setMobileMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
+interface NavItemConfig {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  accentText: string;
+  accentBg: string;
+  accentBar: string;
+  tag?: string;
+}
+
+interface NavSectionConfig {
+  title: string;
+  items: NavItemConfig[];
+}
+
 const INACTIVITY_HIDE_MS = 3500;
 const MOUSE_LEAVE_HIDE_MS = 650;
-const HOVER_EXPAND_DELAY_MS = 140;
+const HOVER_EXPAND_DELAY_MS = 90;
 
 export const Sidebar: React.FC<SidebarProps> = ({
   currentTab,
@@ -58,7 +75,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandSearch, setCommandSearch] = useState('');
+  const [railTooltip, setRailTooltip] = useState<{ label: string; top: number } | null>(null);
 
+  const asideRef = useRef<HTMLElement | null>(null);
+  const rafRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const hoverExpandTimerRef = useRef<number | null>(null);
   const suppressHoverUntilRef = useRef<number>(0);
@@ -117,6 +137,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => {
       clearHideTimer();
       clearHoverExpandTimer();
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+      }
     };
   }, [clearHideTimer, clearHoverExpandTimer]);
 
@@ -156,6 +179,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       if (Date.now() < suppressHoverUntilRef.current) return;
       clearHoverExpandTimer();
       hoverExpandTimerRef.current = window.setTimeout(() => {
+        setRailTooltip(null);
         setIsOpen(true);
       }, HOVER_EXPAND_DELAY_MS);
     } else {
@@ -163,7 +187,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleSidebarMouseMove = () => {
+  const handleSidebarMouseMove = (e: React.MouseEvent<HTMLElement>) => {
+    const asideEl = asideRef.current;
+    if (asideEl) {
+      const rect = asideEl.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+      }
+      rafRef.current = window.requestAnimationFrame(() => {
+        asideEl.style.setProperty('--mx', `${x}px`);
+        asideEl.style.setProperty('--my', `${y}px`);
+      });
+    }
+
     if (isOpen) {
       resetInactivityTimer();
     }
@@ -171,6 +209,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleSidebarMouseLeave = () => {
     clearHoverExpandTimer();
+    setRailTooltip(null);
+    if (asideRef.current) {
+      asideRef.current.style.setProperty('--mx', '-200px');
+      asideRef.current.style.setProperty('--my', '-200px');
+    }
     if (!isPinned && isOpen && !commandPaletteOpen) {
       scheduleAutoHide(MOUSE_LEAVE_HIDE_MS);
     }
@@ -197,6 +240,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleExpandSidebar = () => {
     clearHoverExpandTimer();
+    setRailTooltip(null);
     setIsOpen(true);
   };
 
@@ -213,11 +257,158 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setCurrentTab(tabId);
     }
     setMobileMenuOpen(false);
+    setRailTooltip(null);
     resetInactivityTimer();
   };
 
   const isAdminOnly = currentUser.role === 'admin';
   const isAdminOrInstructor = currentUser.role === 'admin' || currentUser.role === 'instructor';
+
+  const isNavItemActive = (itemId: string) => {
+    if (itemId === 'accounts') {
+      return currentTab === 'management' && managementSubTab === 'accounts';
+    }
+    if (itemId === 'invite-instructors') {
+      return currentTab === 'management' && managementSubTab === 'invite-instructors';
+    }
+    if (itemId === 'invite-students') {
+      return currentTab === 'management' && managementSubTab === 'invite-students';
+    }
+    if (itemId === 'management') {
+      return currentTab === 'management' && (managementSubTab === 'courses' || managementSubTab === 'progress');
+    }
+    return currentTab === itemId;
+  };
+
+  const navSections: NavSectionConfig[] = [
+    {
+      title: 'Curriculum',
+      items: [
+        {
+          id: 'courses',
+          label: 'Courses',
+          icon: Layers,
+          accentText: 'text-blue-600 dark:text-cyan-400',
+          accentBg: 'bg-blue-50 dark:bg-blue-950/60',
+          accentBar: 'bg-blue-600 dark:bg-cyan-400'
+        },
+        {
+          id: 'dashboard',
+          label: 'My Learning',
+          icon: UserCheck,
+          accentText: 'text-indigo-600 dark:text-indigo-400',
+          accentBg: 'bg-indigo-50 dark:bg-indigo-950/60',
+          accentBar: 'bg-indigo-600 dark:bg-indigo-400'
+        }
+      ]
+    },
+    {
+      title: 'Hands-on Labs',
+      items: [
+        {
+          id: 'lab-sandbox',
+          label: 'Cisco CLI Sandbox',
+          icon: Terminal,
+          accentText: 'text-cyan-600 dark:text-cyan-400',
+          accentBg: 'bg-cyan-50 dark:bg-cyan-950/60',
+          accentBar: 'bg-cyan-500',
+          tag: 'IOS'
+        },
+        {
+          id: 'subnet-calc',
+          label: 'Subnet & VLSM Calc',
+          icon: Calculator,
+          accentText: 'text-sky-600 dark:text-sky-400',
+          accentBg: 'bg-sky-50 dark:bg-sky-950/60',
+          accentBar: 'bg-sky-500'
+        }
+      ]
+    },
+    {
+      title: 'Community & Credentials',
+      items: [
+        {
+          id: 'certificates',
+          label: 'Certificates',
+          icon: Award,
+          accentText: 'text-amber-600 dark:text-amber-400',
+          accentBg: 'bg-amber-50 dark:bg-amber-950/50',
+          accentBar: 'bg-amber-500'
+        },
+        {
+          id: 'forum',
+          label: 'Discussion Forum',
+          icon: MessageSquare,
+          accentText: 'text-violet-600 dark:text-violet-400',
+          accentBg: 'bg-violet-50 dark:bg-violet-950/50',
+          accentBar: 'bg-violet-500'
+        }
+      ]
+    },
+    ...(isAdminOrInstructor
+      ? [
+          {
+            title: 'Administration',
+            items: [
+              ...(isAdminOnly
+                ? [
+                    {
+                      id: 'accounts',
+                      label: 'User Accounts',
+                      icon: UserCog,
+                      accentText: 'text-blue-600 dark:text-cyan-400',
+                      accentBg: 'bg-blue-50 dark:bg-blue-950/60',
+                      accentBar: 'bg-blue-600 dark:bg-cyan-400'
+                    },
+                    {
+                      id: 'invite-instructors',
+                      label: 'Invite Instructors',
+                      icon: UserPlus,
+                      accentText: 'text-indigo-600 dark:text-indigo-400',
+                      accentBg: 'bg-indigo-50 dark:bg-indigo-950/60',
+                      accentBar: 'bg-indigo-500'
+                    },
+                    {
+                      id: 'invite-students',
+                      label: 'Invite Students',
+                      icon: Users,
+                      accentText: 'text-emerald-600 dark:text-emerald-400',
+                      accentBg: 'bg-emerald-50 dark:bg-emerald-950/60',
+                      accentBar: 'bg-emerald-500'
+                    }
+                  ]
+                : []),
+              {
+                id: 'management',
+                label: 'Course Manager',
+                icon: Settings,
+                accentText: 'text-blue-600 dark:text-blue-400',
+                accentBg: 'bg-blue-50 dark:bg-blue-950/60',
+                accentBar: 'bg-blue-500'
+              },
+              {
+                id: 'analytics',
+                label: 'Live Analytics',
+                icon: BarChart3,
+                accentText: 'text-emerald-600 dark:text-emerald-400',
+                accentBg: 'bg-emerald-50 dark:bg-emerald-950/60',
+                accentBar: 'bg-emerald-500'
+              },
+              {
+                id: 'lms',
+                label: 'LMS & SCORM API',
+                icon: Globe,
+                accentText: 'text-purple-600 dark:text-purple-400',
+                accentBg: 'bg-purple-50 dark:bg-purple-950/60',
+                accentBar: 'bg-purple-500'
+              }
+            ]
+          }
+        ]
+      : [])
+  ];
+
+  const railNavItems = navSections.flatMap(section => section.items);
 
   const quickJumpItems = [
     { id: 'courses', label: 'Course Catalog & Syllabus', category: 'Curriculum', icon: Layers },
@@ -243,29 +434,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       : [])
   ];
 
-  const railNavItems = [
-    { id: 'courses', label: 'Courses', icon: Layers, dot: false },
-    { id: 'dashboard', label: 'My Learning', icon: UserCheck, dot: false },
-    { id: 'lab-sandbox', label: 'Cisco CLI Sandbox', icon: Terminal, dot: true },
-    { id: 'subnet-calc', label: 'Subnet & VLSM Calc', icon: Calculator, dot: false },
-    { id: 'certificates', label: 'Certificates', icon: Award, dot: false },
-    { id: 'forum', label: 'Discussion Forum', icon: MessageSquare, dot: false },
-    ...(isAdminOnly
-      ? [
-          { id: 'accounts', label: 'User Accounts', icon: UserCog, dot: false },
-          { id: 'invite-instructors', label: 'Invite Instructors', icon: UserPlus, dot: false },
-          { id: 'invite-students', label: 'Invite Students', icon: Users, dot: false }
-        ]
-      : []),
-    ...(isAdminOrInstructor
-      ? [
-          { id: 'management', label: 'Course Manager', icon: Settings, dot: true },
-          { id: 'analytics', label: 'Live Analytics', icon: BarChart3, dot: true },
-          { id: 'lms', label: 'LMS & SCORM API', icon: Globe, dot: false }
-        ]
-      : [])
-  ];
-
   const filteredQuickJumps = quickJumpItems.filter(
     item =>
       item.label.toLowerCase().includes(commandSearch.toLowerCase()) ||
@@ -273,7 +441,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   );
 
   const isSidebarShown = isPinned || isOpen;
-  // On mobile (< lg), always render the expanded drawer layout when opened; on desktop (lg+), toggle between w-64 and w-[72px] icon rail
   const isExpandedView = isSidebarShown || mobileMenuOpen;
 
   return (
@@ -288,69 +455,74 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Left Sidebar: Desktop expands (w-64) or auto-hides into Compact Icon Rail (lg:w-[72px]); Mobile is slide-over drawer */}
       <aside
+        ref={asideRef}
         onMouseEnter={handleSidebarMouseEnter}
         onMouseMove={handleSidebarMouseMove}
         onMouseLeave={handleSidebarMouseLeave}
         onWheel={resetInactivityTimer}
         onMouseDown={resetInactivityTimer}
         onKeyDown={resetInactivityTimer}
-        className={`fixed top-0 left-0 bottom-0 z-50 flex flex-col backdrop-blur-2xl bg-white/95 dark:bg-[#090e1a]/95 border-r border-slate-200/90 dark:border-slate-800/90 transition-all duration-300 ease-in-out ${
+        className={`fixed top-0 left-0 bottom-0 z-50 flex flex-col backdrop-blur-2xl bg-white/95 dark:bg-[#090e1a]/95 border-r border-slate-200/90 dark:border-slate-800/90 transition-[width,transform,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none overflow-hidden ${
           mobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
         } lg:translate-x-0 w-64 ${
           isSidebarShown ? 'lg:w-64' : 'lg:w-[72px]'
         } ${
-          !isPinned && isSidebarShown ? 'lg:shadow-2xl lg:shadow-black/30' : ''
+          !isPinned && isSidebarShown ? 'lg:shadow-2xl lg:shadow-slate-900/15 dark:lg:shadow-black/45' : ''
         }`}
       >
+        {/* Subtle cursor-tracking ambient radial spotlight */}
+        <div className="sidebar-spotlight pointer-events-none absolute inset-0 z-0 transition-opacity duration-300" />
+
         {isExpandedView ? (
-          <>
+          <div className="relative z-10 flex flex-col h-full min-w-0">
             {/* Expanded Sidebar Header */}
             <div className="px-3.5 py-3.5 border-b border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between gap-2">
-              <div
-                className="flex items-center gap-2.5 cursor-pointer group select-none min-w-0"
+              <button
+                type="button"
                 onClick={() => handleNavClick('courses')}
+                className="flex items-center gap-2.5 cursor-pointer group/brand select-none min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-xl"
               >
-                <div className="relative flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 text-white shadow-md shadow-blue-500/25 ring-1 ring-white/20 shrink-0 group-hover:scale-105 transition-transform">
+                <div className="relative flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 text-white shadow-md shadow-blue-500/25 ring-1 ring-white/20 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/brand:scale-105 group-hover/brand:shadow-indigo-500/35 motion-reduce:transition-none">
                   <Network className="w-4 h-4 text-white" />
-                  <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 ring-2 ring-white dark:ring-[#090e1a]" />
-                  </span>
                 </div>
 
                 <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-base font-black tracking-tight bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400 bg-clip-text text-transparent truncate">
+                  <div className="flex items-baseline gap-1 whitespace-nowrap">
+                    <span className="text-base font-extrabold tracking-tight bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-500 bg-clip-text text-transparent">
                       Netplus
                     </span>
-                    <span className="text-[8px] uppercase font-mono font-bold tracking-wider px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-cyan-950/60 dark:text-cyan-300 border border-blue-200/80 dark:border-cyan-800/50">
+                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 transition-colors group-hover/brand:text-slate-900 dark:group-hover/brand:text-white">
                       Academy
                     </span>
                   </div>
-                  <p className="hidden lg:block text-[9px] font-mono text-slate-400 dark:text-slate-500 truncate">
-                    {isPinned ? 'Sidebar Pinned' : 'Auto-hide Active'}
+                  <p className="hidden lg:block text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate">
+                    {isPinned ? 'Pinned workspace' : 'Auto-hide active'}
                   </p>
                 </div>
-              </div>
+              </button>
 
               {/* Desktop Pin & Collapse-to-Rail Controls */}
               <div className="hidden lg:flex items-center gap-1 shrink-0">
                 <button
+                  type="button"
                   onClick={handleTogglePin}
-                  className={`p-1.5 rounded-lg transition-colors ${
+                  className={`p-2 rounded-lg transition-all duration-150 hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                     isPinned
-                      ? 'bg-blue-600/15 dark:bg-cyan-500/20 text-blue-600 dark:text-cyan-300 border border-blue-500/30 dark:border-cyan-500/30'
-                      : 'text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      ? 'bg-blue-600/12 dark:bg-cyan-500/20 text-blue-600 dark:text-cyan-300 border border-blue-500/25 dark:border-cyan-500/30'
+                      : 'text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800/80'
                   }`}
                   title={isPinned ? 'Unpin Sidebar (Enable Auto-Hide)' : 'Pin Sidebar Open'}
+                  aria-label={isPinned ? 'Unpin Sidebar' : 'Pin Sidebar'}
                 >
                   {isPinned ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
                 </button>
 
                 <button
+                  type="button"
                   onClick={handleCollapseToIcons}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  className="p-2 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-all duration-150 hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   title="Collapse to Icon Rail"
+                  aria-label="Collapse to Icon Rail"
                 >
                   <PanelLeftClose className="w-3.5 h-3.5" />
                 </button>
@@ -358,233 +530,135 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               {/* Mobile Close Button */}
               <button
+                type="button"
                 onClick={() => setMobileMenuOpen(false)}
-                className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="lg:hidden p-2 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                aria-label="Close Menu"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Search Trigger Bar */}
+            {/* Interactive Quick Jump Search Bar */}
             <div className="px-3 pt-3">
               <button
+                type="button"
                 onClick={() => setCommandPaletteOpen(true)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs bg-slate-100/90 dark:bg-[#0d1424] border border-slate-200/80 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-blue-400 dark:hover:border-cyan-500/50 transition-colors"
+                className="group/search w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs bg-slate-100/80 dark:bg-[#0d1424]/90 border border-slate-200/80 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:bg-white dark:hover:bg-[#111a2e] hover:border-blue-400/70 dark:hover:border-cyan-500/50 hover:text-slate-800 dark:hover:text-slate-100 hover:shadow-xs transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               >
                 <span className="flex items-center gap-2">
-                  <Search className="w-3.5 h-3.5" />
+                  <Search className="w-3.5 h-3.5 transition-transform duration-150 group-hover/search:scale-110 group-hover/search:text-blue-500 dark:group-hover/search:text-cyan-400" />
                   <span>Quick Jump...</span>
                 </span>
-                <kbd className="inline-flex items-center text-[9px] font-mono px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-400">
+                <kbd className="inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-400 group-hover/search:text-slate-700 dark:group-hover/search:text-slate-200 group-hover/search:border-slate-300 dark:group-hover/search:border-slate-600 transition-colors">
                   <Command className="w-2.5 h-2.5 mr-0.5" />K
                 </kbd>
               </button>
             </div>
 
-            {/* Expanded Navigation Links */}
-            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-5">
-              {/* Curriculum */}
-              <div className="space-y-1">
-                <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                  Curriculum
-                </p>
-                <button
-                  onClick={() => handleNavClick('courses')}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                    currentTab === 'courses'
-                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
-                  }`}
-                >
-                  <Layers className="w-4 h-4 shrink-0" />
-                  <span>Courses</span>
-                </button>
-
-                <button
-                  onClick={() => handleNavClick('dashboard')}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                    currentTab === 'dashboard'
-                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
-                  }`}
-                >
-                  <UserCheck className="w-4 h-4 shrink-0" />
-                  <span>My Learning</span>
-                </button>
-              </div>
-
-              {/* Hands-on Labs */}
-              <div className="space-y-1">
-                <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                  Hands-on Labs
-                </p>
-                <button
-                  onClick={() => handleNavClick('lab-sandbox')}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                    currentTab === 'lab-sandbox'
-                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
-                  }`}
-                >
-                  <span className="flex items-center gap-2.5">
-                    <Terminal className={`w-4 h-4 shrink-0 ${currentTab === 'lab-sandbox' ? 'text-white' : 'text-cyan-500'}`} />
-                    <span>Cisco CLI Sandbox</span>
-                  </span>
-                  <span
-                    className={`text-[9px] uppercase font-mono px-1.5 py-0.5 rounded font-bold ${
-                      currentTab === 'lab-sandbox'
-                        ? 'bg-white/20 text-white'
-                        : 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300'
-                    }`}
-                  >
-                    IOS
-                  </span>
-                </button>
-
-                <button
-                  onClick={() => handleNavClick('subnet-calc')}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                    currentTab === 'subnet-calc'
-                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
-                  }`}
-                >
-                  <Calculator className={`w-4 h-4 shrink-0 ${currentTab === 'subnet-calc' ? 'text-white' : 'text-blue-500'}`} />
-                  <span>Subnet & VLSM Calc</span>
-                </button>
-              </div>
-
-              {/* Community & Credentials */}
-              <div className="space-y-1">
-                <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                  Community & Credentials
-                </p>
-                <button
-                  onClick={() => handleNavClick('certificates')}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                    currentTab === 'certificates'
-                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
-                  }`}
-                >
-                  <Award className={`w-4 h-4 shrink-0 ${currentTab === 'certificates' ? 'text-white' : 'text-amber-500'}`} />
-                  <span>Certificates</span>
-                </button>
-
-                <button
-                  onClick={() => handleNavClick('forum')}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                    currentTab === 'forum'
-                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
-                  }`}
-                >
-                  <MessageSquare className="w-4 h-4 shrink-0" />
-                  <span>Discussion Forum</span>
-                </button>
-              </div>
-
-              {/* Administration (Instructor & Admin) */}
-              {isAdminOrInstructor && (
-                <div className="space-y-1">
-                  <p className="px-2.5 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                    Administration
+            {/* Expanded Interactive Navigation Links */}
+            <nav aria-label="Primary Sidebar Navigation" className="flex-1 overflow-y-auto px-3 py-3.5 space-y-5">
+              {navSections.map(section => (
+                <div key={section.title} className="space-y-1">
+                  <p className="px-2.5 pb-0.5 text-[11px] font-semibold tracking-wide text-slate-400 dark:text-slate-500">
+                    {section.title}
                   </p>
-                  {isAdminOnly && (
-                    <>
+
+                  {section.items.map(item => {
+                    const Icon = item.icon;
+                    const active = isNavItemActive(item.id);
+                    return (
                       <button
-                        onClick={() => handleNavClick('accounts')}
-                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                          currentTab === 'management' && managementSubTab === 'accounts'
-                            ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleNavClick(item.id)}
+                        className={`group/nav relative w-full min-h-[40px] flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                          active
+                            ? 'bg-slate-900 dark:bg-gradient-to-r dark:from-indigo-600/95 dark:to-blue-600/95 text-white border-slate-900 dark:border-indigo-400/30 shadow-md shadow-slate-900/10 dark:shadow-indigo-500/20'
+                            : 'border-transparent text-slate-600 dark:text-slate-400 hover:translate-x-0.5 hover:bg-slate-100/90 dark:hover:bg-slate-800/75 hover:border-slate-200/90 dark:hover:border-slate-700/70 hover:text-slate-950 dark:hover:text-white hover:shadow-xs'
                         }`}
                       >
-                        <UserCog className={`w-4 h-4 shrink-0 ${currentTab === 'management' && managementSubTab === 'accounts' ? 'text-white' : 'text-blue-500'}`} />
-                        <span>User Accounts</span>
+                        {/* Smooth inner micro-indicator line that fades & scales in on hover */}
+                        <span
+                          aria-hidden="true"
+                          className={`absolute left-1 top-1/2 -translate-y-1/2 w-[3px] rounded-full transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                            active
+                              ? 'h-5 bg-cyan-400 opacity-100 scale-y-100'
+                              : `h-4 ${item.accentBar} opacity-0 scale-y-50 group-hover/nav:opacity-100 group-hover/nav:scale-y-100`
+                          }`}
+                        />
+
+                        <span className="flex items-center gap-2.5 pl-1.5 min-w-0 flex-1">
+                          <span
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-[transform,background-color,color,box-shadow] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                              active
+                                ? 'bg-white/15 text-white shadow-inner'
+                                : `${item.accentBg} ${item.accentText} group-hover/nav:scale-110 group-hover/nav:shadow-xs`
+                            }`}
+                          >
+                            <Icon className="w-4 h-4" />
+                          </span>
+
+                          <span className="truncate whitespace-nowrap transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/nav:translate-x-0.5">
+                            {item.label}
+                          </span>
+                        </span>
+
+                        <span className="flex items-center gap-1.5 shrink-0">
+                          {item.tag && (
+                            <span
+                              className={`text-[10px] font-mono font-bold tracking-wide transition-colors ${
+                                active
+                                  ? 'text-cyan-200'
+                                  : 'text-slate-400 dark:text-slate-500 group-hover/nav:text-cyan-600 dark:group-hover/nav:text-cyan-400'
+                              }`}
+                            >
+                              {item.tag}
+                            </span>
+                          )}
+                          <ChevronRight
+                            aria-hidden="true"
+                            className={`w-3.5 h-3.5 transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                              active
+                                ? 'opacity-80 translate-x-0 text-white'
+                                : 'opacity-0 -translate-x-1.5 text-slate-400 dark:text-slate-500 group-hover/nav:opacity-80 group-hover/nav:translate-x-0 group-hover/nav:text-slate-700 dark:group-hover/nav:text-slate-200'
+                            }`}
+                          />
+                        </span>
                       </button>
-
-                      <button
-                        onClick={() => handleNavClick('invite-instructors')}
-                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                          currentTab === 'management' && managementSubTab === 'invite-instructors'
-                            ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
-                        }`}
-                      >
-                        <UserPlus className={`w-4 h-4 shrink-0 ${currentTab === 'management' && managementSubTab === 'invite-instructors' ? 'text-white' : 'text-indigo-500'}`} />
-                        <span>Invite Instructors</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleNavClick('invite-students')}
-                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                          currentTab === 'management' && managementSubTab === 'invite-students'
-                            ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
-                        }`}
-                      >
-                        <Users className={`w-4 h-4 shrink-0 ${currentTab === 'management' && managementSubTab === 'invite-students' ? 'text-white' : 'text-cyan-500'}`} />
-                        <span>Invite Students</span>
-                      </button>
-                    </>
-                  )}
-                  <button
-                    onClick={() => handleNavClick('management')}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                      currentTab === 'management' && (managementSubTab === 'courses' || managementSubTab === 'progress')
-                        ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <Settings className={`w-4 h-4 shrink-0 ${currentTab === 'management' && (managementSubTab === 'courses' || managementSubTab === 'progress') ? 'text-white' : 'text-blue-500'}`} />
-                    <span>Course Manager</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleNavClick('analytics')}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                      currentTab === 'analytics'
-                        ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <BarChart3 className={`w-4 h-4 shrink-0 ${currentTab === 'analytics' ? 'text-white' : 'text-emerald-500'}`} />
-                    <span>Live Analytics</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleNavClick('lms')}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                      currentTab === 'lms'
-                        ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <Globe className={`w-4 h-4 shrink-0 ${currentTab === 'lms' ? 'text-white' : 'text-purple-500'}`} />
-                    <span>LMS & SCORM API</span>
-                  </button>
+                    );
+                  })}
                 </div>
-              )}
-            </div>
+              ))}
+            </nav>
 
             {/* Slim Footer */}
             <div className="px-3.5 py-2.5 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between text-[10px] font-mono text-slate-400 dark:text-slate-500 bg-slate-50/70 dark:bg-[#070b14]/60">
               <span>{isPinned ? 'Pinned Mode' : 'Auto-hide (3.5s)'}</span>
-              <kbd className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px]">
+              <button
+                type="button"
+                onClick={handleTogglePin}
+                className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px] hover:border-blue-400 dark:hover:border-cyan-500/60 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                title="Toggle Pin Mode (Ctrl+B)"
+              >
                 Ctrl+B
-              </kbd>
+              </button>
             </div>
-          </>
+          </div>
         ) : (
           /* Collapsed Auto-Hide Icon Rail (Desktop) */
-          <div className="flex flex-col items-center h-full py-3.5">
+          <div className="relative z-10 flex flex-col items-center h-full py-3.5">
             {/* Top Brand Symbol */}
             <div className="w-full flex justify-center pb-3.5 border-b border-slate-200/80 dark:border-slate-800/80">
               <button
+                type="button"
                 onClick={() => handleNavClick('courses')}
-                className="relative flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 text-white shadow-lg shadow-blue-500/25 ring-1 ring-white/20 hover:scale-105 transition-transform"
-                title="Netplus Academy (Hover rail to expand)"
+                onMouseEnter={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setRailTooltip({ label: 'Netplus Academy Home', top: rect.top + rect.height / 2 });
+                }}
+                onMouseLeave={() => setRailTooltip(null)}
+                className="relative flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 text-white shadow-lg shadow-blue-500/25 ring-1 ring-white/20 hover:scale-105 active:scale-95 transition-transform duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 aria-label="Netplus Academy Home"
               >
                 <Network className="w-5 h-5 text-white" />
@@ -592,35 +666,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             {/* Menu Symbol Icons Column */}
-            <div className="flex-1 w-full overflow-y-auto py-3.5 flex flex-col items-center gap-2">
+            <div className="flex-1 w-full overflow-y-auto py-3.5 flex flex-col items-center gap-1.5">
               {railNavItems.map(item => {
                 const Icon = item.icon;
-                const isActive =
-                  item.id === 'accounts'
-                    ? currentTab === 'management' && managementSubTab === 'accounts'
-                    : item.id === 'invite-instructors'
-                    ? currentTab === 'management' && managementSubTab === 'invite-instructors'
-                    : item.id === 'invite-students'
-                    ? currentTab === 'management' && managementSubTab === 'invite-students'
-                    : item.id === 'management'
-                    ? currentTab === 'management' && (managementSubTab === 'courses' || managementSubTab === 'progress')
-                    : currentTab === item.id;
+                const isActive = isNavItemActive(item.id);
                 return (
                   <button
                     key={item.id}
+                    type="button"
                     onClick={() => handleNavClick(item.id)}
-                    title={item.label}
+                    onMouseEnter={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setRailTooltip({ label: item.label, top: rect.top + rect.height / 2 });
+                    }}
+                    onMouseLeave={() => setRailTooltip(null)}
                     aria-label={item.label}
-                    className={`relative flex items-center justify-center w-12 h-11 rounded-2xl transition-all ${
+                    className={`group/rail relative flex items-center justify-center w-11 h-11 rounded-xl border transition-[transform,background-color,border-color,color,box-shadow] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                       isActive
-                        ? 'bg-gradient-to-tr from-indigo-600 via-blue-600 to-violet-500 text-white shadow-lg shadow-indigo-500/35'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/70'
+                        ? 'bg-slate-900 dark:bg-gradient-to-tr dark:from-indigo-600 dark:to-blue-600 text-white border-slate-900 dark:border-indigo-400/30 shadow-md shadow-slate-900/15 dark:shadow-indigo-500/30'
+                        : 'border-transparent text-slate-500 dark:text-slate-400 hover:scale-105 hover:text-slate-950 dark:hover:text-white hover:bg-slate-100/95 dark:hover:bg-slate-800/80 hover:border-slate-200/80 dark:hover:border-slate-700/70 hover:shadow-xs'
                     }`}
                   >
-                    <Icon className="w-[18px] h-[18px]" />
-                    {item.dot && !isActive && (
-                      <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-indigo-500 dark:bg-indigo-400 ring-2 ring-white dark:ring-[#090e1a]" />
-                    )}
+                    <Icon className="w-[18px] h-[18px] transition-transform duration-150 group-hover/rail:scale-110" />
                   </button>
                 );
               })}
@@ -629,17 +696,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Bottom Rail Controls (Expand & Pin) */}
             <div className="w-full pt-3 border-t border-slate-200/80 dark:border-slate-800/80 flex flex-col items-center gap-1.5">
               <button
+                type="button"
                 onClick={handleExpandSidebar}
-                className="p-2 rounded-xl text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-colors"
-                title="Expand Sidebar"
+                onMouseEnter={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setRailTooltip({ label: 'Expand Sidebar', top: rect.top + rect.height / 2 });
+                }}
+                onMouseLeave={() => setRailTooltip(null)}
+                className="p-2.5 rounded-xl text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:scale-105 active:scale-95 transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 aria-label="Expand Sidebar"
               >
                 <PanelLeftOpen className="w-4 h-4" />
               </button>
               <button
+                type="button"
                 onClick={handleTogglePin}
-                className="p-2 rounded-xl text-slate-400 hover:text-blue-600 dark:hover:text-cyan-300 hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-colors"
-                title="Pin Sidebar Open (Ctrl+B)"
+                onMouseEnter={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setRailTooltip({ label: 'Pin Sidebar Open (Ctrl+B)', top: rect.top + rect.height / 2 });
+                }}
+                onMouseLeave={() => setRailTooltip(null)}
+                className="p-2.5 rounded-xl text-slate-400 hover:text-blue-600 dark:hover:text-cyan-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:scale-105 active:scale-95 transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 aria-label="Pin Sidebar Open"
               >
                 <Pin className="w-4 h-4" />
@@ -648,6 +725,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
       </aside>
+
+      {/* Instant Floating Hover Tooltip for Collapsed Rail (positioned at viewport layer so scrollbars never clip it) */}
+      {!isExpandedView && railTooltip && (
+        <div
+          role="tooltip"
+          style={{ top: railTooltip.top }}
+          className="hidden lg:flex fixed left-[82px] -translate-y-1/2 z-50 pointer-events-none items-center px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-semibold border border-slate-800 dark:border-slate-700 shadow-lg whitespace-nowrap transition-opacity duration-150"
+        >
+          {railTooltip.label}
+        </div>
+      )}
 
       {/* Global Quick Search / Command Palette Modal */}
       {commandPaletteOpen && (
@@ -674,6 +762,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 return (
                   <button
                     key={item.id}
+                    type="button"
                     onClick={() => {
                       handleNavClick(item.id);
                       setCommandPaletteOpen(false);
@@ -681,7 +770,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     className="w-full p-2.5 rounded-xl flex items-center justify-between hover:bg-slate-100 dark:hover:bg-slate-800/60 text-left transition-colors group"
                   >
                     <div className="flex items-center gap-2.5">
-                      <div className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-cyan-400">
+                      <div className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-cyan-400 transition-transform duration-150 group-hover:scale-105">
                         <Icon className="w-4 h-4" />
                       </div>
                       <div>
