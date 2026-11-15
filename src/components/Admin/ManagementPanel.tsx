@@ -37,6 +37,7 @@ import {
 import { useAcademy } from '../../context/AcademyContext';
 import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
 import { CourseModuleBuilder } from './CourseModuleBuilder';
+import { CourseThumbnail } from '../Courses/CourseThumbnail';
 import {
   Course,
   CourseEnrollment,
@@ -2259,10 +2260,11 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                   <div className="space-y-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-start gap-3 min-w-0">
-                        <img
-                          src={course.thumbnail || 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800'}
-                          alt={course.title}
-                          className="w-20 h-14 rounded-xl object-cover shrink-0 bg-slate-950 border border-slate-200 dark:border-slate-800"
+                        <CourseThumbnail
+                          course={course}
+                          showScrim={false}
+                          compactPortrait={true}
+                          className="w-24 h-16 rounded-xl shrink-0 border border-slate-200 dark:border-slate-800"
                         />
                         <div className="min-w-0">
                           <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono text-[10px] font-bold">
@@ -2628,14 +2630,21 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                 />
                 {courseForm.thumbnail && (
                   <div className="mt-2 relative rounded-xl overflow-hidden aspect-video border border-slate-200 dark:border-slate-700 max-w-xs bg-slate-950">
-                    <img
-                      src={courseForm.thumbnail}
-                      alt="Thumbnail Preview"
-                      className="w-full h-full object-cover"
-                    />
-                    <span className="absolute bottom-2 left-2 text-[10px] font-mono bg-slate-900/80 backdrop-blur-md text-white px-2 py-0.5 rounded">
-                      Live Preview
-                    </span>
+                    <CourseThumbnail
+                      course={{
+                        id: editingCourseId || 'preview-course',
+                        code: courseForm.code || 'NEW-COURSE',
+                        title: courseForm.title || 'Thumbnail Preview',
+                        category: courseForm.category,
+                        bannerColor: 'from-blue-700 via-indigo-800 to-slate-900',
+                        thumbnail: courseForm.thumbnail
+                      }}
+                      className="w-full h-full"
+                    >
+                      <span className="absolute bottom-2 left-2 z-10 text-[10px] font-mono bg-slate-900/80 backdrop-blur-md text-white px-2 py-0.5 rounded">
+                        Live Preview
+                      </span>
+                    </CourseThumbnail>
                   </div>
                 )}
               </div>

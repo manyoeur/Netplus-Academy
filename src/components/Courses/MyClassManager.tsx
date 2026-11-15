@@ -40,7 +40,12 @@ import {
   CourseClass,
   SubscriptionTier
 } from '../../types';
-import { addDaysToIsoDate, formatEnrollmentDate, getTodayIsoDate } from '../../utils/enrollmentDates';
+import {
+  addDaysToIsoDate,
+  formatEnrollmentDate,
+  getEnrollmentExpirationInfo,
+  getTodayIsoDate
+} from '../../utils/enrollmentDates';
 
 interface MyClassManagerProps {
   onOpenCoursePlayer?: (courseId: string) => void;
@@ -136,6 +141,7 @@ export const MyClassManager: React.FC<MyClassManagerProps> = ({ onOpenCoursePlay
     type: 'success' | 'error';
     text: string;
   } | null>(null);
+  const [pageExportNotice, setPageExportNotice] = useState<string | null>(null);
 
   // Attendance Tab State
   const [attendanceDate, setAttendanceDate] = useState(getTodayIsoDate());
@@ -577,54 +583,109 @@ export const MyClassManager: React.FC<MyClassManagerProps> = ({ onOpenCoursePlay
     });
   };
 
-  const handleExportRosterCsvForClass = (cls: CourseClass) => {
-    const courseObj = courses.find(c => c.id === cls.courseId);
-    const roster = cls.enrolledStudentIds
-      .map(id => allUsers.find(u => u.id === id))
-      .filter((u): u is NonNullable<typeof u> => Boolean(u));
+  const escapeCsvCell = (value: unknown): string => {
+    const str = String(value ?? '');
+    return `"${str.replace(/"/g, '""')}"`;
+  };
 
+  const buildCsvRowsForClasses = (targetClasses: CourseClass[]): string[] => {
+    const rows: string[] = [];
+    targetClasses.forEach(cls => {
+      const courseObj = courses.find(c => c.id === cls.courseId);
+      const roster = cls.enrolledStudentIds
+        .map(id => allUsers.find(u => u.id === id))
+        .filter((u): u is NonNullable<typeof u> => Boolean(u));
+
+      const totalModules = courseObj?.modules.length || 0;
+      roster.forEach(student => {
+        const doneModules = courseObj
+          ? courseObj.modules.filter(m => student.completedModuleIds.includes(m.id)).length
+          : 0;
+        const progressPct = totalModules > 0 ? Math.round((doneModules / totalModules) * 100) : 0;
+        const attendanceRate = getStudentAttendanceRate(cls, student.id);
+        const dates = student.courseEnrollments?.[cls.courseId] || {
+          courseId: cls.courseId,
+          startDate: cls.startDate,
+          endDate: cls.endDate,
+          expiresAt: cls.expiresAt
+        };
+        const expInfo = getEnrollmentExpirationInfo(dates);
+
+        rows.push(
+          [
+            escapeCsvCell(cls.name),
+            escapeCsvCell(cls.sectionCode),
+            escapeCsvCell(cls.courseCode),
+            escapeCsvCell(cls.courseTitle),
+            escapeCsvCell(cls.deliveryType || 'Instructor-led'),
+            escapeCsvCell(cls.language || 'English'),
+            escapeCsvCell(cls.instructorName),
+            escapeCsvCell(student.name),
+            escapeCsvCell(student.email),
+            escapeCsvCell(expInfo.statusLabel),
+            escapeCsvCell(doneModules),
+            escapeCsvCell(totalModules),
+            escapeCsvCell(progressPct),
+            escapeCsvCell(attendanceRate !== null ? attendanceRate : 'N/A'),
+            escapeCsvCell(dates.startDate),
+            escapeCsvCell(dates.expiresAt)
+          ].join(',')
+        );
+      });
+    });
+    return rows;
+  };
+
+  const downloadCsvFile = (filename: string, rows: string[]) => {
     const header = [
-      'Student Name',
-      'Email',
+      'Class Name',
       'Section Code',
       'Course Code',
+      'Course Title',
+      'Delivery Type',
+      'Language',
+      'Instructor',
+      'Student Name',
+      'Student Email',
+      'Enrollment Status',
+      'Completed Modules',
+      'Total Modules',
       'Progress %',
       'Attendance %',
       'Start Date',
       'Expiration Date'
     ];
-
-    const totalModules = courseObj?.modules.length || 1;
-    const rows = roster.map(student => {
-      const doneModules = courseObj
-        ? courseObj.modules.filter(m => student.completedModuleIds.includes(m.id)).length
-        : 0;
-      const progressPct = Math.round((doneModules / totalModules) * 100);
-      const attendanceRate = getStudentAttendanceRate(cls, student.id);
-      const dates = student.courseEnrollments?.[cls.courseId];
-      return [
-        `"${student.name.replace(/"/g, '""')}"`,
-        `"${student.email}"`,
-        `"${cls.sectionCode}"`,
-        `"${cls.courseCode}"`,
-        String(progressPct),
-        attendanceRate !== null ? String(attendanceRate) : 'N/A',
-        dates?.startDate || cls.startDate,
-        dates?.expiresAt || cls.expiresAt
-      ].join(',');
-    });
-
-    const csvContent = [header.join(','), ...rows].join('\n');
+    const csvContent = `\uFEFF${[header.map(escapeCsvCell).join(','), ...rows].join('\n')}`;
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${cls.sectionCode.toLowerCase()}-roster.csv`;
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportRosterCsvForClass = (cls: CourseClass) => {
+    const rows = buildCsvRowsForClasses([cls]);
+    downloadCsvFile(`${cls.sectionCode.toLowerCase()}-enrollment-list.csv`, rows);
     setOpenMenuClassId(null);
+    const msg = `Exported ${rows.length} student enrollment record${rows.length === 1 ? '' : 's'} for ${cls.sectionCode}.`;
+    setPageExportNotice(msg);
+    if (activeModalClass?.id === cls.id) {
+      setActionFeedback({ type: 'success', text: msg });
+    }
+    window.setTimeout(() => setPageExportNotice(null), 5000);
+  };
+
+  const handleExportAllFilteredEnrollmentsCsv = () => {
+    const rows = buildCsvRowsForClasses(filteredClasses);
+    const today = getTodayIsoDate();
+    downloadCsvFile(`my-class-enrollments-${today}.csv`, rows);
+    const msg = `Exported ${rows.length} student enrollment record${rows.length === 1 ? '' : 's'} across ${filteredClasses.length} class${filteredClasses.length === 1 ? '' : 'es'}.`;
+    setPageExportNotice(msg);
+    window.setTimeout(() => setPageExportNotice(null), 5000);
   };
 
   const handleCopyText = (key: string, text: string) => {
@@ -670,6 +731,16 @@ export const MyClassManager: React.FC<MyClassManagerProps> = ({ onOpenCoursePlay
         <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
+            onClick={handleExportAllFilteredEnrollmentsCsv}
+            disabled={filteredClasses.every(c => c.enrolledStudentIds.length === 0)}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-45 disabled:cursor-not-allowed text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
+          >
+            <Download className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Export Enrollments CSV</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setShowCreateCourseModal(true)}
             className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
           >
@@ -688,6 +759,22 @@ export const MyClassManager: React.FC<MyClassManagerProps> = ({ onOpenCoursePlay
           </button>
         </div>
       </div>
+
+      {pageExportNotice && (
+        <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs font-medium text-emerald-700 dark:text-emerald-300 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>{pageExportNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPageExportNotice(null)}
+            className="p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Course Ownership Alert if Instructor has 0 courses */}
       {ownedCourses.length === 0 && (
