@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { CourseCatalog } from './components/Courses/CourseCatalog';
 import { CoursePlayer } from './components/Courses/CoursePlayer';
+import { MyClassManager } from './components/Courses/MyClassManager';
 import { StudentDashboard } from './components/Dashboard/StudentDashboard';
 import { InteractiveCliTerminal } from './components/Lab/InteractiveCliTerminal';
 import { SubnettingCalculator } from './components/Lab/SubnettingCalculator';
@@ -212,6 +213,11 @@ const AcademyApp: React.FC = () => {
           <CertificateViewer
             onSelectCourseToEarn={() => setCurrentTab('courses')}
           />
+        )}
+
+        {/* My Class (Admin & Instructor Class & Enrollment Workspace) */}
+        {currentTab === 'my-class' && (
+          <MyClassManager onOpenCoursePlayer={handleSelectCourse} />
         )}
 
         {/* Admin Management Panel */}

@@ -1,4 +1,4 @@
-import { Course, User, ForumPost, StudentProgressRecord, LMSConfig, NotificationItem, RealtimeActivityItem } from '../types';
+import { Course, CourseClass, User, ForumPost, StudentProgressRecord, LMSConfig, NotificationItem, RealtimeActivityItem } from '../types';
 import thumbRouting from '../assets/images/course_thumb_routing_1794636856652.jpg';
 import thumbSecurity from '../assets/images/course_thumb_security_1794636856867.jpg';
 import thumbCloud from '../assets/images/course_thumb_cloud_1794636857791.jpg';
@@ -130,6 +130,8 @@ export const INITIAL_COURSES: Course[] = [
       'Analyze end-to-end packet flow through switches and routing hops'
     ],
     isPublished: true,
+    createdById: 'user-instructor-1',
+    createdByEmail: 'marcus.vance@netplus.academy',
     updatedAt: '2026-10-18',
     defaultAccessDays: 180,
     modules: [
@@ -394,6 +396,8 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
       'Uncover stealthy port scans, DNS exfiltration, and cleartext credential leaks'
     ],
     isPublished: true,
+    createdById: 'user-instructor-1',
+    createdByEmail: 'marcus.vance@netplus.academy',
     updatedAt: '2026-10-08',
     defaultAccessDays: 120,
     modules: [
@@ -703,5 +707,81 @@ export const INITIAL_NOTIFICATIONS: NotificationItem[] = [
       to: 'alex.rivera@student.netplus.io',
       bodyHtml: `<p>Payment of $29.00 USD processed successfully via card ending in 4242.</p>`
     }
+  }
+];
+
+export const INITIAL_CLASSES: CourseClass[] = [
+  {
+    id: 'class-ccna-fall-26',
+    name: 'CCNA Enterprise Cohort · Fall 2026 (Evening)',
+    sectionCode: 'CCNA-26F-A',
+    joinCode: 'CLS-CCNA-26FA',
+    enrollmentOpen: true,
+    meetingUrl: 'https://meet.netplus.academy/ccna-26f-a',
+    deliveryType: 'Instructor-led',
+    language: 'English',
+    pinned: false,
+    courseId: 'course-ccna-1',
+    courseCode: 'CCNA-200-301',
+    courseTitle: 'Enterprise Routing, Switching & Network Fundamentals',
+    instructorId: 'user-instructor-1',
+    instructorName: 'Dr. Marcus Vance',
+    instructorEmail: 'marcus.vance@netplus.academy',
+    instructorAvatar: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=256&q=80',
+    scheduleLabel: 'Tue & Thu · 18:30–20:30 UTC',
+    startDate: '2026-08-20',
+    endDate: '2026-11-24',
+    expiresAt: '2026-11-25',
+    maxSeats: 30,
+    enrolledStudentIds: ['user-student-1'],
+    invitedEmails: [],
+    announcements: [
+      {
+        id: 'ann-ccna-1',
+        title: 'OSPF Area 0 Multi-Router Lab Check-In',
+        message: 'Please complete Module 3 CLI topology verification before Thursday live troubleshooting Q&A.',
+        category: 'lab',
+        pinned: true,
+        authorName: 'Dr. Marcus Vance',
+        createdAt: '2026-11-12 14:30'
+      }
+    ],
+    attendanceRecords: {
+      '2026-11-10': { 'user-student-1': 'present' },
+      '2026-11-12': { 'user-student-1': 'present' }
+    },
+    notes: 'Live Cisco IOS Packet Tracer topology walkthroughs + weekly OSPF labs.',
+    status: 'active',
+    createdAt: '2026-08-15'
+  },
+  {
+    id: 'class-ws-boot-26',
+    name: 'Deep Packet Forensics Lab Section B',
+    sectionCode: 'PCAP-26-B',
+    joinCode: 'CLS-PCAP-26B',
+    enrollmentOpen: true,
+    meetingUrl: 'https://meet.netplus.academy/pcap-26-b',
+    deliveryType: 'Self-paced',
+    language: 'English',
+    pinned: false,
+    courseId: 'course-wireshark-1',
+    courseCode: 'WIRESHARK-101',
+    courseTitle: 'Deep Packet Forensics & TCP/IP Protocol Analysis',
+    instructorId: 'user-instructor-1',
+    instructorName: 'Dr. Marcus Vance',
+    instructorEmail: 'marcus.vance@netplus.academy',
+    instructorAvatar: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=256&q=80',
+    scheduleLabel: 'Sat · 14:00–16:30 UTC',
+    startDate: '2026-10-20',
+    endDate: '2027-02-17',
+    expiresAt: '2027-02-17',
+    maxSeats: 25,
+    enrolledStudentIds: [],
+    invitedEmails: [],
+    announcements: [],
+    attendanceRecords: {},
+    notes: 'Hands-on PCAP dissection and Wireshark display filter drills.',
+    status: 'active',
+    createdAt: '2026-10-12'
   }
 ];

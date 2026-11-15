@@ -149,9 +149,54 @@ export interface Course {
   learningOutcomes: string[];
   modules: CourseModule[];
   gradingCriteria?: CourseGradingCriteria;
+  createdById?: string;
+  createdByEmail?: string;
   isPublished: boolean;
   updatedAt: string;
   defaultAccessDays?: number;
+}
+
+export type AttendanceStatus = 'present' | 'late' | 'absent';
+
+export interface ClassAnnouncement {
+  id: string;
+  title: string;
+  message: string;
+  category: 'general' | 'lab' | 'deadline' | 'live_session';
+  pinned?: boolean;
+  authorName: string;
+  createdAt: string;
+}
+
+export interface CourseClass {
+  id: string;
+  name: string;
+  sectionCode: string;
+  joinCode?: string;
+  enrollmentOpen?: boolean;
+  meetingUrl?: string;
+  deliveryType?: 'Instructor-led' | 'Self-paced';
+  language?: string;
+  pinned?: boolean;
+  courseId: string;
+  courseCode: string;
+  courseTitle: string;
+  instructorId: string;
+  instructorName: string;
+  instructorEmail: string;
+  instructorAvatar?: string;
+  scheduleLabel: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+  expiresAt: string; // YYYY-MM-DD
+  maxSeats: number;
+  enrolledStudentIds: string[];
+  invitedEmails: string[];
+  announcements?: ClassAnnouncement[];
+  attendanceRecords?: Record<string, Record<string, AttendanceStatus>>;
+  notes?: string;
+  status: 'active' | 'upcoming' | 'completed';
+  createdAt: string;
 }
 
 export interface Certificate {

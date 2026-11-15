@@ -12,7 +12,10 @@ import {
   SubscriptionTier,
   CourseModule,
   Invitation,
-  CourseEnrollment
+  CourseEnrollment,
+  CourseClass,
+  ClassAnnouncement,
+  AttendanceStatus
 } from '../types';
 import { createDefaultCourseEnrollment } from '../utils/enrollmentDates';
 import {
@@ -41,7 +44,8 @@ import {
   INITIAL_STUDENT_PROGRESS, 
   INITIAL_REALTIME_ACTIVITY, 
   INITIAL_LMS_CONFIGS, 
-  INITIAL_NOTIFICATIONS 
+  INITIAL_NOTIFICATIONS,
+  INITIAL_CLASSES
 } from '../data/mockData';
 
 interface AcademyContextType {
@@ -123,6 +127,61 @@ interface AcademyContextType {
   deleteModuleFromCourse: (courseId: string, moduleId: string) => void;
   reorderModuleInCourse: (courseId: string, moduleId: string, direction: 'up' | 'down') => void;
   setCourseModulesOrder: (courseId: string, modules: CourseModule[]) => void;
+
+  // Classes & Instructor My Class Management
+  classes: CourseClass[];
+  getOwnedCoursesForUser: (user?: User) => Course[];
+  createClass: (params: {
+    name: string;
+    sectionCode?: string;
+    courseId: string;
+    scheduleLabel: string;
+    startDate: string;
+    endDate: string;
+    maxSeats: number;
+    deliveryType?: 'Instructor-led' | 'Self-paced';
+    language?: string;
+    meetingUrl?: string;
+    notes?: string;
+  }) => { success: boolean; courseClass?: CourseClass; error?: string };
+  updateClass: (
+    classId: string,
+    updates: Partial<Omit<CourseClass, 'id' | 'courseId' | 'courseCode' | 'courseTitle'>>
+  ) => void;
+  deleteClass: (classId: string) => void;
+  enrollStudentInClass: (
+    classId: string,
+    student: { existingUserId?: string; name?: string; email?: string }
+  ) => { success: boolean; error?: string };
+  removeStudentFromClass: (classId: string, studentId: string) => void;
+  inviteStudentsToClass: (
+    classId: string,
+    entries: Array<{ fullName: string; email: string }>,
+    subscriptionTier: SubscriptionTier,
+    welcomeNote?: string
+  ) => Invitation[];
+  addClassAnnouncement: (
+    classId: string,
+    params: {
+      title: string;
+      message: string;
+      category: ClassAnnouncement['category'];
+      pinned?: boolean;
+    }
+  ) => void;
+  togglePinClassAnnouncement: (classId: string, announcementId: string) => void;
+  deleteClassAnnouncement: (classId: string, announcementId: string) => void;
+  markClassAttendance: (
+    classId: string,
+    sessionDate: string,
+    studentId: string,
+    status: AttendanceStatus
+  ) => void;
+  markAllClassAttendance: (
+    classId: string,
+    sessionDate: string,
+    status: AttendanceStatus
+  ) => void;
   
   // Certificates
   generateCertificate: (courseId: string) => Certificate;
@@ -529,6 +588,11 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
   });
 
+  const [classes, setClasses] = useState<CourseClass[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}classes`);
+    return saved ? JSON.parse(saved) : INITIAL_CLASSES;
+  });
+
   // Save changes to localStorage for offline cache
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}users`, JSON.stringify(allUsers));
@@ -557,6 +621,10 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}lms_configs`, JSON.stringify(lmsConfigs));
   }, [lmsConfigs]);
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}classes`, JSON.stringify(classes));
+  }, [classes]);
 
   // Periodic heartbeat simulation for real-time progress & activity updates
   useEffect(() => {
@@ -1322,10 +1390,15 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const addCourse = (newCourse: Course) => {
-    setCourses(prev => [newCourse, ...prev]);
+    const courseWithOwner: Course = {
+      ...newCourse,
+      createdById: newCourse.createdById || currentUser.id,
+      createdByEmail: newCourse.createdByEmail || currentUser.email
+    };
+    setCourses(prev => [courseWithOwner, ...prev]);
     triggerSystemNotification(
-      `New Course Published: ${newCourse.code}`,
-      `${newCourse.title} has been added to the academy catalog.`,
+      `New Course Published: ${courseWithOwner.code}`,
+      `${courseWithOwner.title} has been added to the academy catalog.`,
       'course'
     );
   };
@@ -1455,6 +1528,421 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
           : c
       )
+    );
+  };
+
+  // Ownership helper: Admins can access all courses; Instructors only courses they created
+  const getOwnedCoursesForUser = (user: User = currentUser): Course[] => {
+    if (user.role === 'admin') return courses;
+    if (user.role !== 'instructor') return [];
+    const normalizedEmail = user.email.trim().toLowerCase();
+    const normalizedName = user.name.trim().toLowerCase();
+    return courses.filter(c => {
+      if (c.createdById && c.createdById === user.id) return true;
+      if (c.createdByEmail && c.createdByEmail.trim().toLowerCase() === normalizedEmail) return true;
+      if (!c.createdById && c.instructor?.name?.trim().toLowerCase() === normalizedName) return true;
+      return false;
+    });
+  };
+
+  const createClass = (params: {
+    name: string;
+    sectionCode?: string;
+    courseId: string;
+    scheduleLabel: string;
+    startDate: string;
+    endDate: string;
+    maxSeats: number;
+    deliveryType?: 'Instructor-led' | 'Self-paced';
+    language?: string;
+    meetingUrl?: string;
+    notes?: string;
+  }): { success: boolean; courseClass?: CourseClass; error?: string } => {
+    if (currentUser.role !== 'admin' && currentUser.role !== 'instructor') {
+      return { success: false, error: 'Only admins and instructors can create classes.' };
+    }
+
+    const ownedCourses = getOwnedCoursesForUser(currentUser);
+    const targetCourse = ownedCourses.find(c => c.id === params.courseId);
+    if (!targetCourse) {
+      return {
+        success: false,
+        error: 'Instructors can only create classes for courses they have created.'
+      };
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const startDate = params.startDate || today;
+    const endDate = params.endDate && params.endDate >= startDate ? params.endDate : startDate;
+    const autoSection =
+      params.sectionCode?.trim().toUpperCase() ||
+      `${targetCourse.code.split('-')[0]}-${Math.floor(100 + Math.random() * 900)}`;
+
+    const status: CourseClass['status'] =
+      startDate > today ? 'upcoming' : endDate < today ? 'completed' : 'active';
+
+    const newClass: CourseClass = {
+      id: `class-${Date.now()}`,
+      name: params.name.trim(),
+      sectionCode: autoSection,
+      joinCode: `CLS-${autoSection.replace(/[^A-Z0-9]/g, '')}`,
+      enrollmentOpen: true,
+      deliveryType: params.deliveryType || 'Instructor-led',
+      language: params.language?.trim() || 'English',
+      pinned: false,
+      meetingUrl: params.meetingUrl?.trim() || undefined,
+      courseId: targetCourse.id,
+      courseCode: targetCourse.code,
+      courseTitle: targetCourse.title,
+      instructorId: currentUser.id,
+      instructorName: currentUser.name,
+      instructorEmail: currentUser.email,
+      instructorAvatar: currentUser.avatar,
+      scheduleLabel: params.scheduleLabel.trim() || 'Flexible Self-Paced + Weekly Live Q&A',
+      startDate,
+      endDate,
+      expiresAt: endDate,
+      maxSeats: Math.max(1, Number(params.maxSeats) || 30),
+      enrolledStudentIds: [],
+      invitedEmails: [],
+      announcements: [],
+      attendanceRecords: {},
+      notes: params.notes?.trim() || undefined,
+      status,
+      createdAt: today
+    };
+
+    setClasses(prev => [newClass, ...prev]);
+    triggerSystemNotification(
+      `Class Created: ${newClass.sectionCode}`,
+      `${newClass.name} created under ${targetCourse.code} (${startDate} – ${endDate}).`,
+      'course'
+    );
+    return { success: true, courseClass: newClass };
+  };
+
+  const updateClass = (
+    classId: string,
+    updates: Partial<Omit<CourseClass, 'id' | 'courseId' | 'courseCode' | 'courseTitle'>>
+  ) => {
+    setClasses(prev =>
+      prev.map(cls => {
+        if (cls.id !== classId) return cls;
+        const nextEndDate = updates.endDate || updates.expiresAt || cls.endDate;
+        const nextStartDate = updates.startDate || cls.startDate;
+        const today = new Date().toISOString().split('T')[0];
+        const nextStatus: CourseClass['status'] =
+          updates.status ||
+          (nextStartDate > today ? 'upcoming' : nextEndDate < today ? 'completed' : 'active');
+        return {
+          ...cls,
+          ...updates,
+          startDate: nextStartDate,
+          endDate: nextEndDate,
+          expiresAt: nextEndDate,
+          status: nextStatus
+        };
+      })
+    );
+  };
+
+  const deleteClass = (classId: string) => {
+    setClasses(prev => prev.filter(c => c.id !== classId));
+  };
+
+  const enrollStudentInClass = (
+    classId: string,
+    student: { existingUserId?: string; name?: string; email?: string }
+  ): { success: boolean; error?: string } => {
+    const targetClass = classes.find(c => c.id === classId);
+    if (!targetClass) return { success: false, error: 'Class not found.' };
+    const targetCourse = courses.find(c => c.id === targetClass.courseId);
+    if (!targetCourse) return { success: false, error: 'Course not found.' };
+
+    if (currentUser.role === 'instructor' && targetClass.instructorId !== currentUser.id) {
+      const owned = getOwnedCoursesForUser(currentUser);
+      if (!owned.some(c => c.id === targetClass.courseId)) {
+        return { success: false, error: 'You can only manage classes for your own courses.' };
+      }
+    }
+
+    let resolvedUser = student.existingUserId
+      ? allUsers.find(u => u.id === student.existingUserId)
+      : undefined;
+
+    if (!resolvedUser && student.email) {
+      const cleanEmail = student.email.trim().toLowerCase();
+      resolvedUser = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const enrollmentWindow: CourseEnrollment = {
+      courseId: targetCourse.id,
+      startDate: targetClass.startDate,
+      endDate: targetClass.endDate,
+      expiresAt: targetClass.expiresAt
+    };
+
+    let targetStudentId = resolvedUser?.id || '';
+    let targetStudentName = resolvedUser?.name || student.name?.trim() || '';
+    let targetStudentEmail = resolvedUser?.email || student.email?.trim().toLowerCase() || '';
+    let targetStudentAvatar =
+      resolvedUser?.avatar ||
+      `https://images.unsplash.com/photo-${1530000000000 + Math.floor(Math.random() * 50000)}?auto=format&fit=crop&w=256&q=80`;
+
+    if (!resolvedUser) {
+      if (!targetStudentEmail) {
+        return { success: false, error: 'Please select a student or provide a valid email address.' };
+      }
+      if (!targetStudentName) {
+        targetStudentName = targetStudentEmail.split('@')[0];
+      }
+      targetStudentId = `user-${Date.now()}`;
+      const newStudent: User = {
+        id: targetStudentId,
+        name: targetStudentName,
+        email: targetStudentEmail,
+        role: 'student',
+        avatar: targetStudentAvatar,
+        subscription: { tier: 'pro', status: 'active' },
+        enrolledCourseIds: [targetCourse.id],
+        courseEnrollments: {
+          [targetCourse.id]: enrollmentWindow
+        },
+        completedModuleIds: [],
+        certificates: [],
+        joinedDate: today,
+        reputationPoints: 50
+      };
+      setAllUsers(prev => [...prev, newStudent]);
+    } else {
+      const alreadyEnrolledInCourse = resolvedUser.enrolledCourseIds.includes(targetCourse.id);
+      setAllUsers(prev =>
+        prev.map(u => {
+          if (u.id !== resolvedUser!.id) return u;
+          return {
+            ...u,
+            enrolledCourseIds: alreadyEnrolledInCourse
+              ? u.enrolledCourseIds
+              : [...u.enrolledCourseIds, targetCourse.id],
+            courseEnrollments: {
+              ...(u.courseEnrollments || {}),
+              [targetCourse.id]: enrollmentWindow
+            }
+          };
+        })
+      );
+    }
+
+    if (!targetClass.enrolledStudentIds.includes(targetStudentId)) {
+      setClasses(prev =>
+        prev.map(c =>
+          c.id === classId
+            ? { ...c, enrolledStudentIds: [...c.enrolledStudentIds, targetStudentId] }
+            : c
+        )
+      );
+    }
+
+    if (!resolvedUser || !resolvedUser.enrolledCourseIds.includes(targetCourse.id)) {
+      setCourses(prev =>
+        prev.map(c =>
+          c.id === targetCourse.id ? { ...c, enrolledCount: c.enrolledCount + 1 } : c
+        )
+      );
+    }
+
+    setStudentProgressList(prev => {
+      const existingProgress = prev.find(
+        p => p.studentId === targetStudentId && p.courseId === targetCourse.id
+      );
+      if (existingProgress) {
+        return prev.map(p =>
+          p.studentId === targetStudentId && p.courseId === targetCourse.id
+            ? {
+                ...p,
+                startDate: enrollmentWindow.startDate,
+                endDate: enrollmentWindow.endDate,
+                expiresAt: enrollmentWindow.expiresAt
+              }
+            : p
+        );
+      }
+      const newRecord: StudentProgressRecord = {
+        studentId: targetStudentId,
+        studentName: targetStudentName,
+        studentEmail: targetStudentEmail,
+        avatar: targetStudentAvatar,
+        courseId: targetCourse.id,
+        courseCode: targetCourse.code,
+        courseTitle: targetCourse.title,
+        progressPercent: 0,
+        completedModulesCount: 0,
+        totalModulesCount: targetCourse.modules.length,
+        quizAverage: 0,
+        lastActive: 'Just enrolled',
+        status: 'active',
+        timeSpentHours: 0,
+        startDate: enrollmentWindow.startDate,
+        endDate: enrollmentWindow.endDate,
+        expiresAt: enrollmentWindow.expiresAt
+      };
+      return [newRecord, ...prev];
+    });
+
+    triggerSystemNotification(
+      `Student Enrolled in ${targetClass.sectionCode}`,
+      `${targetStudentName} enrolled in ${targetClass.name} (${targetCourse.code}).`,
+      'course'
+    );
+    return { success: true };
+  };
+
+  const removeStudentFromClass = (classId: string, studentId: string) => {
+    setClasses(prev =>
+      prev.map(c =>
+        c.id === classId
+          ? { ...c, enrolledStudentIds: c.enrolledStudentIds.filter(id => id !== studentId) }
+          : c
+      )
+    );
+  };
+
+  const inviteStudentsToClass = (
+    classId: string,
+    entries: Array<{ fullName: string; email: string }>,
+    subscriptionTier: SubscriptionTier,
+    welcomeNote?: string
+  ): Invitation[] => {
+    const targetClass = classes.find(c => c.id === classId);
+    if (!targetClass) return [];
+
+    const created = createStudentInvites({
+      entries,
+      cohort: `${targetClass.name} (${targetClass.sectionCode})`,
+      assignedCourseIds: [targetClass.courseId],
+      subscriptionTier,
+      welcomeNote:
+        welcomeNote?.trim() ||
+        `You are invited to join class ${targetClass.name} (${targetClass.scheduleLabel}) running ${targetClass.startDate} to ${targetClass.endDate}.`
+    });
+
+    const newEmails = created.map(i => i.email.toLowerCase());
+    setClasses(prev =>
+      prev.map(c =>
+        c.id === classId
+          ? {
+              ...c,
+              invitedEmails: Array.from(new Set([...c.invitedEmails, ...newEmails]))
+            }
+          : c
+      )
+    );
+    return created;
+  };
+
+  const addClassAnnouncement = (
+    classId: string,
+    params: {
+      title: string;
+      message: string;
+      category: ClassAnnouncement['category'];
+      pinned?: boolean;
+    }
+  ) => {
+    const targetClass = classes.find(c => c.id === classId);
+    if (!targetClass) return;
+
+    const now = new Date();
+    const stamp = `${now.toISOString().split('T')[0]} ${now.toTimeString().slice(0, 5)}`;
+    const newAnnouncement: ClassAnnouncement = {
+      id: `ann-${Date.now()}`,
+      title: params.title.trim(),
+      message: params.message.trim(),
+      category: params.category,
+      pinned: Boolean(params.pinned),
+      authorName: currentUser.name,
+      createdAt: stamp
+    };
+
+    setClasses(prev =>
+      prev.map(cls =>
+        cls.id === classId
+          ? { ...cls, announcements: [newAnnouncement, ...(cls.announcements || [])] }
+          : cls
+      )
+    );
+
+    triggerSystemNotification(
+      `Class Announcement · ${targetClass.sectionCode}`,
+      `${newAnnouncement.title}: ${newAnnouncement.message.slice(0, 120)}`,
+      'course'
+    );
+  };
+
+  const togglePinClassAnnouncement = (classId: string, announcementId: string) => {
+    setClasses(prev =>
+      prev.map(cls =>
+        cls.id === classId
+          ? {
+              ...cls,
+              announcements: (cls.announcements || []).map(a =>
+                a.id === announcementId ? { ...a, pinned: !a.pinned } : a
+              )
+            }
+          : cls
+      )
+    );
+  };
+
+  const deleteClassAnnouncement = (classId: string, announcementId: string) => {
+    setClasses(prev =>
+      prev.map(cls =>
+        cls.id === classId
+          ? {
+              ...cls,
+              announcements: (cls.announcements || []).filter(a => a.id !== announcementId)
+            }
+          : cls
+      )
+    );
+  };
+
+  const markClassAttendance = (
+    classId: string,
+    sessionDate: string,
+    studentId: string,
+    status: AttendanceStatus
+  ) => {
+    setClasses(prev =>
+      prev.map(cls => {
+        if (cls.id !== classId) return cls;
+        const records = { ...(cls.attendanceRecords || {}) };
+        records[sessionDate] = {
+          ...(records[sessionDate] || {}),
+          [studentId]: status
+        };
+        return { ...cls, attendanceRecords: records };
+      })
+    );
+  };
+
+  const markAllClassAttendance = (
+    classId: string,
+    sessionDate: string,
+    status: AttendanceStatus
+  ) => {
+    setClasses(prev =>
+      prev.map(cls => {
+        if (cls.id !== classId) return cls;
+        const records = { ...(cls.attendanceRecords || {}) };
+        const dayMap: Record<string, AttendanceStatus> = { ...(records[sessionDate] || {}) };
+        cls.enrolledStudentIds.forEach(sid => {
+          dayMap[sid] = status;
+        });
+        records[sessionDate] = dayMap;
+        return { ...cls, attendanceRecords: records };
+      })
     );
   };
 
@@ -1780,6 +2268,19 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         deleteModuleFromCourse,
         reorderModuleInCourse,
         setCourseModulesOrder,
+        classes,
+        getOwnedCoursesForUser,
+        createClass,
+        updateClass,
+        deleteClass,
+        enrollStudentInClass,
+        removeStudentFromClass,
+        inviteStudentsToClass,
+        addClassAnnouncement,
+        togglePinClassAnnouncement,
+        deleteClassAnnouncement,
+        markClassAttendance,
+        markAllClassAttendance,
         generateCertificate,
         verifyCertificate,
         upgradeSubscription,

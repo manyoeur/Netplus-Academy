@@ -23,6 +23,7 @@ import {
   UserPlus,
   Users,
   UserCog,
+  GraduationCap,
   LucideIcon
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
@@ -379,6 +380,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ]
                 : []),
               {
+                id: 'my-class',
+                label: 'My Class',
+                icon: GraduationCap,
+                accentText: 'text-cyan-600 dark:text-cyan-400',
+                accentBg: 'bg-cyan-50 dark:bg-cyan-950/60',
+                accentBar: 'bg-cyan-500'
+              },
+              {
                 id: 'management',
                 label: 'Course Manager',
                 icon: Settings,
@@ -427,6 +436,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       : []),
     ...(isAdminOrInstructor
       ? [
+          { id: 'my-class', label: 'My Class · Classes, Attendance & Enrollment', category: 'Administration', icon: GraduationCap },
           { id: 'management', label: 'Admin Course Manager & Enrollment Telemetry', category: 'Administration', icon: Settings },
           { id: 'analytics', label: 'Real-Time Learner Activity Stream', category: 'Administration', icon: BarChart3 },
           { id: 'lms', label: 'External LMS (Canvas / Blackboard / SCORM)', category: 'Administration', icon: Globe }
