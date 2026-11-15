@@ -25,7 +25,8 @@ import {
   Ban,
   Send,
   GraduationCap,
-  ShieldCheck
+  ShieldCheck,
+  UserCog
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import {
@@ -35,10 +36,12 @@ import {
   InvitationStatus,
   ModuleType,
   QuizQuestion,
-  SubscriptionTier
+  SubscriptionTier,
+  User,
+  UserRole
 } from '../../types';
 
-type ManagementTab = 'courses' | 'progress' | 'invite-instructors' | 'invite-students';
+type ManagementTab = 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students';
 
 interface ManagementPanelProps {
   initialTab?: ManagementTab;
@@ -65,6 +68,10 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     reorderModuleInCourse,
     studentProgressList,
     currentUser,
+    allUsers,
+    refreshUsersDirectory,
+    updateUserAccount,
+    deleteUserAccount,
     triggerSystemNotification,
     invitations,
     createInstructorInvite,
@@ -75,15 +82,15 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
 
   const isAdmin = currentUser.role === 'admin';
 
-  // Tab: 'courses' | 'progress' | 'invite-instructors' | 'invite-students'
+  // Tab: 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students'
   const [activeTab, setActiveTab] = useState<ManagementTab>(
-    !isAdmin && (initialTab === 'invite-instructors' || initialTab === 'invite-students')
+    !isAdmin && (initialTab === 'accounts' || initialTab === 'invite-instructors' || initialTab === 'invite-students')
       ? 'courses'
       : initialTab
   );
 
   React.useEffect(() => {
-    if (!isAdmin && (initialTab === 'invite-instructors' || initialTab === 'invite-students')) {
+    if (!isAdmin && (initialTab === 'accounts' || initialTab === 'invite-instructors' || initialTab === 'invite-students')) {
       setActiveTab('courses');
     } else {
       setActiveTab(initialTab);
@@ -101,6 +108,108 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     setSaveToast(msg);
     window.setTimeout(() => setSaveToast(null), 3200);
   };
+
+  // User Accounts Management State (Admin)
+  const [accountSearch, setAccountSearch] = useState('');
+  const [accountRoleFilter, setAccountRoleFilter] = useState<'all' | UserRole>('all');
+  const [isSyncingUsers, setIsSyncingUsers] = useState(false);
+  const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
+  const [editingAccountUser, setEditingAccountUser] = useState<User | null>(null);
+  const [savingAccount, setSavingAccount] = useState(false);
+  const [accountForm, setAccountForm] = useState<{
+    name: string;
+    role: UserRole;
+    subscriptionTier: SubscriptionTier;
+    subscriptionStatus: User['subscription']['status'];
+    enrolledCourseIds: string[];
+  }>({
+    name: '',
+    role: 'student',
+    subscriptionTier: 'pro',
+    subscriptionStatus: 'active',
+    enrolledCourseIds: []
+  });
+
+  const handleSyncUsersDirectory = async () => {
+    setIsSyncingUsers(true);
+    try {
+      const syncedCount = await refreshUsersDirectory();
+      showToast(
+        syncedCount > 0
+          ? `Synced ${syncedCount} Firestore user record(s)`
+          : 'Directory refreshed from local & Firestore state'
+      );
+    } catch {
+      showToast('Unable to sync Firestore users right now');
+    } finally {
+      setIsSyncingUsers(false);
+    }
+  };
+
+  const openEditAccountModal = (user: User) => {
+    setEditingAccountUser(user);
+    setAccountForm({
+      name: user.name,
+      role: user.role,
+      subscriptionTier: user.subscription?.tier || 'free',
+      subscriptionStatus: user.subscription?.status || 'active',
+      enrolledCourseIds: [...(user.enrolledCourseIds || [])]
+    });
+  };
+
+  const handleSaveAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAccountUser || !accountForm.name.trim()) return;
+    setSavingAccount(true);
+    const isProtectedAdmin =
+      editingAccountUser.id === currentUser.id ||
+      editingAccountUser.email.toLowerCase() === 'yoeur.man2010@gmail.com';
+    try {
+      await updateUserAccount(editingAccountUser.id, {
+        name: accountForm.name.trim(),
+        role: isProtectedAdmin ? editingAccountUser.role : accountForm.role,
+        subscriptionTier: accountForm.subscriptionTier,
+        subscriptionStatus: accountForm.subscriptionStatus,
+        enrolledCourseIds: accountForm.enrolledCourseIds
+      });
+      showToast(`Updated account for ${accountForm.name.trim()}`);
+      setEditingAccountUser(null);
+    } finally {
+      setSavingAccount(false);
+    }
+  };
+
+  const handleQuickRoleChange = async (user: User, nextRole: UserRole) => {
+    if (user.id === currentUser.id || user.email.toLowerCase() === 'yoeur.man2010@gmail.com') {
+      return;
+    }
+    await updateUserAccount(user.id, { role: nextRole });
+    showToast(`Changed ${user.name}'s role to ${nextRole.toUpperCase()}`);
+  };
+
+  const handleConfirmDeleteAccount = async (user: User) => {
+    if (user.id === currentUser.id || user.email.toLowerCase() === 'yoeur.man2010@gmail.com') {
+      return;
+    }
+    await deleteUserAccount(user.id);
+    setConfirmDeleteUserId(null);
+    showToast(`Removed account for ${user.name}`);
+  };
+
+  const instructorAccountsCount = allUsers.filter(u => u.role === 'instructor').length;
+  const studentAccountsCount = allUsers.filter(u => u.role === 'student').length;
+  const adminAccountsCount = allUsers.filter(u => u.role === 'admin').length;
+
+  const filteredAccounts = allUsers.filter(u => {
+    const q = accountSearch.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      u.name.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      u.id.toLowerCase().includes(q);
+    const matchesRole = accountRoleFilter === 'all' || u.role === accountRoleFilter;
+    return matchesSearch && matchesRole;
+  });
 
   // Invite Instructors State
   const [instName, setInstName] = useState('');
@@ -658,14 +767,18 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
             <span className="text-xs text-slate-300">• Academy Management Console</span>
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight">
-            {activeTab === 'invite-instructors'
+            {activeTab === 'accounts'
+              ? 'Instructor & Student Account Directory'
+              : activeTab === 'invite-instructors'
               ? 'Instructor Onboarding & Faculty Invitations'
               : activeTab === 'invite-students'
               ? 'Student Registration & Cohort Invitations'
               : 'Curriculum Authoring & Live Enrollment Tracking'}
           </h1>
           <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-            {activeTab === 'invite-instructors'
+            {activeTab === 'accounts'
+              ? 'Inspect, filter, edit roles, adjust subscriptions, manage course assignments, and remove instructor or student accounts.'
+              : activeTab === 'invite-instructors'
               ? 'Issue verified faculty invitation codes and assign teaching courses separately from student cohort registrations.'
               : activeTab === 'invite-students'
               ? 'Send individual or bulk student registration invitations with pre-enrolled tracks and subscription tiers.'
@@ -721,6 +834,22 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
             <button
               onClick={() => {
                 setInviteFormError(null);
+                setConfirmDeleteUserId(null);
+                setActiveTab('accounts');
+              }}
+              className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-all ${
+                activeTab === 'accounts'
+                  ? 'border-cyan-600 text-cyan-600 dark:text-cyan-400 dark:border-cyan-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <UserCog className="w-4 h-4" />
+              <span>User Accounts ({allUsers.length})</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setInviteFormError(null);
                 setActiveTab('invite-instructors');
               }}
               className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-all ${
@@ -752,7 +881,259 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'invite-instructors' && isAdmin ? (
+      {activeTab === 'accounts' && isAdmin ? (
+        <div className="space-y-5">
+          {/* Account Summary KPI Strip */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+              <p className="text-[11px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Total Accounts
+              </p>
+              <p className="mt-1 text-2xl font-extrabold tabular-nums text-slate-900 dark:text-white">
+                {allUsers.length}
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+              <p className="text-[11px] font-mono uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                Instructors
+              </p>
+              <p className="mt-1 text-2xl font-extrabold tabular-nums text-slate-900 dark:text-white">
+                {instructorAccountsCount}
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+              <p className="text-[11px] font-mono uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                Students
+              </p>
+              <p className="mt-1 text-2xl font-extrabold tabular-nums text-slate-900 dark:text-white">
+                {studentAccountsCount}
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+              <p className="text-[11px] font-mono uppercase tracking-wider text-cyan-600 dark:text-cyan-400">
+                Administrators
+              </p>
+              <p className="mt-1 text-2xl font-extrabold tabular-nums text-slate-900 dark:text-white">
+                {adminAccountsCount}
+              </p>
+            </div>
+          </div>
+
+          {/* Search, Role Filter & Action Toolbar */}
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
+              <div className="relative w-full sm:w-80">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={accountSearch}
+                  onChange={(e) => setAccountSearch(e.target.value)}
+                  placeholder="Search by name, email, or user ID..."
+                  className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+              </div>
+
+              <div className="flex p-0.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-[11px] font-semibold overflow-x-auto">
+                {(['all', 'instructor', 'student', 'admin'] as const).map(roleOption => (
+                  <button
+                    key={roleOption}
+                    type="button"
+                    onClick={() => setAccountRoleFilter(roleOption)}
+                    className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
+                      accountRoleFilter === roleOption
+                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {roleOption === 'all'
+                      ? `All (${allUsers.length})`
+                      : roleOption === 'instructor'
+                      ? `Instructors (${instructorAccountsCount})`
+                      : roleOption === 'student'
+                      ? `Students (${studentAccountsCount})`
+                      : `Admins (${adminAccountsCount})`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSyncUsersDirectory}
+                disabled={isSyncingUsers}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:border-cyan-500 text-xs font-semibold transition-colors disabled:opacity-60 whitespace-nowrap"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingUsers ? 'animate-spin' : ''}`} />
+                <span>{isSyncingUsers ? 'Syncing...' : 'Sync Firestore'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('invite-instructors')}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors whitespace-nowrap"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>Invite Instructor</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('invite-students')}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors whitespace-nowrap"
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Invite Student</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Accounts Directory Table */}
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[11px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    <th className="py-3 px-4">Account</th>
+                    <th className="py-3 px-4">Role</th>
+                    <th className="py-3 px-4">Subscription</th>
+                    <th className="py-3 px-4">Courses</th>
+                    <th className="py-3 px-4">Joined</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                  {filteredAccounts.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-10 px-4 text-center text-slate-400">
+                        No accounts match your current search or role filter.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredAccounts.map(user => {
+                      const isSelf = user.id === currentUser.id;
+                      const isBootstrappedAdmin = user.email.toLowerCase() === 'yoeur.man2010@gmail.com';
+                      const isProtected = isSelf || isBootstrappedAdmin;
+                      const isConfirmingDelete = confirmDeleteUserId === user.id;
+
+                      return (
+                        <tr key={user.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-3">
+                              <img
+                                src={user.avatar}
+                                alt={user.name}
+                                referrerPolicy="no-referrer"
+                                className="w-9 h-9 rounded-full object-cover ring-1 ring-slate-200 dark:ring-slate-700 shrink-0"
+                              />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-slate-900 dark:text-white truncate">
+                                    {user.name}
+                                  </span>
+                                  {isSelf && (
+                                    <span className="text-[10px] font-mono font-bold uppercase text-cyan-600 dark:text-cyan-400">
+                                      (You)
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                                  {user.email}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 px-4">
+                            <select
+                              aria-label={`Role for ${user.name}`}
+                              disabled={isProtected}
+                              value={user.role}
+                              onChange={(e) => handleQuickRoleChange(user, e.target.value as UserRole)}
+                              className="px-2.5 py-1.5 rounded-lg text-[11px] font-mono font-semibold bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                              <option value="student">Student</option>
+                              <option value="instructor">Instructor</option>
+                              <option value="admin">Admin</option>
+                            </select>
+                          </td>
+
+                          <td className="py-3.5 px-4 font-mono text-[11px] text-slate-700 dark:text-slate-300 uppercase">
+                            <span className="font-bold">{user.subscription?.tier || 'free'}</span>
+                            <span className="text-slate-400 mx-1.5">·</span>
+                            <span
+                              className={
+                                user.subscription?.status === 'active'
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : user.subscription?.status === 'trial'
+                                  ? 'text-amber-600 dark:text-amber-400'
+                                  : 'text-red-500 dark:text-red-400'
+                              }
+                            >
+                              {user.subscription?.status || 'active'}
+                            </span>
+                          </td>
+
+                          <td className="py-3.5 px-4 font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                            {user.enrolledCourseIds?.length || 0} course(s)
+                          </td>
+
+                          <td className="py-3.5 px-4 font-mono tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
+                            {user.joinedDate || '—'}
+                          </td>
+
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => openEditAccountModal(user)}
+                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 bg-slate-100/70 dark:bg-slate-800 hover:bg-slate-200/70 dark:hover:bg-slate-700 transition-colors"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>Edit</span>
+                              </button>
+
+                              {!isProtected && (
+                                isConfirmingDelete ? (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleConfirmDeleteAccount(user)}
+                                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-red-600 hover:bg-red-500 text-white transition-colors"
+                                    >
+                                      Confirm
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteUserId(null)}
+                                      className="px-2 py-1.5 rounded-lg text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteUserId(user.id)}
+                                    className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                                    title="Remove Account"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : activeTab === 'invite-instructors' && isAdmin ? (
         <div className="space-y-6">
           {/* Instructor Invite Composer Card */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -2276,6 +2657,174 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                 >
                   <Save className="w-3.5 h-3.5" />
                   <span>{editingModuleId ? 'Update Module Content' : 'Save Module'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Account Modal (Admin) */}
+      {editingAccountUser && isAdmin && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <img
+                  src={editingAccountUser.avatar}
+                  alt={editingAccountUser.name}
+                  referrerPolicy="no-referrer"
+                  className="w-10 h-10 rounded-full object-cover ring-1 ring-slate-200 dark:ring-slate-700 shrink-0"
+                />
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white truncate">
+                    Manage Account: {editingAccountUser.name}
+                  </h3>
+                  <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                    {editingAccountUser.email}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingAccountUser(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAccount} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Full Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={accountForm.name}
+                    onChange={(e) => setAccountForm(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Account Role
+                  </label>
+                  <select
+                    value={accountForm.role}
+                    disabled={
+                      editingAccountUser.id === currentUser.id ||
+                      editingAccountUser.email.toLowerCase() === 'yoeur.man2010@gmail.com'
+                    }
+                    onChange={(e) => setAccountForm(prev => ({ ...prev, role: e.target.value as UserRole }))}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <option value="student">Student</option>
+                    <option value="instructor">Instructor</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                  {(editingAccountUser.id === currentUser.id ||
+                    editingAccountUser.email.toLowerCase() === 'yoeur.man2010@gmail.com') && (
+                    <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                      Protected administrator role cannot be downgraded here.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Subscription Tier
+                  </label>
+                  <select
+                    value={accountForm.subscriptionTier}
+                    onChange={(e) =>
+                      setAccountForm(prev => ({
+                        ...prev,
+                        subscriptionTier: e.target.value as SubscriptionTier
+                      }))
+                    }
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  >
+                    <option value="free">Free Starter</option>
+                    <option value="pro">Pro Lab Access</option>
+                    <option value="expert">Expert Certification</option>
+                    <option value="enterprise">Enterprise Cohort</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Subscription Status
+                  </label>
+                  <select
+                    value={accountForm.subscriptionStatus}
+                    onChange={(e) =>
+                      setAccountForm(prev => ({
+                        ...prev,
+                        subscriptionStatus: e.target.value as User['subscription']['status']
+                      }))
+                    }
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  >
+                    <option value="active">Active</option>
+                    <option value="trial">Trial</option>
+                    <option value="expired">Expired</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Enrolled / Assigned Courses ({accountForm.enrolledCourseIds.length} selected)
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {courses.map(course => {
+                    const selected = accountForm.enrolledCourseIds.includes(course.id);
+                    return (
+                      <button
+                        key={course.id}
+                        type="button"
+                        onClick={() =>
+                          setAccountForm(prev => ({
+                            ...prev,
+                            enrolledCourseIds: prev.enrolledCourseIds.includes(course.id)
+                              ? prev.enrolledCourseIds.filter(id => id !== course.id)
+                              : [...prev.enrolledCourseIds, course.id]
+                          }))
+                        }
+                        className={`px-3 py-1.5 rounded-xl border text-[11px] font-semibold transition-all ${
+                          selected
+                            ? 'bg-cyan-600 border-cyan-600 text-white shadow-xs'
+                            : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-cyan-400'
+                        }`}
+                      >
+                        <span className="font-mono">{course.code}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingAccountUser(null)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingAccount}
+                  className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold disabled:opacity-60"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{savingAccount ? 'Saving...' : 'Save Account Changes'}</span>
                 </button>
               </div>
             </form>

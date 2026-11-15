@@ -17,7 +17,7 @@ import { LoginPage } from './components/Auth/LoginPage';
 import { PaymentGatewayModal } from './components/Billing/PaymentGatewayModal';
 import { WifiOff, Terminal, Network } from 'lucide-react';
 
-type ManagementSubTab = 'courses' | 'progress' | 'invite-instructors' | 'invite-students';
+type ManagementSubTab = 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students';
 
 const AcademyApp: React.FC = () => {
   const { isOffline, toggleManualOfflineSim, courses, isAuthenticated, authReady } = useAcademy();

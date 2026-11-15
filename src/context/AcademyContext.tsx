@@ -27,7 +27,10 @@ import {
   saveInvitationToFirestore,
   updateInvitationStatusInFirestore,
   deleteInvitationFromFirestore,
-  fetchInvitationsFromFirestore
+  fetchInvitationsFromFirestore,
+  fetchUsersFromFirestore,
+  updateUserInFirestore,
+  deleteUserFromFirestore
 } from '../firebase';
 import { 
   INITIAL_USERS, 
@@ -87,6 +90,20 @@ interface AcademyContextType {
   resendInvitation: (inviteId: string) => void;
   revokeInvitation: (inviteId: string) => void;
   deleteInvitation: (inviteId: string) => void;
+
+  // Admin Account Management
+  refreshUsersDirectory: () => Promise<number>;
+  updateUserAccount: (
+    userId: string,
+    updates: {
+      name?: string;
+      role?: UserRole;
+      subscriptionTier?: SubscriptionTier;
+      subscriptionStatus?: User['subscription']['status'];
+      enrolledCourseIds?: string[];
+    }
+  ) => Promise<void>;
+  deleteUserAccount: (userId: string) => Promise<void>;
   
   // Dark mode & Offline
   toggleDarkMode: () => void;
@@ -398,6 +415,10 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     }
 
+    if (resolvedRole === 'admin' && fbUser.emailVerified) {
+      refreshUsersDirectory().catch(() => {});
+    }
+
     pendingGoogleInviteCodeRef.current = undefined;
   };
 
@@ -694,6 +715,118 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const deleteInvitation = (inviteId: string) => {
     setInvitations(prev => prev.filter(i => i.id !== inviteId));
     deleteInvitationFromFirestore(inviteId).catch(() => {});
+  };
+
+  const refreshUsersDirectory = async (): Promise<number> => {
+    const remoteUsers = await fetchUsersFromFirestore();
+    if (!remoteUsers || remoteUsers.length === 0) return 0;
+
+    setAllUsers(prev => {
+      const next = [...prev];
+      const fallbackAvatar =
+        'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=256&q=80';
+
+      for (const remote of remoteUsers) {
+        const idx = next.findIndex(
+          u =>
+            u.id === remote.uid ||
+            u.email.toLowerCase() === remote.email.toLowerCase()
+        );
+        if (idx >= 0) {
+          next[idx] = {
+            ...next[idx],
+            name: remote.name || next[idx].name,
+            role: remote.role || next[idx].role,
+            avatar: remote.avatar || next[idx].avatar
+          };
+        } else {
+          next.push({
+            id: remote.uid,
+            name: remote.name,
+            email: remote.email,
+            role: remote.role,
+            avatar: remote.avatar || fallbackAvatar,
+            subscription: { tier: 'pro', status: 'active' },
+            enrolledCourseIds: ['course-ccna-1'],
+            completedModuleIds: [],
+            certificates: [],
+            joinedDate: remote.joinedDate,
+            reputationPoints: 50
+          });
+        }
+      }
+      return next;
+    });
+
+    return remoteUsers.length;
+  };
+
+  const updateUserAccount = async (
+    userId: string,
+    updates: {
+      name?: string;
+      role?: UserRole;
+      subscriptionTier?: SubscriptionTier;
+      subscriptionStatus?: User['subscription']['status'];
+      enrolledCourseIds?: string[];
+    }
+  ): Promise<void> => {
+    const targetUser = allUsers.find(u => u.id === userId);
+    if (!targetUser) return;
+
+    const cleanName = updates.name !== undefined ? updates.name.trim() || targetUser.name : targetUser.name;
+    const nextRole = updates.role ?? targetUser.role;
+
+    setAllUsers(prev =>
+      prev.map(u => {
+        if (u.id !== userId) return u;
+        return {
+          ...u,
+          name: cleanName,
+          role: nextRole,
+          enrolledCourseIds: updates.enrolledCourseIds ?? u.enrolledCourseIds,
+          subscription: {
+            ...u.subscription,
+            tier: updates.subscriptionTier ?? u.subscription.tier,
+            status: updates.subscriptionStatus ?? u.subscription.status
+          }
+        };
+      })
+    );
+
+    if (updates.name !== undefined) {
+      setStudentProgressList(prev =>
+        prev.map(p => (p.studentId === userId ? { ...p, studentName: cleanName } : p))
+      );
+    }
+
+    await updateUserInFirestore(userId, {
+      ...(updates.name !== undefined ? { name: cleanName } : {}),
+      ...(updates.role !== undefined ? { role: nextRole } : {})
+    }).catch(() => {});
+
+    triggerSystemNotification(
+      `Account Updated: ${cleanName}`,
+      `Updated ${targetUser.email} (${nextRole.toUpperCase()}).`,
+      'system'
+    );
+  };
+
+  const deleteUserAccount = async (userId: string): Promise<void> => {
+    if (userId === currentUser.id) return;
+    const targetUser = allUsers.find(u => u.id === userId);
+    if (!targetUser) return;
+
+    setAllUsers(prev => prev.filter(u => u.id !== userId));
+    setStudentProgressList(prev => prev.filter(p => p.studentId !== userId));
+
+    await deleteUserFromFirestore(userId).catch(() => {});
+
+    triggerSystemNotification(
+      `Account Removed: ${targetUser.name}`,
+      `${targetUser.email} (${targetUser.role}) has been removed from the directory.`,
+      'system'
+    );
   };
 
   const loginUser = (email: string, _role?: UserRole, password?: string): boolean => {
@@ -1461,6 +1594,9 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         resendInvitation,
         revokeInvitation,
         deleteInvitation,
+        refreshUsersDirectory,
+        updateUserAccount,
+        deleteUserAccount,
         toggleDarkMode,
         toggleManualOfflineSim,
         enrollInCourse,

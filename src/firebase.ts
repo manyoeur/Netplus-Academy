@@ -280,3 +280,83 @@ export async function fetchInvitationsFromFirestore(
     return null;
   }
 }
+
+export interface FirestoreUserRecord {
+  uid: string;
+  name: string;
+  email: string;
+  role: 'student' | 'instructor' | 'admin';
+  avatar?: string;
+  inviteCode?: string;
+  joinedDate: string;
+}
+
+export async function fetchUsersFromFirestore(): Promise<FirestoreUserRecord[] | null> {
+  if (!auth.currentUser) return null;
+  const path = 'users';
+  try {
+    const snap = await getDocs(collection(db, path));
+    return snap.docs.map(d => {
+      const data = d.data() as Record<string, any>;
+      const createdAtStr =
+        data.createdAt && typeof data.createdAt.toDate === 'function'
+          ? data.createdAt.toDate().toISOString().split('T')[0]
+          : typeof data.createdAt === 'string'
+          ? data.createdAt.split('T')[0]
+          : new Date().toISOString().split('T')[0];
+
+      return {
+        uid: String(data.uid || d.id),
+        name: String(data.name || 'Netplus User'),
+        email: String(data.email || ''),
+        role:
+          data.role === 'admin' || data.role === 'instructor'
+            ? data.role
+            : 'student',
+        avatar: typeof data.avatar === 'string' && data.avatar ? data.avatar : undefined,
+        inviteCode: typeof data.inviteCode === 'string' ? data.inviteCode : undefined,
+        joinedDate: createdAtStr
+      };
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+    return null;
+  }
+}
+
+export async function updateUserInFirestore(
+  uid: string,
+  updates: { name?: string; role?: 'student' | 'instructor' | 'admin' }
+): Promise<void> {
+  if (!auth.currentUser || !uid) return;
+  const userPath = `users/${uid}`;
+  const ref = doc(db, 'users', uid);
+  try {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    await updateDoc(ref, {
+      ...(updates.name !== undefined ? { name: updates.name.trim().slice(0, 120) } : {}),
+      ...(updates.role !== undefined ? { role: updates.role } : {}),
+      updatedAt: serverTimestamp()
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.UPDATE, userPath);
+    }
+  }
+}
+
+export async function deleteUserFromFirestore(uid: string): Promise<void> {
+  if (!auth.currentUser || !uid) return;
+  const userPath = `users/${uid}`;
+  try {
+    await deleteDoc(doc(db, 'users', uid));
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.DELETE, userPath);
+    }
+  }
+}
+

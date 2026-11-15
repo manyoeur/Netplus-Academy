@@ -20,15 +20,16 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   UserPlus,
-  Users
+  Users,
+  UserCog
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
 
 interface SidebarProps {
   currentTab: string;
   setCurrentTab: (tab: string) => void;
-  managementSubTab?: 'courses' | 'progress' | 'invite-instructors' | 'invite-students';
-  onSelectManagementTab?: (subTab: 'courses' | 'progress' | 'invite-instructors' | 'invite-students') => void;
+  managementSubTab?: 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students';
+  onSelectManagementTab?: (subTab: 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students') => void;
   isPinned: boolean;
   setIsPinned: React.Dispatch<React.SetStateAction<boolean>>;
   isOpen: boolean;
@@ -200,7 +201,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleNavClick = (tabId: string) => {
-    if (tabId === 'invite-instructors') {
+    if (tabId === 'accounts') {
+      onSelectManagementTab?.('accounts');
+    } else if (tabId === 'invite-instructors') {
       onSelectManagementTab?.('invite-instructors');
     } else if (tabId === 'invite-students') {
       onSelectManagementTab?.('invite-students');
@@ -226,6 +229,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'pricing', label: 'Subscription Tiers & Pro Checkout', category: 'Account', icon: CreditCard },
     ...(isAdminOnly
       ? [
+          { id: 'accounts', label: 'Manage Instructor & Student Accounts', category: 'Administration', icon: UserCog },
           { id: 'invite-instructors', label: 'Invite Instructors & Faculty Onboarding', category: 'Administration', icon: UserPlus },
           { id: 'invite-students', label: 'Invite Students & Cohort Registration', category: 'Administration', icon: Users }
         ]
@@ -248,6 +252,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'forum', label: 'Discussion Forum', icon: MessageSquare, dot: false },
     ...(isAdminOnly
       ? [
+          { id: 'accounts', label: 'User Accounts', icon: UserCog, dot: false },
           { id: 'invite-instructors', label: 'Invite Instructors', icon: UserPlus, dot: false },
           { id: 'invite-students', label: 'Invite Students', icon: Users, dot: false }
         ]
@@ -488,6 +493,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {isAdminOnly && (
                     <>
                       <button
+                        onClick={() => handleNavClick('accounts')}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                          currentTab === 'management' && managementSubTab === 'accounts'
+                            ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-500/25'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <UserCog className={`w-4 h-4 shrink-0 ${currentTab === 'management' && managementSubTab === 'accounts' ? 'text-white' : 'text-blue-500'}`} />
+                        <span>User Accounts</span>
+                      </button>
+
+                      <button
                         onClick={() => handleNavClick('invite-instructors')}
                         className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
                           currentTab === 'management' && managementSubTab === 'invite-instructors'
@@ -579,7 +596,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {railNavItems.map(item => {
                 const Icon = item.icon;
                 const isActive =
-                  item.id === 'invite-instructors'
+                  item.id === 'accounts'
+                    ? currentTab === 'management' && managementSubTab === 'accounts'
+                    : item.id === 'invite-instructors'
                     ? currentTab === 'management' && managementSubTab === 'invite-instructors'
                     : item.id === 'invite-students'
                     ? currentTab === 'management' && managementSubTab === 'invite-students'
