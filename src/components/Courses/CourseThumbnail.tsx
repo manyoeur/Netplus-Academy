@@ -81,7 +81,7 @@ export const CourseThumbnail: React.FC<CourseThumbnailProps> = ({
         <div
           className={`w-full h-full bg-gradient-to-br ${
             course.bannerColor || 'from-slate-800 via-blue-950 to-slate-950'
-          } flex flex-col items-center justify-center p-4 text-white/85 relative`}
+          } flex flex-col items-center justify-center p-4 text-white/85 relative ${imgClassName}`}
         >
           <div
             className="absolute inset-0 opacity-20"

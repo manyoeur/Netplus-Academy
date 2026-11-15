@@ -305,15 +305,19 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
               <div
                 key={course.id}
                 onClick={() => onSelectCourse(course.id)}
-                className="bg-white dark:bg-[#0c1220] rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:shadow-xl hover:border-blue-400 dark:hover:border-cyan-500/50 transition-all flex flex-col group cursor-pointer"
+                className="bg-white dark:bg-[#0c1220] rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:-translate-y-1 hover:shadow-xl hover:border-blue-400 dark:hover:border-cyan-500/50 transition-[transform,box-shadow,border-color] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-transform motion-reduce:transform-none motion-reduce:transition-none flex flex-col group cursor-pointer"
               >
-                {/* 16:9 Thumbnail Image Header with Scrim */}
+                {/* 16:9 Thumbnail Image Header with Scrim & Hover Lift/Scale */}
                 <CourseThumbnail
                   course={course}
-                  className="aspect-video"
-                  imgClassName="group-hover:scale-[1.03] transition-transform duration-300"
+                  className="aspect-video group/thumb"
+                  imgClassName="group-hover:scale-105 group-hover/thumb:scale-[1.07] transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-transform motion-reduce:transform-none motion-reduce:transition-none"
                 >
-                  <div className="absolute bottom-2.5 left-3.5 right-3.5 flex items-center justify-between gap-2 z-10">
+                  <div
+                    aria-hidden="true"
+                    className="absolute inset-0 bg-gradient-to-tr from-blue-500/10 via-transparent to-cyan-400/15 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+                  />
+                  <div className="absolute bottom-2.5 left-3.5 right-3.5 flex items-center justify-between gap-2 z-10 transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:-translate-y-0.5 motion-reduce:transform-none">
                     <span className="font-mono text-[11px] font-bold tracking-wider text-cyan-300">
                       {course.code}
                     </span>
@@ -450,15 +454,19 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
               <div
                 key={course.id}
                 onClick={() => onSelectCourse(course.id)}
-                className="bg-white dark:bg-[#0c1220] rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:shadow-lg hover:border-blue-400 dark:hover:border-cyan-500/50 transition-all flex flex-col md:flex-row group cursor-pointer"
+                className="bg-white dark:bg-[#0c1220] rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:-translate-y-1 hover:shadow-xl hover:border-blue-400 dark:hover:border-cyan-500/50 transition-[transform,box-shadow,border-color] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-transform motion-reduce:transform-none motion-reduce:transition-none flex flex-col md:flex-row group cursor-pointer"
               >
                 {/* Left Thumbnail */}
                 <CourseThumbnail
                   course={course}
-                  className="w-full md:w-64 lg:w-72 shrink-0 aspect-video md:aspect-auto md:min-h-[176px]"
-                  imgClassName="group-hover:scale-[1.03] transition-transform duration-300"
+                  className="w-full md:w-64 lg:w-72 shrink-0 aspect-video md:aspect-auto md:min-h-[176px] group/thumb"
+                  imgClassName="group-hover:scale-105 group-hover/thumb:scale-[1.07] transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-transform motion-reduce:transform-none motion-reduce:transition-none"
                 >
-                  <div className="absolute bottom-2.5 left-3.5 right-3.5 flex items-center justify-between gap-2 z-10">
+                  <div
+                    aria-hidden="true"
+                    className="absolute inset-0 bg-gradient-to-tr from-blue-500/10 via-transparent to-cyan-400/15 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+                  />
+                  <div className="absolute bottom-2.5 left-3.5 right-3.5 flex items-center justify-between gap-2 z-10 transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:-translate-y-0.5 motion-reduce:transform-none">
                     <span className="font-mono text-[11px] font-bold tracking-wider text-cyan-300">
                       {course.code}
                     </span>
