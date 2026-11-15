@@ -118,10 +118,11 @@ interface AcademyContextType {
   addCourse: (course: Course) => void;
   updateCourse: (courseId: string, updated: Partial<Course>) => void;
   deleteCourse: (courseId: string) => void;
-  addModuleToCourse: (courseId: string, module: CourseModule) => void;
+  addModuleToCourse: (courseId: string, module: CourseModule, insertAtIndex?: number) => void;
   updateModuleInCourse: (courseId: string, moduleId: string, updated: Partial<CourseModule>) => void;
   deleteModuleFromCourse: (courseId: string, moduleId: string) => void;
   reorderModuleInCourse: (courseId: string, moduleId: string, direction: 'up' | 'down') => void;
+  setCourseModulesOrder: (courseId: string, modules: CourseModule[]) => void;
   
   // Certificates
   generateCertificate: (courseId: string) => Certificate;
@@ -1358,12 +1359,21 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setCourses(prev => prev.filter(c => c.id !== courseId));
   };
 
-  const addModuleToCourse = (courseId: string, newModule: CourseModule) => {
+  const addModuleToCourse = (courseId: string, newModule: CourseModule, insertAtIndex?: number) => {
     const today = new Date().toISOString().split('T')[0];
     setCourses(prev =>
       prev.map(c => {
         if (c.id === courseId) {
-          const modules = [...c.modules, newModule];
+          const modules = [...c.modules];
+          if (
+            typeof insertAtIndex === 'number' &&
+            insertAtIndex >= 0 &&
+            insertAtIndex <= modules.length
+          ) {
+            modules.splice(insertAtIndex, 0, newModule);
+          } else {
+            modules.push(newModule);
+          }
           return {
             ...c,
             modules,
@@ -1429,6 +1439,22 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           updatedAt: today
         };
       })
+    );
+  };
+
+  const setCourseModulesOrder = (courseId: string, modules: CourseModule[]) => {
+    const today = new Date().toISOString().split('T')[0];
+    setCourses(prev =>
+      prev.map(c =>
+        c.id === courseId
+          ? {
+              ...c,
+              modules,
+              modulesCount: modules.length,
+              updatedAt: today
+            }
+          : c
+      )
     );
   };
 
@@ -1753,6 +1779,7 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         updateModuleInCourse,
         deleteModuleFromCourse,
         reorderModuleInCourse,
+        setCourseModulesOrder,
         generateCertificate,
         verifyCertificate,
         upgradeSubscription,

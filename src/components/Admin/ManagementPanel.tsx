@@ -29,9 +29,14 @@ import {
   UserCog,
   Calendar,
   AlertTriangle,
-  XCircle
+  XCircle,
+  CheckSquare,
+  GripVertical,
+  Sliders
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
+import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
+import { CourseModuleBuilder } from './CourseModuleBuilder';
 import {
   Course,
   CourseEnrollment,
@@ -77,6 +82,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     updateModuleInCourse,
     deleteModuleFromCourse,
     reorderModuleInCourse,
+    setCourseModulesOrder,
     studentProgressList,
     currentUser,
     allUsers,
@@ -442,6 +448,17 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     outcomesText: 'Configure VXLAN Tunnel Endpoints (VTEPs)\nDeploy BGP EVPN Type-2 and Type-5 routes\nTroubleshoot asymmetrical routing'
   });
 
+  // Drag-and-Drop Module Builder Studio & Card Drag State
+  const [builderCourseId, setBuilderCourseId] = useState<string | null>(null);
+  const [cardDragMod, setCardDragMod] = useState<{
+    courseId: string;
+    fromIndex: number;
+  } | null>(null);
+  const [cardDragOverMod, setCardDragOverMod] = useState<{
+    courseId: string;
+    overIndex: number;
+  } | null>(null);
+
   // Add / Edit Module Modal
   const [moduleModalCourseId, setModuleModalCourseId] = useState<string | null>(null);
   const [editingModuleId, setEditingModuleId] = useState<string | null>(null);
@@ -476,6 +493,24 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     labVerification: 'show ip ospf neighbor',
     quizPassingScore: 70,
     quizQuestions: []
+  });
+
+  // Between-Module Interactive Retention Quiz Modal
+  const [checkpointModal, setCheckpointModal] = useState<{
+    courseId: string;
+    fromModuleId: string;
+    fromModuleTitle: string;
+    toModuleTitle: string;
+    hasCustomOverride: boolean;
+  } | null>(null);
+  const [checkpointForm, setCheckpointForm] = useState<{
+    title: string;
+    passingScore: number;
+    questions: QuizQuestion[];
+  }>({
+    title: '',
+    passingScore: 70,
+    questions: []
   });
 
   const openAddCourseModal = () => {
@@ -595,15 +630,22 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     setEditingCourseId(null);
   };
 
-  const openAddModuleModal = (courseId: string) => {
+  const openAddModuleModal = (courseId: string, initialType: ModuleType = 'theory') => {
     setModuleModalCourseId(courseId);
     setEditingModuleId(null);
+    const isQuiz = initialType === 'quiz';
     setModuleForm({
-      title: 'Module: VXLAN Network Identifier (VNI) Mapping',
-      type: 'theory',
-      durationMin: 30,
-      summary: 'Understanding 24-bit VNI space, VTEP flood lists, and multi-destination traffic.',
-      contentMarkdown: '# VXLAN Architecture Overview\n\nVXLAN encapsulates Layer 2 Ethernet frames in Layer 4 UDP packets on destination port **4789**.',
+      title: isQuiz
+        ? 'Quiz: Knowledge Assessment & Verification'
+        : 'Module: VXLAN Network Identifier (VNI) Mapping',
+      type: initialType,
+      durationMin: isQuiz ? 20 : 30,
+      summary: isQuiz
+        ? 'Interactive assessment with immediate feedback, explanations, and live scoring.'
+        : 'Understanding 24-bit VNI space, VTEP flood lists, and multi-destination traffic.',
+      contentMarkdown: isQuiz
+        ? ''
+        : '# VXLAN Architecture Overview\n\nVXLAN encapsulates Layer 2 Ethernet frames in Layer 4 UDP packets on destination port **4789**.',
       videoUrl: 'https://stream.netplus.academy/vxlan-intro',
       videoDuration: '18:45',
       labObjective: 'Configure OSPF underlay and verify neighbor adjacency across R1 and SW1.',
@@ -611,7 +653,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       labCommandsText: 'configure terminal\nrouter ospf 1\nnetwork 10.0.0.0 0.0.0.3 area 0\nend',
       labHintsText: 'Start by typing "configure terminal" to enter global configuration mode.',
       labVerification: 'show ip ospf neighbor',
-      quizPassingScore: 70,
+      quizPassingScore: isQuiz ? 80 : 70,
       quizQuestions: [
         {
           id: `q-${Date.now()}`,
@@ -673,6 +715,90 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       ...prev,
       quizQuestions: prev.quizQuestions.filter((_, i) => i !== index)
     }));
+  };
+
+  const openCheckpointModal = (course: Course, fromMod: CourseModule, toMod: CourseModule) => {
+    const resolved = getBetweenModuleQuiz(course, fromMod, toMod);
+    const sourceQuestions = fromMod.checkpointQuiz?.questions?.length
+      ? fromMod.checkpointQuiz.questions
+      : resolved?.questions || [
+          {
+            id: `cp-q-${Date.now()}`,
+            question: `Key concept check from ${fromMod.title}:`,
+            options: ['Option A', 'Option B', 'Option C', 'Option D'],
+            correctAnswerIndex: 0,
+            explanation: 'Immediate feedback explanation shown after selecting an option.'
+          }
+        ];
+
+    setCheckpointModal({
+      courseId: course.id,
+      fromModuleId: fromMod.id,
+      fromModuleTitle: fromMod.title,
+      toModuleTitle: toMod.title,
+      hasCustomOverride: Boolean(fromMod.checkpointQuiz?.questions?.length)
+    });
+
+    setCheckpointForm({
+      title: fromMod.checkpointQuiz?.title || resolved?.title || `Retention Check: ${fromMod.title}`,
+      passingScore: fromMod.checkpointQuiz?.passingScore ?? resolved?.passingScore ?? 70,
+      questions: sourceQuestions.map(q => ({ ...q, options: [...q.options] }))
+    });
+  };
+
+  const handleAddCheckpointQuestion = () => {
+    setCheckpointForm(prev => ({
+      ...prev,
+      questions: [
+        ...prev.questions,
+        {
+          id: `cp-q-${Date.now()}-${prev.questions.length}`,
+          question: 'New retention check question...',
+          options: ['Option A', 'Option B', 'Option C', 'Option D'],
+          correctAnswerIndex: 0,
+          explanation: 'Immediate feedback explanation shown when answered.'
+        }
+      ]
+    }));
+  };
+
+  const handleUpdateCheckpointQuestion = (index: number, patch: Partial<QuizQuestion>) => {
+    setCheckpointForm(prev => ({
+      ...prev,
+      questions: prev.questions.map((q, i) => (i === index ? { ...q, ...patch } : q))
+    }));
+  };
+
+  const handleRemoveCheckpointQuestion = (index: number) => {
+    setCheckpointForm(prev => ({
+      ...prev,
+      questions: prev.questions.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleSaveCheckpointQuiz = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!checkpointModal || checkpointForm.questions.length === 0) return;
+
+    updateModuleInCourse(checkpointModal.courseId, checkpointModal.fromModuleId, {
+      checkpointQuiz: {
+        title: checkpointForm.title.trim() || `Retention Check: ${checkpointModal.fromModuleTitle}`,
+        passingScore: Number(checkpointForm.passingScore) || 70,
+        questions: checkpointForm.questions
+      }
+    });
+
+    showToast(`Saved interactive retention quiz after "${checkpointModal.fromModuleTitle}"`);
+    setCheckpointModal(null);
+  };
+
+  const handleResetCheckpointOverride = () => {
+    if (!checkpointModal) return;
+    updateModuleInCourse(checkpointModal.courseId, checkpointModal.fromModuleId, {
+      checkpointQuiz: undefined
+    });
+    showToast('Reverted retention check to built-in question bank');
+    setCheckpointModal(null);
   };
 
   const handleSaveModule = (e: React.FormEvent) => {
@@ -2116,165 +2242,286 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       ) : (
         /* Tab Content: Manage Courses & Modules */
         <div className="space-y-4">
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {courses.map(course => (
-              <div
-                key={course.id}
-                className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 flex flex-col justify-between"
-              >
-                <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-3 min-w-0">
-                      <img
-                        src={course.thumbnail || 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800'}
-                        alt={course.title}
-                        className="w-20 h-14 rounded-xl object-cover shrink-0 bg-slate-950 border border-slate-200 dark:border-slate-800"
-                      />
-                      <div className="min-w-0">
-                        <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono text-[10px] font-bold">
-                          {course.code}
-                        </span>
-                        <h3 className="text-base font-bold text-slate-900 dark:text-white mt-0.5 truncate">
-                          {course.title}
-                        </h3>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
-                          {course.subtitle}
-                        </p>
+          {builderCourseId && courses.find(c => c.id === builderCourseId) ? (
+            <CourseModuleBuilder
+              course={courses.find(c => c.id === builderCourseId)!}
+              onClose={() => setBuilderCourseId(null)}
+              onEditFullModule={openEditModuleModal}
+              onToast={showToast}
+            />
+          ) : (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {courses.map(course => (
+                <div
+                  key={course.id}
+                  className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 flex flex-col justify-between"
+                >
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <img
+                          src={course.thumbnail || 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800'}
+                          alt={course.title}
+                          className="w-20 h-14 rounded-xl object-cover shrink-0 bg-slate-950 border border-slate-200 dark:border-slate-800"
+                        />
+                        <div className="min-w-0">
+                          <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono text-[10px] font-bold">
+                            {course.code}
+                          </span>
+                          <h3 className="text-base font-bold text-slate-900 dark:text-white mt-0.5 truncate">
+                            {course.title}
+                          </h3>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
+                            {course.subtitle}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => updateCourse(course.id, { isPublished: !course.isPublished })}
+                          className={`px-2 py-1 rounded-md text-[10px] font-mono font-semibold ${
+                            course.isPublished
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                          }`}
+                          title="Toggle Published / Draft"
+                        >
+                          {course.isPublished ? 'Published' : 'Draft'}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setBuilderCourseId(course.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold whitespace-nowrap shrink-0 transition-colors"
+                          title="Open Drag-and-Drop Module & Quiz Builder"
+                        >
+                          <Sliders className="w-3.5 h-3.5" />
+                          <span>Module Builder</span>
+                        </button>
+
+                        <button
+                          onClick={() => openEditCourseModal(course)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                          title="Edit Course Details"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          onClick={() => deleteCourse(course.id)}
+                          className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                          title="Delete Course"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        onClick={() => updateCourse(course.id, { isPublished: !course.isPublished })}
-                        className={`px-2 py-1 rounded-md text-[10px] font-mono font-semibold ${
-                          course.isPublished
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                            : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                        }`}
-                        title="Toggle Published / Draft"
-                      >
-                        {course.isPublished ? 'Published' : 'Draft'}
-                      </button>
-
-                      <button
-                        onClick={() => openEditCourseModal(course)}
-                        className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                        title="Edit Course Details"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-
-                      <button
-                        onClick={() => deleteCourse(course.id)}
-                        className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                        title="Delete Course"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Modules breakdown with Edit, Reorder & Delete */}
-                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-                    <div className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                      <span>Curriculum Modules ({course.modules.length})</span>
-                      <button
-                        onClick={() => openAddModuleModal(course.id)}
-                        className="text-blue-600 dark:text-cyan-400 hover:underline flex items-center gap-1 text-[11px]"
-                      >
-                        <Plus className="w-3 h-3" />
-                        <span>Add Module</span>
-                      </button>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      {course.modules.map((mod, idx) => (
-                        <div
-                          key={mod.id}
-                          className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 text-xs group"
-                        >
+                    {/* Modules breakdown with Drag Reorder, Quizzes & Delete */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                        <span>Curriculum Modules ({course.modules.length}) · Drag to reorder</span>
+                        <div className="flex items-center gap-3">
                           <button
                             type="button"
-                            onClick={() => openEditModuleModal(course.id, mod)}
-                            className="flex items-center gap-2 truncate flex-1 text-left hover:text-blue-600 dark:hover:text-cyan-400 transition-colors"
-                            title="Click to edit module content"
+                            onClick={() => setBuilderCourseId(course.id)}
+                            className="text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
                           >
-                            {mod.type === 'lab' ? (
-                              <Terminal className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
-                            ) : mod.type === 'video' ? (
-                              <Video className="w-3.5 h-3.5 text-purple-500 shrink-0" />
-                            ) : mod.type === 'quiz' ? (
-                              <HelpCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                            ) : (
-                              <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                            )}
-                            <span className="truncate text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-cyan-300">
-                              {mod.title}
-                            </span>
+                            <Sliders className="w-3 h-3" />
+                            <span>Drag &amp; Drop Builder</span>
                           </button>
-
-                          <div className="flex items-center gap-1 shrink-0">
-                            <span className="text-[10px] font-mono text-slate-400 mr-1">
-                              {mod.type} • {mod.durationMin}m
-                            </span>
-
-                            <button
-                              type="button"
-                              disabled={idx === 0}
-                              onClick={() => reorderModuleInCourse(course.id, mod.id, 'up')}
-                              className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30"
-                              title="Move Up"
-                            >
-                              <ChevronUp className="w-3.5 h-3.5" />
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={idx === course.modules.length - 1}
-                              onClick={() => reorderModuleInCourse(course.id, mod.id, 'down')}
-                              className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30"
-                              title="Move Down"
-                            >
-                              <ChevronDown className="w-3.5 h-3.5" />
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => openEditModuleModal(course.id, mod)}
-                              className="p-1 rounded text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-700"
-                              title="Edit Module & Content"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={course.modules.length <= 1}
-                              onClick={() => {
-                                deleteModuleFromCourse(course.id, mod.id);
-                                showToast(`Removed module "${mod.title}"`);
-                              }}
-                              className="p-1 rounded text-red-400 hover:text-red-600 disabled:opacity-30"
-                              title={course.modules.length <= 1 ? 'Course requires at least 1 module' : 'Delete Module'}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openAddModuleModal(course.id, 'quiz')}
+                            className="text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
+                          >
+                            <CheckSquare className="w-3 h-3" />
+                            <span>Add Quiz</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openAddModuleModal(course.id, 'theory')}
+                            className="text-blue-600 dark:text-cyan-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Add Module</span>
+                          </button>
                         </div>
-                      ))}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        {course.modules.map((mod, idx) => {
+                          const nextMod = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
+                          const betweenQuiz = nextMod ? getBetweenModuleQuiz(course, mod, nextMod) : null;
+                          const hasCustomCheckpoint = Boolean(mod.checkpointQuiz?.questions?.length);
+                          const isBeingDragged =
+                            cardDragMod?.courseId === course.id && cardDragMod.fromIndex === idx;
+                          const isDropTarget =
+                            cardDragOverMod?.courseId === course.id &&
+                            cardDragOverMod.overIndex === idx &&
+                            cardDragMod?.fromIndex !== idx;
+
+                          return (
+                            <React.Fragment key={mod.id}>
+                              <div
+                                draggable
+                                onDragStart={(e) => {
+                                  e.dataTransfer.effectAllowed = 'move';
+                                  e.dataTransfer.setData('text/plain', mod.id);
+                                  setCardDragMod({ courseId: course.id, fromIndex: idx });
+                                }}
+                                onDragOver={(e) => {
+                                  if (cardDragMod?.courseId !== course.id) return;
+                                  e.preventDefault();
+                                  setCardDragOverMod({ courseId: course.id, overIndex: idx });
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  if (
+                                    cardDragMod &&
+                                    cardDragMod.courseId === course.id &&
+                                    cardDragMod.fromIndex !== idx
+                                  ) {
+                                    const reordered = [...course.modules];
+                                    const [moved] = reordered.splice(cardDragMod.fromIndex, 1);
+                                    reordered.splice(idx, 0, moved);
+                                    setCourseModulesOrder(course.id, reordered);
+                                    showToast(`Reordered "${moved.title}"`);
+                                  }
+                                  setCardDragMod(null);
+                                  setCardDragOverMod(null);
+                                }}
+                                onDragEnd={() => {
+                                  setCardDragMod(null);
+                                  setCardDragOverMod(null);
+                                }}
+                                className={`p-2 rounded-xl border flex items-center justify-between gap-2 text-xs group transition-colors ${
+                                  isBeingDragged
+                                    ? 'opacity-45 border-blue-400 bg-blue-50/40 dark:bg-blue-950/30'
+                                    : isDropTarget
+                                    ? 'border-blue-500 dark:border-cyan-400 bg-blue-50/70 dark:bg-blue-950/50'
+                                    : 'bg-slate-50 dark:bg-slate-800/60 border-slate-100 dark:border-slate-800'
+                                }`}
+                              >
+                                <span
+                                  className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 shrink-0"
+                                  title="Drag to reorder module"
+                                >
+                                  <GripVertical className="w-3.5 h-3.5" />
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditModuleModal(course.id, mod)}
+                                  className="flex items-center gap-2 truncate flex-1 text-left hover:text-blue-600 dark:hover:text-cyan-400 transition-colors"
+                                  title="Click to edit module content"
+                                >
+                                  {mod.type === 'lab' ? (
+                                    <Terminal className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+                                  ) : mod.type === 'video' ? (
+                                    <Video className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                                  ) : mod.type === 'quiz' ? (
+                                    <HelpCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                  ) : (
+                                    <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                                  )}
+                                  <span className="truncate text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-cyan-300">
+                                    {mod.title}
+                                  </span>
+                                </button>
+
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <span className="text-[10px] font-mono tabular-nums text-slate-400 mr-1">
+                                    {mod.type} · {mod.durationMin}m
+                                    {mod.type === 'quiz' && mod.quiz ? ` · ${mod.quiz.questions.length} Qs` : ''}
+                                  </span>
+
+                                  <button
+                                    type="button"
+                                    disabled={idx === 0}
+                                    onClick={() => reorderModuleInCourse(course.id, mod.id, 'up')}
+                                    className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30"
+                                    title="Move Up"
+                                  >
+                                    <ChevronUp className="w-3.5 h-3.5" />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={idx === course.modules.length - 1}
+                                    onClick={() => reorderModuleInCourse(course.id, mod.id, 'down')}
+                                    className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30"
+                                    title="Move Down"
+                                  >
+                                    <ChevronDown className="w-3.5 h-3.5" />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditModuleModal(course.id, mod)}
+                                    className="p-1 rounded text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-700"
+                                    title="Edit Module & Content"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={course.modules.length <= 1}
+                                    onClick={() => {
+                                      deleteModuleFromCourse(course.id, mod.id);
+                                      showToast(`Removed module "${mod.title}"`);
+                                    }}
+                                    className="p-1 rounded text-red-400 hover:text-red-600 disabled:opacity-30"
+                                    title={course.modules.length <= 1 ? 'Course requires at least 1 module' : 'Delete Module'}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Between-Module Interactive Retention Check Authoring Trigger */}
+                              {betweenQuiz && nextMod && (
+                                <div className="pl-4 relative">
+                                  <span
+                                    aria-hidden="true"
+                                    className="absolute left-2 top-0 bottom-0 w-px bg-slate-200 dark:bg-slate-700"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => openCheckpointModal(course, mod, nextMod)}
+                                    className="w-full px-2.5 py-1.5 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 hover:border-blue-400 dark:hover:border-cyan-500 text-left flex items-center justify-between gap-2 text-[11px] transition-colors"
+                                  >
+                                    <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 truncate">
+                                      <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400 shrink-0" />
+                                      <span className="truncate">
+                                        Interactive Retention Check · {betweenQuiz.questions.length} Qs
+                                      </span>
+                                    </span>
+                                    <span className="font-mono text-[10px] text-blue-600 dark:text-cyan-400 font-semibold whitespace-nowrap shrink-0">
+                                      {hasCustomCheckpoint ? 'Custom · Edit' : 'Customize'}
+                                    </span>
+                                  </button>
+                                </div>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono">
-                  <span>Enrolled: {course.enrolledCount.toLocaleString()}</span>
-                  <span>Access: {course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS}d</span>
-                  <span>Price: ${course.price}</span>
-                  <span>Hours: {course.durationHours}h • Updated {course.updatedAt}</span>
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                    <span>Enrolled: {course.enrolledCount.toLocaleString()}</span>
+                    <span>Pass: {course.gradingCriteria?.overallPassingScore ?? 80}%</span>
+                    <span>Access: {course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS}d</span>
+                    <span>Price: ${course.price}</span>
+                    <span>Hours: {course.durationHours}h · Updated {course.updatedAt}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -2751,6 +2998,181 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                   <Save className="w-3.5 h-3.5" />
                   <span>{editingModuleId ? 'Update Module Content' : 'Save Module'}</span>
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Between-Module Interactive Retention Check Editor Modal */}
+      {checkpointModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Edit Between-Module Retention Check
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Shown interactively between <strong>{checkpointModal.fromModuleTitle}</strong> and{' '}
+                  <strong>{checkpointModal.toModuleTitle}</strong> with immediate feedback & scoring.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCheckpointModal(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCheckpointQuiz} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Retention Check Title
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={checkpointForm.title}
+                    onChange={(e) => setCheckpointForm(prev => ({ ...prev, title: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Passing Score (%)
+                  </label>
+                  <input
+                    type="number"
+                    min={10}
+                    max={100}
+                    value={checkpointForm.passingScore}
+                    onChange={(e) =>
+                      setCheckpointForm(prev => ({
+                        ...prev,
+                        passingScore: parseInt(e.target.value, 10) || 70
+                      }))
+                    }
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-slate-800 dark:text-slate-200 text-[11px] uppercase font-mono tabular-nums">
+                    Questions ({checkpointForm.questions.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleAddCheckpointQuestion}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold whitespace-nowrap shrink-0"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Add Question</span>
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {checkpointForm.questions.map((q, qIdx) => (
+                    <div
+                      key={q.id}
+                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-mono font-bold text-slate-500 tabular-nums">
+                          Question {qIdx + 1}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={checkpointForm.questions.length <= 1}
+                          onClick={() => handleRemoveCheckpointQuestion(qIdx)}
+                          className="text-red-500 hover:text-red-600 disabled:opacity-30 text-[11px]"
+                        >
+                          Remove
+                        </button>
+                      </div>
+
+                      <input
+                        type="text"
+                        required
+                        value={q.question}
+                        onChange={(e) => handleUpdateCheckpointQuestion(qIdx, { question: e.target.value })}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                        placeholder="Enter question prompt..."
+                      />
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {q.options.map((opt, optIdx) => (
+                          <div key={optIdx} className="flex items-center gap-1.5">
+                            <input
+                              type="radio"
+                              name={`cp-correct-${q.id}`}
+                              checked={q.correctAnswerIndex === optIdx}
+                              onChange={() =>
+                                handleUpdateCheckpointQuestion(qIdx, { correctAnswerIndex: optIdx })
+                              }
+                              title="Mark as correct option"
+                            />
+                            <input
+                              type="text"
+                              required
+                              value={opt}
+                              onChange={(e) => {
+                                const nextOpts = [...q.options];
+                                nextOpts[optIdx] = e.target.value;
+                                handleUpdateCheckpointQuestion(qIdx, { options: nextOpts });
+                              }}
+                              className="flex-1 px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      <input
+                        type="text"
+                        value={q.explanation}
+                        onChange={(e) => handleUpdateCheckpointQuestion(qIdx, { explanation: e.target.value })}
+                        placeholder="Immediate feedback explanation shown after selection..."
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[11px]"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <div>
+                  {checkpointModal.hasCustomOverride && (
+                    <button
+                      type="button"
+                      onClick={handleResetCheckpointOverride}
+                      className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs"
+                    >
+                      Revert to Built-in Bank
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCheckpointModal(null)}
+                    className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Save Retention Check</span>
+                  </button>
+                </div>
               </div>
             </form>
           </div>

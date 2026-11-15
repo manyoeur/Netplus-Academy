@@ -12,11 +12,14 @@ import {
   Calendar,
   AlertTriangle,
   XCircle,
-  Clock
+  Clock,
+  CheckSquare
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { InteractiveCliTerminal } from '../Lab/InteractiveCliTerminal';
 import { CourseThumbnail } from './CourseThumbnail';
+import { InteractiveQuiz, QuizResult } from './InteractiveQuiz';
+import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
 import {
   resolveCourseEnrollment,
   formatEnrollmentDate,
@@ -69,6 +72,33 @@ function writeReadingStore(userId: string, store: ReadingStore): void {
   }
 }
 
+type CheckpointStore = Record<string, Record<string, QuizResult>>;
+
+const CHECKPOINT_STORAGE_PREFIX = 'netpulse_academy_checkpoints_v1';
+
+function getCheckpointStorageKey(userId: string): string {
+  return `${CHECKPOINT_STORAGE_PREFIX}:${userId}`;
+}
+
+function readCheckpointStore(userId: string): CheckpointStore {
+  try {
+    const raw = localStorage.getItem(getCheckpointStorageKey(userId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeCheckpointStore(userId: string, store: CheckpointStore): void {
+  try {
+    localStorage.setItem(getCheckpointStorageKey(userId), JSON.stringify(store));
+  } catch {
+    // Ignore localStorage quota or private-mode errors
+  }
+}
+
 export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   courseId,
   onBack,
@@ -93,10 +123,11 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
   const activeModule = course.modules[activeModuleIndex] || course.modules[0];
 
-  // Quiz state
-  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
-  const [quizSubmitted, setQuizSubmitted] = useState(false);
-  const [quizScore, setQuizScore] = useState(0);
+  // Between-module checkpoint state (null = viewing module, number = checkpoint after module index)
+  const [activeCheckpointAfterIndex, setActiveCheckpointAfterIndex] = useState<number | null>(null);
+  const [checkpointStore, setCheckpointStore] = useState<CheckpointStore>(() =>
+    readCheckpointStore(currentUser.id)
+  );
 
   // Reading scroll progress state
   const moduleContentRef = useRef<HTMLDivElement>(null);
@@ -111,15 +142,15 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   });
   const [resumedFromPercent, setResumedFromPercent] = useState<number | null>(null);
 
-  // Reload reading store if user or courseId changes
+  // Reload reading & checkpoint stores if user or courseId changes
   useEffect(() => {
     const freshStore = readReadingStore(currentUser.id);
     setReadingStore(freshStore);
+    setCheckpointStore(readCheckpointStore(currentUser.id));
+    setActiveCheckpointAfterIndex(null);
     const lastModId = freshStore[course.id]?.lastModuleId;
     const foundIdx = lastModId ? course.modules.findIndex(m => m.id === lastModId) : -1;
     setActiveModuleIndex(foundIdx >= 0 ? foundIdx : 0);
-    setSelectedAnswers({});
-    setQuizSubmitted(false);
   }, [currentUser.id, course.id, course.modules]);
 
   const computeScrollMetrics = useCallback(() => {
@@ -192,7 +223,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
   // Save active module reference & restore its saved scroll position whenever course or module changes
   useEffect(() => {
-    if (!activeModule) return;
+    if (!activeModule || activeCheckpointAfterIndex !== null) return;
 
     isRestoringRef.current = true;
     setResumedFromPercent(null);
@@ -271,11 +302,11 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       }
       isRestoringRef.current = false;
     };
-  }, [course.id, activeModule?.id, currentUser.id]);
+  }, [course.id, activeModule?.id, currentUser.id, activeCheckpointAfterIndex]);
 
   // Listen for scroll events on the active module and persist reading progress to localStorage
   useEffect(() => {
-    if (!activeModule) return;
+    if (!activeModule || activeCheckpointAfterIndex !== null) return;
 
     let pendingMetrics: { scrollY: number; scrollRatio: number; percent: number } | null = null;
 
@@ -332,17 +363,17 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       }
       writePendingToStorage();
     };
-  }, [course.id, activeModule?.id, currentUser.id, computeScrollMetrics, persistModuleReading]);
+  }, [course.id, activeModule?.id, currentUser.id, activeCheckpointAfterIndex, computeScrollMetrics, persistModuleReading]);
 
   const flushCurrentModuleProgress = useCallback(() => {
-    if (!activeModule || isRestoringRef.current) return;
+    if (!activeModule || isRestoringRef.current || activeCheckpointAfterIndex !== null) return;
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
     const metrics = computeScrollMetrics();
     persistModuleReading(course.id, activeModule.id, metrics);
-  }, [activeModule, course.id, computeScrollMetrics, persistModuleReading]);
+  }, [activeModule, activeCheckpointAfterIndex, course.id, computeScrollMetrics, persistModuleReading]);
 
   const handleJumpToTop = () => {
     setResumedFromPercent(null);
@@ -357,47 +388,99 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const enrollment = resolveCourseEnrollment(currentUser, course);
   const expiryInfo = enrollment ? getEnrollmentExpirationInfo(enrollment) : null;
 
+  const activeCheckpointQuiz =
+    activeCheckpointAfterIndex !== null
+      ? getBetweenModuleQuiz(
+          course,
+          course.modules[activeCheckpointAfterIndex],
+          course.modules[activeCheckpointAfterIndex + 1]
+        )
+      : null;
+
+  const currentModuleCheckpointQuiz =
+    activeCheckpointAfterIndex === null && activeModuleIndex < course.modules.length - 1
+      ? getBetweenModuleQuiz(
+          course,
+          activeModule,
+          course.modules[activeModuleIndex + 1]
+        )
+      : null;
+
+  const saveQuizResult = useCallback(
+    (quizId: string, result: QuizResult) => {
+      setCheckpointStore(prev => {
+        const courseMap = prev[course.id] || {};
+        const prevResult = courseMap[quizId];
+        // Keep highest score if already passed, otherwise update latest attempt
+        const shouldKeepBest =
+          prevResult && prevResult.passed && prevResult.score > result.score;
+        const storedResult = shouldKeepBest ? prevResult : result;
+        const next: CheckpointStore = {
+          ...prev,
+          [course.id]: {
+            ...courseMap,
+            [quizId]: storedResult
+          }
+        };
+        writeCheckpointStore(currentUser.id, next);
+        return next;
+      });
+    },
+    [course.id, currentUser.id]
+  );
+
+  const handleOpenCheckpoint = (afterIndex: number) => {
+    flushCurrentModuleProgress();
+    setActiveModuleIndex(afterIndex);
+    setActiveCheckpointAfterIndex(afterIndex);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const handleSelectModule = (idx: number) => {
     flushCurrentModuleProgress();
+    setActiveCheckpointAfterIndex(null);
     setActiveModuleIndex(idx);
-    setSelectedAnswers({});
-    setQuizSubmitted(false);
   };
 
   const handleNextModule = () => {
+    if (activeCheckpointAfterIndex !== null) {
+      const nextIdx = activeCheckpointAfterIndex + 1;
+      setActiveCheckpointAfterIndex(null);
+      if (nextIdx < course.modules.length) {
+        setActiveModuleIndex(nextIdx);
+      }
+      return;
+    }
+
     flushCurrentModuleProgress();
     completeModule(course.id, activeModule.id);
 
     if (activeModuleIndex < course.modules.length - 1) {
-      setActiveModuleIndex(prev => prev + 1);
-      setSelectedAnswers({});
-      setQuizSubmitted(false);
+      const nextModule = course.modules[activeModuleIndex + 1];
+      const betweenQuiz = getBetweenModuleQuiz(course, activeModule, nextModule);
+      const existingCheckpoint = betweenQuiz
+        ? checkpointStore[course.id]?.[betweenQuiz.id]
+        : undefined;
+
+      if (betweenQuiz && !existingCheckpoint?.passed) {
+        setActiveCheckpointAfterIndex(activeModuleIndex);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        setActiveModuleIndex(prev => prev + 1);
+      }
     }
   };
 
   const handlePrevModule = () => {
+    if (activeCheckpointAfterIndex !== null) {
+      setActiveModuleIndex(activeCheckpointAfterIndex);
+      setActiveCheckpointAfterIndex(null);
+      return;
+    }
+
     if (activeModuleIndex > 0) {
       flushCurrentModuleProgress();
       setActiveModuleIndex(prev => prev - 1);
-      setSelectedAnswers({});
-      setQuizSubmitted(false);
-    }
-  };
-
-  const handleQuizSubmit = () => {
-    if (!activeModule.quiz) return;
-    let score = 0;
-    activeModule.quiz.questions.forEach((q) => {
-      if (selectedAnswers[q.id] === q.correctAnswerIndex) {
-        score++;
-      }
-    });
-    const percentage = Math.round((score / activeModule.quiz.questions.length) * 100);
-    setQuizScore(percentage);
-    setQuizSubmitted(true);
-
-    if (percentage >= activeModule.quiz.passingScore) {
-      completeModule(course.id, activeModule.id);
     }
   };
 
@@ -427,7 +510,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               </h2>
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
-              Module {activeModuleIndex + 1} of {course.modules.length}: {activeModule.title} · Scroll {currentReadingPercent}%
+              {activeCheckpointAfterIndex !== null && activeCheckpointQuiz
+                ? `Knowledge Retention Check · Between Module ${activeCheckpointAfterIndex + 1} & Module ${activeCheckpointAfterIndex + 2}`
+                : `Module ${activeModuleIndex + 1} of ${course.modules.length}: ${activeModule.title} · Scroll ${currentReadingPercent}%`}
             </p>
           </div>
         </div>
@@ -484,42 +569,95 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
           <div className="space-y-1.5">
             {course.modules.map((m, idx) => {
-              const isActive = idx === activeModuleIndex;
+              const isActive = activeCheckpointAfterIndex === null && idx === activeModuleIndex;
               const isDone = isModuleCompleted(m.id);
               const savedModPercent = isActive
                 ? currentReadingPercent
                 : readingStore[course.id]?.modules?.[m.id]?.percent ?? 0;
 
-              return (
-                <button
-                  key={m.id}
-                  onClick={() => handleSelectModule(idx)}
-                  className={`w-full p-2.5 rounded-xl text-left transition-all flex items-start gap-2.5 ${
-                    isActive
-                      ? 'bg-blue-600 text-white shadow-sm font-semibold'
-                      : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  <div className="mt-0.5 shrink-0">
-                    {isDone ? (
-                      <CheckCircle className={`w-4 h-4 ${isActive ? 'text-white' : 'text-emerald-500'}`} />
-                    ) : (
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center text-[9px] font-mono tabular-nums ${
-                        isActive ? 'border-white text-white' : 'border-slate-400 text-slate-400'
-                      }`}>
-                        {idx + 1}
-                      </div>
-                    )}
-                  </div>
+              const nextMod = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
+              const betweenQuiz = nextMod ? getBetweenModuleQuiz(course, m, nextMod) : null;
+              const checkpointResult = betweenQuiz
+                ? checkpointStore[course.id]?.[betweenQuiz.id]
+                : undefined;
+              const isCheckpointActive = activeCheckpointAfterIndex === idx;
 
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs line-clamp-1">{m.title}</p>
-                    <span className={`text-[10px] font-mono tabular-nums capitalize ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>
-                      {m.type} · {m.durationMin}m
-                      {!isDone && savedModPercent > 0 ? ` · ${savedModPercent}% read` : ''}
-                    </span>
-                  </div>
-                </button>
+              return (
+                <React.Fragment key={m.id}>
+                  <button
+                    onClick={() => handleSelectModule(idx)}
+                    className={`w-full p-2.5 rounded-xl text-left transition-all flex items-start gap-2.5 ${
+                      isActive
+                        ? 'bg-blue-600 text-white shadow-sm font-semibold'
+                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    <div className="mt-0.5 shrink-0">
+                      {isDone ? (
+                        <CheckCircle className={`w-4 h-4 ${isActive ? 'text-white' : 'text-emerald-500'}`} />
+                      ) : (
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center text-[9px] font-mono tabular-nums ${
+                          isActive ? 'border-white text-white' : 'border-slate-400 text-slate-400'
+                        }`}>
+                          {idx + 1}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs line-clamp-1">{m.title}</p>
+                      <span className={`text-[10px] font-mono tabular-nums capitalize ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>
+                        {m.type} · {m.durationMin}m
+                        {!isDone && savedModPercent > 0 ? ` · ${savedModPercent}% read` : ''}
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* Injected Between-Module Retention Checkpoint Trigger */}
+                  {betweenQuiz && (
+                    <div className="pl-4 relative">
+                      <span
+                        aria-hidden="true"
+                        className="absolute left-2 top-0 bottom-0 w-px bg-slate-200 dark:bg-slate-800"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleOpenCheckpoint(idx)}
+                        className={`w-full px-2.5 py-2 rounded-lg border text-left transition-colors duration-150 motion-reduce:transition-none flex items-center justify-between gap-2 ${
+                          isCheckpointActive
+                            ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-500 dark:border-cyan-500 text-blue-900 dark:text-cyan-200 font-semibold'
+                            : 'bg-slate-50/70 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-blue-400 dark:hover:border-cyan-500'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CheckSquare
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              checkpointResult?.passed
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : isCheckpointActive
+                                ? 'text-blue-600 dark:text-cyan-400'
+                                : 'text-slate-400 dark:text-slate-500'
+                            }`}
+                          />
+                          <span className="text-[11px] truncate">
+                            Retention Check · {betweenQuiz.questions.length} Qs
+                          </span>
+                        </div>
+                        {checkpointResult && (
+                          <span
+                            className={`text-[10px] font-mono tabular-nums font-bold shrink-0 ${
+                              checkpointResult.passed
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-amber-600 dark:text-amber-400'
+                            }`}
+                          >
+                            {checkpointResult.score}%
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </React.Fragment>
               );
             })}
           </div>
@@ -645,66 +783,109 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             </div>
           )}
 
-          {/* Reading Progress & Resume Banner */}
-          <div className="px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 min-w-0">
-                <BookmarkCheck className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
-                {resumedFromPercent !== null ? (
-                  <span className="truncate tabular-nums">
-                    Resumed <strong className="text-slate-900 dark:text-white">{activeModule.title}</strong> from your last scroll position ({resumedFromPercent}%)
+          {/* Reading Progress & Resume Banner (hidden when in between-module checkpoint quiz) */}
+          {activeCheckpointAfterIndex === null && (
+            <div className="px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 min-w-0">
+                  <BookmarkCheck className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
+                  {resumedFromPercent !== null ? (
+                    <span className="truncate tabular-nums">
+                      Resumed <strong className="text-slate-900 dark:text-white">{activeModule.title}</strong> from your last scroll position ({resumedFromPercent}%)
+                    </span>
+                  ) : (
+                    <span className="truncate">
+                      Reading progress auto-saved for <strong className="text-slate-900 dark:text-white">{activeModule.title}</strong>
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="font-mono text-[11px] font-bold tabular-nums text-blue-600 dark:text-cyan-400">
+                    {currentReadingPercent}% read
                   </span>
-                ) : (
-                  <span className="truncate">
-                    Reading progress auto-saved for <strong className="text-slate-900 dark:text-white">{activeModule.title}</strong>
-                  </span>
-                )}
+                  {resumedFromPercent !== null && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleJumpToTop}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-cyan-400 whitespace-nowrap"
+                      >
+                        <ArrowUp className="w-3 h-3" />
+                        <span>Top</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setResumedFromPercent(null)}
+                        aria-label="Dismiss resume notice"
+                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
 
-              <div className="flex items-center gap-3 shrink-0">
-                <span className="font-mono text-[11px] font-bold tabular-nums text-blue-600 dark:text-cyan-400">
-                  {currentReadingPercent}% read
-                </span>
-                {resumedFromPercent !== null && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleJumpToTop}
-                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-cyan-400 whitespace-nowrap"
-                    >
-                      <ArrowUp className="w-3 h-3" />
-                      <span>Top</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setResumedFromPercent(null)}
-                      aria-label="Dismiss resume notice"
-                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-
-            <div
-              role="progressbar"
-              aria-valuenow={currentReadingPercent}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label={`Module reading progress ${currentReadingPercent}%`}
-              className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden"
-            >
               <div
-                className="h-full bg-gradient-to-r from-blue-600 to-cyan-400 rounded-full transition-[width] duration-150"
-                style={{ width: `${currentReadingPercent}%` }}
-              />
+                role="progressbar"
+                aria-valuenow={currentReadingPercent}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={`Module reading progress ${currentReadingPercent}%`}
+                className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden"
+              >
+                <div
+                  className="h-full bg-gradient-to-r from-blue-600 to-cyan-400 rounded-full transition-[width] duration-150"
+                  style={{ width: `${currentReadingPercent}%` }}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Theory Module */}
-          {activeModule.type === 'theory' && (
+          {/* Injected Between-Module Interactive Retention Quiz */}
+          {activeCheckpointAfterIndex !== null && activeCheckpointQuiz ? (
+            <InteractiveQuiz
+              quizKey={activeCheckpointQuiz.id}
+              title={activeCheckpointQuiz.title}
+              subtitle={activeCheckpointQuiz.subtitle}
+              questions={activeCheckpointQuiz.questions}
+              passingScore={
+                course.modules[activeCheckpointAfterIndex]?.checkpointQuiz?.passingScore ??
+                course.gradingCriteria?.quizPassingScore ??
+                activeCheckpointQuiz.passingScore
+              }
+              mode="checkpoint"
+              previousModuleTitle={course.modules[activeCheckpointAfterIndex]?.title}
+              nextModuleTitle={course.modules[activeCheckpointAfterIndex + 1]?.title}
+              previousResult={checkpointStore[course.id]?.[activeCheckpointQuiz.id] || null}
+              allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
+              onComplete={(result) => {
+                saveQuizResult(activeCheckpointQuiz.id, result);
+              }}
+              onContinue={() => {
+                const targetIdx = activeCheckpointAfterIndex + 1;
+                setActiveCheckpointAfterIndex(null);
+                if (targetIdx < course.modules.length) {
+                  setActiveModuleIndex(targetIdx);
+                }
+              }}
+              onSkip={() => {
+                const targetIdx = activeCheckpointAfterIndex + 1;
+                setActiveCheckpointAfterIndex(null);
+                if (targetIdx < course.modules.length) {
+                  setActiveModuleIndex(targetIdx);
+                }
+              }}
+              onBackToModule={() => {
+                setActiveModuleIndex(activeCheckpointAfterIndex);
+                setActiveCheckpointAfterIndex(null);
+              }}
+            />
+          ) : (
+            <>
+              {/* Theory Module */}
+              {activeModule.type === 'theory' && (
             <div className="p-6 sm:p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
               <h1 className="text-xl font-extrabold text-slate-900 dark:text-white">
                 {activeModule.title}
@@ -821,121 +1002,113 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             </div>
           )}
 
-          {/* Quiz Module */}
-          {activeModule.type === 'quiz' && activeModule.quiz && (
-            <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h1 className="text-xl font-extrabold text-slate-900 dark:text-white">
-                    {activeModule.title}
-                  </h1>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Passing Benchmark: {activeModule.quiz.passingScore}% • {activeModule.quiz.questions.length} Questions
-                  </p>
-                </div>
-
-                {quizSubmitted && (
-                  <div className={`px-4 py-2 rounded-xl text-xs font-mono font-bold ${
-                    quizScore >= activeModule.quiz.passingScore
-                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                      : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
-                  }`}>
-                    Score: {quizScore}% {quizScore >= activeModule.quiz.passingScore ? '(Passed!)' : '(Try Again)'}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-6">
-                {activeModule.quiz.questions.map((q, qIndex) => {
-                  const userAnswer = selectedAnswers[q.id];
-                  const isCorrect = userAnswer === q.correctAnswerIndex;
-
-                  return (
-                    <div key={q.id} className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 space-y-3">
-                      <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                        {qIndex + 1}. {q.question}
-                      </p>
-
-                      <div className="space-y-2">
-                        {q.options.map((opt, optIndex) => {
-                          const isSelected = userAnswer === optIndex;
-                          let optClass = 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400';
-
-                          if (quizSubmitted) {
-                            if (optIndex === q.correctAnswerIndex) {
-                              optClass = 'bg-emerald-50 dark:bg-emerald-950/80 border-emerald-500 text-emerald-800 dark:text-emerald-300 font-bold';
-                            } else if (isSelected) {
-                              optClass = 'bg-red-50 dark:bg-red-950/80 border-red-500 text-red-800 dark:text-red-300';
-                            }
-                          } else if (isSelected) {
-                            optClass = 'border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-cyan-300 font-medium';
-                          }
-
-                          return (
-                            <div
-                              key={optIndex}
-                              onClick={() => {
-                                if (!quizSubmitted) {
-                                  setSelectedAnswers(prev => ({ ...prev, [q.id]: optIndex }));
-                                }
-                              }}
-                              className={`p-2.5 rounded-lg border text-xs cursor-pointer transition-all flex items-center justify-between ${optClass}`}
-                            >
-                              <span>{opt}</span>
-                              {isSelected && <span className="w-2 h-2 rounded-full bg-blue-600" />}
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {quizSubmitted && (
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 pt-1">
-                          💡 <em>Explanation:</em> {q.explanation}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {!quizSubmitted ? (
-                <button
-                  onClick={handleQuizSubmit}
-                  disabled={Object.keys(selectedAnswers).length < activeModule.quiz.questions.length}
-                  className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold text-xs shadow-md transition-all"
-                >
-                  Submit Assessment Answers
-                </button>
-              ) : (
-                <button
-                  onClick={() => {
-                    setQuizSubmitted(false);
-                    setSelectedAnswers({});
+              {/* Quiz Module (Powered by InteractiveQuiz with immediate feedback & scoring) */}
+              {activeModule.type === 'quiz' && activeModule.quiz && (
+                <InteractiveQuiz
+                  quizKey={`${course.id}:${activeModule.id}`}
+                  title={activeModule.title}
+                  subtitle={activeModule.summary}
+                  questions={activeModule.quiz.questions}
+                  passingScore={
+                    activeModule.quiz.passingScore ||
+                    course.gradingCriteria?.quizPassingScore ||
+                    75
+                  }
+                  mode="module"
+                  nextModuleTitle={
+                    activeModuleIndex < course.modules.length - 1
+                      ? course.modules[activeModuleIndex + 1]?.title
+                      : undefined
+                  }
+                  previousResult={
+                    checkpointStore[course.id]?.[`module:${activeModule.id}`] || null
+                  }
+                  allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
+                  onComplete={(result) => {
+                    saveQuizResult(`module:${activeModule.id}`, result);
+                    if (result.passed) {
+                      completeModule(course.id, activeModule.id);
+                    }
                   }}
-                  className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold"
-                >
-                  Retake Assessment
-                </button>
+                  onContinue={
+                    activeModuleIndex < course.modules.length - 1
+                      ? () => handleNextModule()
+                      : undefined
+                  }
+                />
               )}
-            </div>
+
+              {/* Quick Between-Module Retention Prompt at Bottom of Module */}
+              {currentModuleCheckpointQuiz && (
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-cyan-400 shrink-0">
+                      <CheckSquare className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 space-y-0.5">
+                      <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-900 dark:text-slate-100">
+                        <span>{currentModuleCheckpointQuiz.title}</span>
+                        {checkpointStore[course.id]?.[currentModuleCheckpointQuiz.id] && (
+                          <span
+                            className={`font-mono text-[11px] tabular-nums ${
+                              checkpointStore[course.id][currentModuleCheckpointQuiz.id].passed
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-amber-600 dark:text-amber-400'
+                            }`}
+                          >
+                            · Best {checkpointStore[course.id][currentModuleCheckpointQuiz.id].score}%
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {currentModuleCheckpointQuiz.questions.length} quick questions with instant feedback before Module {activeModuleIndex + 2}.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCheckpoint(activeModuleIndex)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200 dark:border-cyan-800 bg-white dark:bg-slate-800 text-xs font-semibold text-blue-700 dark:text-cyan-300 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0"
+                  >
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    <span>
+                      {checkpointStore[course.id]?.[currentModuleCheckpointQuiz.id]
+                        ? 'Retake Retention Check'
+                        : 'Take Retention Check'}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </>
           )}
 
           {/* Bottom Next/Previous Step Bar */}
-          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between">
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3">
             <button
               onClick={handlePrevModule}
-              disabled={activeModuleIndex === 0}
-              className="flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40"
+              disabled={activeModuleIndex === 0 && activeCheckpointAfterIndex === null}
+              className="flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 whitespace-nowrap shrink-0"
             >
               <ChevronLeft className="w-4 h-4" />
-              <span>Previous Module</span>
+              <span>
+                {activeCheckpointAfterIndex !== null
+                  ? `Back to Module ${activeCheckpointAfterIndex + 1}`
+                  : 'Previous Module'}
+              </span>
             </button>
 
             <button
               onClick={handleNextModule}
-              className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-all"
+              className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-all whitespace-nowrap shrink-0"
             >
-              <span>{activeModuleIndex === course.modules.length - 1 ? 'Finish & Generate Certificate' : 'Complete & Next Module'}</span>
+              <span>
+                {activeCheckpointAfterIndex !== null
+                  ? `Proceed to Module ${activeCheckpointAfterIndex + 2}`
+                  : activeModuleIndex === course.modules.length - 1
+                  ? 'Finish & Generate Certificate'
+                  : 'Complete & Next Module'}
+              </span>
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>

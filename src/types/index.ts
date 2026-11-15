@@ -93,6 +93,11 @@ export interface CourseModule {
     passingScore: number;
     questions: QuizQuestion[];
   };
+  checkpointQuiz?: {
+    title?: string;
+    passingScore: number;
+    questions: QuizQuestion[];
+  };
   lab?: {
     objective: string;
     nodes: LabTopologyNode[];
@@ -101,6 +106,20 @@ export interface CourseModule {
     expectedCommands: string[];
     terminalHints: string[];
     verificationCheck: string;
+  };
+}
+
+export interface CourseGradingCriteria {
+  overallPassingScore: number;
+  quizPassingScore: number;
+  requireAllModulesComplete: boolean;
+  requireQuizPassForCertificate: boolean;
+  allowQuizRetakes: boolean;
+  maxQuizAttempts: number; // 0 = unlimited
+  weights: {
+    quizzes: number;
+    labs: number;
+    lessonsAndPcaps: number;
   };
 }
 
@@ -129,6 +148,7 @@ export interface Course {
   prerequisites: string[];
   learningOutcomes: string[];
   modules: CourseModule[];
+  gradingCriteria?: CourseGradingCriteria;
   isPublished: boolean;
   updatedAt: string;
   defaultAccessDays?: number;
