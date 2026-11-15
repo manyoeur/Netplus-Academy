@@ -148,6 +148,53 @@ app.post('/api/payments/subscribe', (req: Request, res: Response) => {
   });
 });
 
+// Per-Course Student Enrollment Payment Endpoint
+app.post('/api/payments/course-enroll', (req: Request, res: Response) => {
+  const {
+    courseId,
+    courseCode,
+    courseTitle,
+    price,
+    promoCode,
+    paymentMethod,
+    cardLast4,
+    email,
+    studentName
+  } = req.body || {};
+
+  const originalPrice = Math.max(0, Number(price) || 0);
+  const cleanPromo = typeof promoCode === 'string' ? promoCode.trim().toUpperCase() : '';
+  const promoRates: Record<string, number> = {
+    NETPLUS20: 0.2,
+    STUDENT10: 0.1,
+    CCNA50: 0.5
+  };
+  const discountRate = promoRates[cleanPromo] || 0;
+  const discountAmount = Math.min(originalPrice, Math.round(originalPrice * discountRate * 100) / 100);
+  const amountPaid = Math.max(0, Math.round((originalPrice - discountAmount) * 100) / 100);
+
+  const transactionId = 'TXN-CRS-' + Math.random().toString(36).substring(2, 9).toUpperCase();
+  const invoiceNumber = 'INV-' + Math.floor(100000 + Math.random() * 900000);
+
+  return res.json({
+    success: true,
+    transactionId,
+    invoiceNumber,
+    courseId,
+    courseCode,
+    courseTitle,
+    originalPrice,
+    discountAmount,
+    amountPaid,
+    promoCode: discountRate > 0 ? cleanPromo : undefined,
+    currency: 'USD',
+    paymentMethod: paymentMethod || 'card',
+    cardLast4: paymentMethod === 'card' ? cardLast4 || '4242' : undefined,
+    paidAt: new Date().toISOString(),
+    message: `Payment confirmed for ${courseCode || courseTitle} (${studentName || email || 'Student'}).`
+  });
+});
+
 // LMS External API Integrations (Canvas, Blackboard, Moodle, SCORM)
 app.get('/api/lms/export-scorm', (req: Request, res: Response) => {
   const { courseId } = req.query;

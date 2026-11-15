@@ -305,3 +305,29 @@ export interface NotificationItem {
     bodyHtml: string;
   };
 }
+
+export type CoursePaymentMethod = 'card' | 'paypal' | 'bank_transfer';
+
+export interface CoursePaymentRecord {
+  id: string;
+  transactionId: string;
+  invoiceNumber: string;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  courseId: string;
+  courseCode: string;
+  courseTitle: string;
+  originalPrice: number;
+  discountAmount: number;
+  amountPaid: number;
+  currency: 'USD';
+  promoCode?: string;
+  paymentMethod: CoursePaymentMethod;
+  cardLast4?: string;
+  status: 'paid' | 'refunded';
+  paidAt: string;
+  accessStartDate: string;
+  accessExpiresAt: string;
+}
+

@@ -16,6 +16,8 @@ import { DiscussionForum } from './components/Forum/DiscussionForum';
 import { NotificationDrawer } from './components/Notifications/NotificationDrawer';
 import { LoginPage } from './components/Auth/LoginPage';
 import { PaymentGatewayModal } from './components/Billing/PaymentGatewayModal';
+import { CoursePaymentModal } from './components/Billing/CoursePaymentModal';
+import { Course, CoursePaymentRecord } from './types';
 import { WifiOff, Terminal, Network } from 'lucide-react';
 
 type ManagementSubTab = 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students';
@@ -50,6 +52,8 @@ const AcademyApp: React.FC = () => {
   // Modals & Drawers
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [checkoutCourse, setCheckoutCourse] = useState<Course | null>(null);
+  const [checkoutReceipt, setCheckoutReceipt] = useState<CoursePaymentRecord | null>(null);
 
   const handleSelectCourse = (courseId: string) => {
     setActiveCourseId(courseId);
@@ -155,6 +159,10 @@ const AcademyApp: React.FC = () => {
             }}
             onViewCertificates={() => setCurrentTab('certificates')}
             onOpenPricing={() => setIsPaymentOpen(true)}
+            onOpenCourseCheckout={(course) => {
+              setCheckoutReceipt(null);
+              setCheckoutCourse(course);
+            }}
           />
         )}
 
@@ -163,6 +171,10 @@ const AcademyApp: React.FC = () => {
           <CourseCatalog
             onSelectCourse={handleSelectCourse}
             onOpenPaymentModal={() => setIsPaymentOpen(true)}
+            onOpenCourseCheckout={(course) => {
+              setCheckoutReceipt(null);
+              setCheckoutCourse(course);
+            }}
           />
         )}
 
@@ -173,6 +185,10 @@ const AcademyApp: React.FC = () => {
             onViewCertificates={() => setCurrentTab('certificates')}
             onOpenPricing={() => setIsPaymentOpen(true)}
             onOpenCliLab={() => setCurrentTab('lab-sandbox')}
+            onOpenCourseCheckout={(course, receipt) => {
+              setCheckoutCourse(course);
+              setCheckoutReceipt(receipt || null);
+            }}
           />
         )}
 
@@ -247,6 +263,22 @@ const AcademyApp: React.FC = () => {
       <PaymentGatewayModal
         isOpen={isPaymentOpen}
         onClose={() => setIsPaymentOpen(false)}
+      />
+
+      {/* Per-Course Student Enrollment Checkout Modal */}
+      <CoursePaymentModal
+        course={checkoutCourse}
+        initialReceipt={checkoutReceipt}
+        isOpen={Boolean(checkoutCourse || checkoutReceipt)}
+        onClose={() => {
+          setCheckoutCourse(null);
+          setCheckoutReceipt(null);
+        }}
+        onPaymentSuccess={(paidCourse) => {
+          setCheckoutCourse(null);
+          setCheckoutReceipt(null);
+          handleSelectCourse(paidCourse.id);
+        }}
       />
 
       {/* Footer */}

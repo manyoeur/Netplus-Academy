@@ -15,6 +15,7 @@ import {
   XCircle
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
+import { Course } from '../../types';
 import { CourseThumbnail } from './CourseThumbnail';
 import {
   DEFAULT_ENROLLMENT_DAYS,
@@ -26,6 +27,7 @@ import {
 interface CourseCatalogProps {
   onSelectCourse: (courseId: string) => void;
   onOpenPaymentModal: () => void;
+  onOpenCourseCheckout?: (course: Course) => void;
 }
 
 type CatalogViewMode = 'grid' | 'list';
@@ -35,7 +37,8 @@ const CATALOG_VIEW_STORAGE_KEY = 'netpulse_academy_catalog_view';
 
 export const CourseCatalog: React.FC<CourseCatalogProps> = ({
   onSelectCourse,
-  onOpenPaymentModal
+  onOpenPaymentModal,
+  onOpenCourseCheckout
 }) => {
   const { courses, currentUser, enrollInCourse } = useAcademy();
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -448,32 +451,53 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
 
                   {/* Footer Metadata & Action Button */}
                   <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
-                    <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5 font-mono tabular-nums">
-                      <Clock className="w-3.5 h-3.5 shrink-0" />
-                      <span>
-                        {course.durationHours}h · {totalModules} mod
+                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums min-w-0">
+                      <span className="inline-flex items-center gap-1 truncate">
+                        <Clock className="w-3.5 h-3.5 shrink-0" />
+                        <span>
+                          {course.durationHours}h · {totalModules}m
+                        </span>
                       </span>
-                    </span>
+                      <span className="text-slate-300 dark:text-slate-700">·</span>
+                      <span className="font-bold text-slate-900 dark:text-white shrink-0">
+                        {course.price > 0 ? `$${course.price}` : 'Free'}
+                      </span>
+                    </div>
 
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
+                        const needsStudentPayment =
+                          currentUser.role === 'student' &&
+                          course.price > 0 &&
+                          (!isEnrolled || expiryInfo?.status === 'expired');
+
+                        if (needsStudentPayment && onOpenCourseCheckout) {
+                          onOpenCourseCheckout(course);
+                          return;
+                        }
                         if (!isEnrolled) {
                           enrollInCourse(course.id);
                         }
                         onSelectCourse(course.id);
                       }}
                       className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition-all ${
-                        isEnrolled
+                        isEnrolled && expiryInfo?.status === 'expired' && currentUser.role === 'student' && course.price > 0
+                          ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-sm shadow-amber-500/20'
+                          : isEnrolled
                           ? 'bg-blue-50 text-blue-600 dark:bg-cyan-950/40 dark:text-cyan-300 hover:bg-blue-600 hover:text-white dark:hover:bg-cyan-500 dark:hover:text-slate-950 border border-blue-200/60 dark:border-cyan-800/50'
                           : 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-500/20'
                       }`}
                     >
-                      {progressPercent === 100
+                      {isEnrolled && expiryInfo?.status === 'expired' && currentUser.role === 'student' && course.price > 0
+                        ? `Renew · $${course.price}`
+                        : progressPercent === 100
                         ? 'Review Course'
                         : isEnrolled
                         ? 'Resume Course'
+                        : currentUser.role === 'student' && course.price > 0
+                        ? `Enroll · $${course.price}`
                         : 'Enroll Now'}
                     </button>
                   </div>
@@ -581,6 +605,13 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                 {/* Right Progress & Action Column */}
                 <div className="md:w-56 shrink-0 p-5 pt-0 md:pt-5 md:border-l md:border-slate-100 md:dark:border-slate-800/80 flex flex-col justify-between gap-4">
                   <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs font-mono tabular-nums pb-1 border-b border-slate-100 dark:border-slate-800/80">
+                      <span className="text-slate-500 dark:text-slate-400">Tuition</span>
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        {course.price > 0 ? `$${course.price}.00` : 'Free'}
+                      </span>
+                    </div>
+
                     <div className="flex items-center justify-between text-xs font-mono tabular-nums">
                       <span className="text-slate-500 dark:text-slate-400">Progress</span>
                       <span
@@ -653,22 +684,37 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      const needsStudentPayment =
+                        currentUser.role === 'student' &&
+                        course.price > 0 &&
+                        (!isEnrolled || expiryInfo?.status === 'expired');
+
+                      if (needsStudentPayment && onOpenCourseCheckout) {
+                        onOpenCourseCheckout(course);
+                        return;
+                      }
                       if (!isEnrolled) {
                         enrollInCourse(course.id);
                       }
                       onSelectCourse(course.id);
                     }}
                     className={`w-full px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-                      isEnrolled
+                      isEnrolled && expiryInfo?.status === 'expired' && currentUser.role === 'student' && course.price > 0
+                        ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-sm shadow-amber-500/20'
+                        : isEnrolled
                         ? 'bg-blue-50 text-blue-600 dark:bg-cyan-950/40 dark:text-cyan-300 hover:bg-blue-600 hover:text-white dark:hover:bg-cyan-500 dark:hover:text-slate-950 border border-blue-200/60 dark:border-cyan-800/50'
                         : 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-500/20'
                     }`}
                   >
                     <span>
-                      {progressPercent === 100
+                      {isEnrolled && expiryInfo?.status === 'expired' && currentUser.role === 'student' && course.price > 0
+                        ? `Renew · $${course.price}`
+                        : progressPercent === 100
                         ? 'Review Course'
                         : isEnrolled
                         ? 'Resume Course'
+                        : currentUser.role === 'student' && course.price > 0
+                        ? `Pay $${course.price} & Enroll`
                         : 'Enroll Now'}
                     </span>
                     <ArrowRight className="w-3.5 h-3.5" />

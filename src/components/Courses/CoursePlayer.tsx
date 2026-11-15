@@ -13,9 +13,12 @@ import {
   AlertTriangle,
   XCircle,
   Clock,
-  CheckSquare
+  CheckSquare,
+  Lock,
+  CreditCard
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
+import { Course } from '../../types';
 import { InteractiveCliTerminal } from '../Lab/InteractiveCliTerminal';
 import { CourseThumbnail } from './CourseThumbnail';
 import { InteractiveQuiz, QuizResult } from './InteractiveQuiz';
@@ -23,7 +26,8 @@ import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
 import {
   resolveCourseEnrollment,
   formatEnrollmentDate,
-  getEnrollmentExpirationInfo
+  getEnrollmentExpirationInfo,
+  DEFAULT_ENROLLMENT_DAYS
 } from '../../utils/enrollmentDates';
 
 interface CoursePlayerProps {
@@ -31,6 +35,7 @@ interface CoursePlayerProps {
   onBack: () => void;
   onViewCertificates: () => void;
   onOpenPricing?: () => void;
+  onOpenCourseCheckout?: (course: Course) => void;
 }
 
 interface ModuleReadingProgress {
@@ -103,7 +108,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   courseId,
   onBack,
   onViewCertificates,
-  onOpenPricing
+  onOpenPricing,
+  onOpenCourseCheckout
 }) => {
   const { courses, currentUser, completeModule, enrollInCourse } = useAcademy();
   const course = courses.find(c => c.id === courseId) || courses[0];
@@ -387,6 +393,12 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
   const enrollment = resolveCourseEnrollment(currentUser, course);
   const expiryInfo = enrollment ? getEnrollmentExpirationInfo(enrollment) : null;
+  const isStudentPaymentRequired =
+    currentUser.role === 'student' &&
+    course.price > 0 &&
+    (!isEnrolled || expiryInfo?.status === 'expired');
+  const isViewingLockedContent =
+    isStudentPaymentRequired && (activeModuleIndex > 0 || activeCheckpointAfterIndex !== null);
 
   const activeCheckpointQuiz =
     activeCheckpointAfterIndex !== null
@@ -443,6 +455,13 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   };
 
   const handleNextModule = () => {
+    if (isStudentPaymentRequired) {
+      if (onOpenCourseCheckout) {
+        onOpenCourseCheckout(course);
+      }
+      return;
+    }
+
     if (activeCheckpointAfterIndex !== null) {
       const nextIdx = activeCheckpointAfterIndex + 1;
       setActiveCheckpointAfterIndex(null);
@@ -611,6 +630,15 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                         {!isDone && savedModPercent > 0 ? ` · ${savedModPercent}% read` : ''}
                       </span>
                     </div>
+
+                    {isStudentPaymentRequired && idx > 0 && (
+                      <Lock
+                        className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${
+                          isActive ? 'text-blue-100' : 'text-slate-400 dark:text-slate-500'
+                        }`}
+                        aria-label="Payment required"
+                      />
+                    )}
                   </button>
 
                   {/* Injected Between-Module Retention Checkpoint Trigger */}
@@ -722,6 +750,26 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 </div>
               </div>
             </div>
+          ) : currentUser.role === 'student' && course.price > 0 && onOpenCourseCheckout ? (
+            <div className="p-3.5 rounded-xl bg-blue-50/90 dark:bg-blue-950/35 border border-blue-200 dark:border-blue-800/70 space-y-2.5 text-[11px] text-slate-700 dark:text-slate-300">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-slate-900 dark:text-white">Preview Mode</span>
+                <span className="font-mono font-bold tabular-nums text-blue-700 dark:text-cyan-300">
+                  ${course.price}.00 USD
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                Module 1 is open for free preview. Complete enrollment payment to unlock all {course.modules.length} modules and labs for {course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS} days.
+              </p>
+              <button
+                type="button"
+                onClick={() => onOpenCourseCheckout(course)}
+                className="w-full py-2 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+              >
+                <CreditCard className="w-3.5 h-3.5" />
+                <span>Pay ${course.price} &amp; Enroll</span>
+              </button>
+            </div>
           ) : (
             <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300">
               <p className="font-bold mb-1">Preview Mode</p>
@@ -729,7 +777,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 onClick={() => enrollInCourse(course.id)}
                 className="w-full py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs mt-1"
               >
-                Enroll Free & Track Progress
+                Enroll Free &amp; Track Progress
               </button>
             </div>
           )}
@@ -767,7 +815,15 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 </p>
               </div>
 
-              {onOpenPricing && (
+              {(onOpenCourseCheckout && currentUser.role === 'student' && course.price > 0 && expiryInfo.status === 'expired') ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenCourseCheckout(course)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 text-white transition-colors bg-red-600 hover:bg-red-500"
+                >
+                  Renew Access · ${course.price}
+                </button>
+              ) : onOpenPricing ? (
                 <button
                   type="button"
                   onClick={onOpenPricing}
@@ -779,12 +835,12 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 >
                   {expiryInfo.status === 'expired' ? 'Renew Access' : 'Extend Plan'}
                 </button>
-              )}
+              ) : null}
             </div>
           )}
 
-          {/* Reading Progress & Resume Banner (hidden when in between-module checkpoint quiz) */}
-          {activeCheckpointAfterIndex === null && (
+          {/* Reading Progress & Resume Banner (hidden when in between-module checkpoint quiz or locked preview) */}
+          {activeCheckpointAfterIndex === null && !isViewingLockedContent && (
             <div className="px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 min-w-0">
@@ -843,8 +899,75 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             </div>
           )}
 
-          {/* Injected Between-Module Interactive Retention Quiz */}
-          {activeCheckpointAfterIndex !== null && activeCheckpointQuiz ? (
+          {/* Locked Curriculum Payment Gate for Student Mode */}
+          {isViewingLockedContent ? (
+            <div className="p-6 sm:p-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm text-center space-y-5">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-cyan-400 flex items-center justify-center">
+                <Lock className="w-6 h-6" />
+              </div>
+
+              <div className="max-w-lg mx-auto space-y-2">
+                <p className="text-[11px] font-mono font-bold uppercase tracking-wider text-blue-600 dark:text-cyan-400">
+                  {course.code} · {expiryInfo?.status === 'expired' ? 'Enrollment Expired' : 'Full Course Enrollment Required'}
+                </p>
+                <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white">
+                  {expiryInfo?.status === 'expired'
+                    ? `Renew access to continue ${course.title}`
+                    : `Unlock Module ${activeModuleIndex + 1} & All Interactive Labs`}
+                </h2>
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                  {expiryInfo?.status === 'expired'
+                    ? 'Your previous enrollment window has ended. Complete renewal payment to restore full access to all modules, CLI labs, and certificate tracking.'
+                    : `Module 1 is included as a free preview. Complete per-course tuition payment to unlock all ${course.modules.length} curriculum modules, retention checkpoints, and official certificate eligibility.`}
+                </p>
+              </div>
+
+              <div className="max-w-md mx-auto p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/70 grid grid-cols-3 gap-3 text-left font-mono text-xs tabular-nums">
+                <div>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block">Tuition</span>
+                  <span className="font-bold text-slate-900 dark:text-white">${course.price}.00</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block">Access</span>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS} Days
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block">Modules</span>
+                  <span className="font-bold text-slate-900 dark:text-white">{course.modules.length} Total</span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+                {onOpenCourseCheckout && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenCourseCheckout(course)}
+                    className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-md shadow-blue-500/20 flex items-center gap-2 transition-colors"
+                  >
+                    <CreditCard className="w-4 h-4" />
+                    <span>
+                      {expiryInfo?.status === 'expired'
+                        ? `Renew Access · $${course.price}`
+                        : `Complete Payment · $${course.price}`}
+                    </span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveCheckpointAfterIndex(null);
+                    setActiveModuleIndex(0);
+                  }}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold transition-colors"
+                >
+                  Back to Preview Module 1
+                </button>
+              </div>
+            </div>
+          ) : activeCheckpointAfterIndex !== null && activeCheckpointQuiz ? (
             <InteractiveQuiz
               quizKey={activeCheckpointQuiz.id}
               title={activeCheckpointQuiz.title}
@@ -933,7 +1056,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               module={activeModule}
               courseId={course.id}
               onCompleted={() => {
-                completeModule(course.id, activeModule.id);
+                if (!isStudentPaymentRequired) {
+                  completeModule(course.id, activeModule.id);
+                }
               }}
             />
           )}
@@ -1026,7 +1151,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                   allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
                   onComplete={(result) => {
                     saveQuizResult(`module:${activeModule.id}`, result);
-                    if (result.passed) {
+                    if (result.passed && !isStudentPaymentRequired) {
                       completeModule(course.id, activeModule.id);
                     }
                   }}
@@ -1084,34 +1209,38 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           )}
 
           {/* Bottom Next/Previous Step Bar */}
-          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3">
-            <button
-              onClick={handlePrevModule}
-              disabled={activeModuleIndex === 0 && activeCheckpointAfterIndex === null}
-              className="flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 whitespace-nowrap shrink-0"
-            >
-              <ChevronLeft className="w-4 h-4" />
-              <span>
-                {activeCheckpointAfterIndex !== null
-                  ? `Back to Module ${activeCheckpointAfterIndex + 1}`
-                  : 'Previous Module'}
-              </span>
-            </button>
+          {!isViewingLockedContent && (
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3">
+              <button
+                onClick={handlePrevModule}
+                disabled={activeModuleIndex === 0 && activeCheckpointAfterIndex === null}
+                className="flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 whitespace-nowrap shrink-0"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                <span>
+                  {activeCheckpointAfterIndex !== null
+                    ? `Back to Module ${activeCheckpointAfterIndex + 1}`
+                    : 'Previous Module'}
+                </span>
+              </button>
 
-            <button
-              onClick={handleNextModule}
-              className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-all whitespace-nowrap shrink-0"
-            >
-              <span>
-                {activeCheckpointAfterIndex !== null
-                  ? `Proceed to Module ${activeCheckpointAfterIndex + 2}`
-                  : activeModuleIndex === course.modules.length - 1
-                  ? 'Finish & Generate Certificate'
-                  : 'Complete & Next Module'}
-              </span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
+              <button
+                onClick={handleNextModule}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-all whitespace-nowrap shrink-0"
+              >
+                <span>
+                  {isStudentPaymentRequired
+                    ? `Pay $${course.price} & Unlock Next Modules`
+                    : activeCheckpointAfterIndex !== null
+                    ? `Proceed to Module ${activeCheckpointAfterIndex + 2}`
+                    : activeModuleIndex === course.modules.length - 1
+                    ? 'Finish & Generate Certificate'
+                    : 'Complete & Next Module'}
+                </span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
 
       </div>

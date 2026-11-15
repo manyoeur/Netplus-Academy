@@ -15,7 +15,13 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
-import { Invitation, InvitationStatus, SubscriptionTier } from './types';
+import {
+  CoursePaymentMethod,
+  CoursePaymentRecord,
+  Invitation,
+  InvitationStatus,
+  SubscriptionTier
+} from './types';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -359,4 +365,92 @@ export async function deleteUserFromFirestore(uid: string): Promise<void> {
     }
   }
 }
+
+export async function saveCoursePaymentToFirestore(
+  payment: CoursePaymentRecord
+): Promise<void> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return;
+  const safeId = payment.id.replace(/[^a-zA-Z0-9_\-]/g, '-').slice(0, 128);
+  const paymentPath = `coursePayments/${safeId}`;
+  const ref = doc(db, 'coursePayments', safeId);
+  try {
+    await setDoc(ref, {
+      id: safeId,
+      transactionId: payment.transactionId.slice(0, 64),
+      invoiceNumber: payment.invoiceNumber.slice(0, 64),
+      studentUid: auth.currentUser.uid,
+      studentName: (payment.studentName || auth.currentUser.displayName || 'Student').trim().slice(0, 120),
+      studentEmail: (auth.currentUser.email || payment.studentEmail || 'student@netplus.academy').trim().toLowerCase().slice(0, 254),
+      courseId: payment.courseId.replace(/[^a-zA-Z0-9_\-]/g, '-').slice(0, 128),
+      courseCode: payment.courseCode.trim().slice(0, 64),
+      courseTitle: payment.courseTitle.trim().slice(0, 200),
+      originalPrice: Math.max(0, Math.min(50000, Number(payment.originalPrice) || 0)),
+      discountAmount: Math.max(0, Math.min(Number(payment.originalPrice) || 0, Number(payment.discountAmount) || 0)),
+      amountPaid: Math.max(0, Math.min(Number(payment.originalPrice) || 0, Number(payment.amountPaid) || 0)),
+      currency: 'USD',
+      ...(payment.promoCode ? { promoCode: payment.promoCode.trim().slice(0, 40) } : {}),
+      paymentMethod: payment.paymentMethod,
+      ...(payment.cardLast4 ? { cardLast4: payment.cardLast4.trim().slice(0, 8) } : {}),
+      status: 'paid',
+      paidAt: payment.paidAt.slice(0, 64),
+      accessStartDate: payment.accessStartDate.slice(0, 32),
+      accessExpiresAt: payment.accessExpiresAt.slice(0, 32),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.CREATE, paymentPath);
+    }
+  }
+}
+
+export async function fetchCoursePaymentsFromFirestore(
+  isAdminUser: boolean
+): Promise<CoursePaymentRecord[] | null> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return null;
+  const path = 'coursePayments';
+  try {
+    const colRef = collection(db, path);
+    const q = isAdminUser
+      ? colRef
+      : query(colRef, where('studentUid', '==', auth.currentUser.uid));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => {
+      const data = d.data() as Record<string, any>;
+      const method: CoursePaymentMethod =
+        data.paymentMethod === 'paypal' || data.paymentMethod === 'bank_transfer'
+          ? data.paymentMethod
+          : 'card';
+      return {
+        id: String(data.id || d.id),
+        transactionId: String(data.transactionId || ''),
+        invoiceNumber: String(data.invoiceNumber || ''),
+        studentId: String(data.studentUid || ''),
+        studentName: String(data.studentName || ''),
+        studentEmail: String(data.studentEmail || ''),
+        courseId: String(data.courseId || ''),
+        courseCode: String(data.courseCode || ''),
+        courseTitle: String(data.courseTitle || ''),
+        originalPrice: Number(data.originalPrice) || 0,
+        discountAmount: Number(data.discountAmount) || 0,
+        amountPaid: Number(data.amountPaid) || 0,
+        currency: 'USD',
+        promoCode: typeof data.promoCode === 'string' ? data.promoCode : undefined,
+        paymentMethod: method,
+        cardLast4: typeof data.cardLast4 === 'string' ? data.cardLast4 : undefined,
+        status: data.status === 'refunded' ? 'refunded' : 'paid',
+        paidAt: String(data.paidAt || new Date().toISOString()),
+        accessStartDate: String(data.accessStartDate || ''),
+        accessExpiresAt: String(data.accessExpiresAt || '')
+      };
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+    return null;
+  }
+}
+
 

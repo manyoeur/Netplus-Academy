@@ -164,5 +164,71 @@ service cloud.firestore {
 
       allow delete: if isValidId(inviteId) && isAdmin();
     }
+
+    function isValidCoursePayment(data) {
+      return data.keys().hasAll([
+          'id', 'transactionId', 'invoiceNumber', 'studentUid', 'studentName',
+          'studentEmail', 'courseId', 'courseCode', 'courseTitle',
+          'originalPrice', 'discountAmount', 'amountPaid', 'currency',
+          'paymentMethod', 'status', 'paidAt', 'accessStartDate',
+          'accessExpiresAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'transactionId', 'invoiceNumber', 'studentUid', 'studentName',
+          'studentEmail', 'courseId', 'courseCode', 'courseTitle',
+          'originalPrice', 'discountAmount', 'amountPaid', 'currency',
+          'promoCode', 'paymentMethod', 'cardLast4', 'status', 'paidAt',
+          'accessStartDate', 'accessExpiresAt', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.transactionId is string && data.transactionId.size() >= 4 && data.transactionId.size() <= 64
+        && data.invoiceNumber is string && data.invoiceNumber.size() >= 4 && data.invoiceNumber.size() <= 64
+        && isValidId(data.studentUid)
+        && data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 120
+        && data.studentEmail is string && data.studentEmail.size() >= 3 && data.studentEmail.size() <= 254
+        && isValidId(data.courseId)
+        && data.courseCode is string && data.courseCode.size() >= 1 && data.courseCode.size() <= 64
+        && data.courseTitle is string && data.courseTitle.size() >= 1 && data.courseTitle.size() <= 200
+        && data.originalPrice is number && data.originalPrice >= 0 && data.originalPrice <= 50000
+        && data.discountAmount is number && data.discountAmount >= 0 && data.discountAmount <= data.originalPrice
+        && data.amountPaid is number && data.amountPaid >= 0 && data.amountPaid <= data.originalPrice
+        && data.currency is string && data.currency == 'USD'
+        && (!('promoCode' in data) || (data.promoCode is string && data.promoCode.size() <= 40))
+        && data.paymentMethod is string && data.paymentMethod in ['card', 'paypal', 'bank_transfer']
+        && (!('cardLast4' in data) || (data.cardLast4 is string && data.cardLast4.size() <= 8))
+        && data.status is string && data.status in ['paid', 'refunded']
+        && data.paidAt is string && data.paidAt.size() >= 8 && data.paidAt.size() <= 64
+        && data.accessStartDate is string && data.accessStartDate.size() >= 8 && data.accessStartDate.size() <= 32
+        && data.accessExpiresAt is string && data.accessExpiresAt.size() >= 8 && data.accessExpiresAt.size() <= 32
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /coursePayments/{paymentId} {
+      allow get: if isValidId(paymentId) && (
+        isAdmin() ||
+        (isVerified() && existing().studentUid == request.auth.uid)
+      );
+      allow list: if isAdmin() || (isVerified() && resource.data.studentUid == request.auth.uid);
+
+      allow create: if isValidId(paymentId)
+        && isVerified()
+        && isValidCoursePayment(incoming())
+        && incoming().id == paymentId
+        && incoming().studentUid == request.auth.uid
+        && incoming().status == 'paid'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(paymentId)
+        && isAdmin()
+        && isValidCoursePayment(incoming())
+        && incoming().id == existing().id
+        && incoming().studentUid == existing().studentUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+
+      allow delete: if isValidId(paymentId) && isAdmin();
+    }
   }
 }

@@ -15,7 +15,9 @@ import {
   CourseEnrollment,
   CourseClass,
   ClassAnnouncement,
-  AttendanceStatus
+  AttendanceStatus,
+  CoursePaymentMethod,
+  CoursePaymentRecord
 } from '../types';
 import { createDefaultCourseEnrollment } from '../utils/enrollmentDates';
 import {
@@ -35,7 +37,9 @@ import {
   fetchInvitationsFromFirestore,
   fetchUsersFromFirestore,
   updateUserInFirestore,
-  deleteUserFromFirestore
+  deleteUserFromFirestore,
+  saveCoursePaymentToFirestore,
+  fetchCoursePaymentsFromFirestore
 } from '../firebase';
 import { 
   INITIAL_USERS, 
@@ -187,7 +191,17 @@ interface AcademyContextType {
   generateCertificate: (courseId: string) => Certificate;
   verifyCertificate: (hashOrNumber: string) => Certificate | undefined;
   
-  // Subscriptions & Payments
+  // Subscriptions & Per-Course Payments
+  coursePayments: CoursePaymentRecord[];
+  getCoursePaymentForStudent: (courseId: string, studentId?: string) => CoursePaymentRecord | undefined;
+  completeCoursePaymentAndEnroll: (params: {
+    courseId: string;
+    paymentMethod: CoursePaymentMethod;
+    cardLast4?: string;
+    promoCode?: string;
+    billingName?: string;
+    billingEmail?: string;
+  }) => Promise<{ success: boolean; payment?: CoursePaymentRecord; error?: string }>;
   upgradeSubscription: (tier: SubscriptionTier, billingCycle: 'monthly' | 'annual', cardLast4?: string) => Promise<any>;
   
   // Forum
@@ -532,6 +546,23 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     }
 
+    if (fbUser.emailVerified) {
+      fetchCoursePaymentsFromFirestore(resolvedRole === 'admin')
+        .then(remotePayments => {
+          if (remotePayments && remotePayments.length > 0) {
+            setCoursePayments(prev => {
+              const map = new Map<string, CoursePaymentRecord>();
+              prev.forEach(p => map.set(p.id, p));
+              remotePayments.forEach(rp => map.set(rp.id, rp));
+              return Array.from(map.values()).sort(
+                (a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime()
+              );
+            });
+          }
+        })
+        .catch(() => {});
+    }
+
     if (resolvedRole === 'admin' && fbUser.emailVerified) {
       refreshUsersDirectory().catch(() => {});
     }
@@ -593,6 +624,15 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return saved ? JSON.parse(saved) : INITIAL_CLASSES;
   });
 
+  const [coursePayments, setCoursePayments] = useState<CoursePaymentRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_PREFIX}course_payments`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   // Save changes to localStorage for offline cache
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}users`, JSON.stringify(allUsers));
@@ -625,6 +665,10 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     localStorage.setItem(`${STORAGE_PREFIX}classes`, JSON.stringify(classes));
   }, [classes]);
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_PREFIX}course_payments`, JSON.stringify(coursePayments));
+  }, [coursePayments]);
 
   // Periodic heartbeat simulation for real-time progress & activity updates
   useEffect(() => {
@@ -2023,6 +2067,147 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return undefined;
   };
 
+  // Per-Course Student Checkout & Enrollment
+  const getCoursePaymentForStudent = (
+    courseId: string,
+    studentId: string = currentUser.id
+  ): CoursePaymentRecord | undefined => {
+    return coursePayments.find(
+      p => p.courseId === courseId && p.studentId === studentId && p.status === 'paid'
+    );
+  };
+
+  const completeCoursePaymentAndEnroll = async (params: {
+    courseId: string;
+    paymentMethod: CoursePaymentMethod;
+    cardLast4?: string;
+    promoCode?: string;
+    billingName?: string;
+    billingEmail?: string;
+  }): Promise<{ success: boolean; payment?: CoursePaymentRecord; error?: string }> => {
+    const targetCourse = courses.find(c => c.id === params.courseId);
+    if (!targetCourse) {
+      return { success: false, error: 'Course not found.' };
+    }
+
+    const originalPrice = Math.max(0, Number(targetCourse.price) || 0);
+    const cleanPromo = (params.promoCode || '').trim().toUpperCase();
+    const promoRates: Record<string, number> = {
+      NETPLUS20: 0.2,
+      STUDENT10: 0.1,
+      CCNA50: 0.5
+    };
+    const localDiscountRate = promoRates[cleanPromo] || 0;
+    const localDiscount = Math.min(
+      originalPrice,
+      Math.round(originalPrice * localDiscountRate * 100) / 100
+    );
+    const localAmountPaid = Math.max(0, Math.round((originalPrice - localDiscount) * 100) / 100);
+
+    let transactionId = `TXN-CRS-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+    let invoiceNumber = `INV-${Math.floor(100000 + Math.random() * 900000)}`;
+    let discountAmount = localDiscount;
+    let amountPaid = localAmountPaid;
+    let appliedPromo = localDiscountRate > 0 ? cleanPromo : undefined;
+    let paidAt = new Date().toISOString();
+
+    if (!isOffline) {
+      try {
+        const res = await fetch('/api/payments/course-enroll', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            courseId: targetCourse.id,
+            courseCode: targetCourse.code,
+            courseTitle: targetCourse.title,
+            price: originalPrice,
+            promoCode: cleanPromo || undefined,
+            paymentMethod: params.paymentMethod,
+            cardLast4: params.cardLast4,
+            email: params.billingEmail || currentUser.email,
+            studentName: params.billingName || currentUser.name
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.transactionId) transactionId = data.transactionId;
+          if (data.invoiceNumber) invoiceNumber = data.invoiceNumber;
+          if (typeof data.discountAmount === 'number') discountAmount = data.discountAmount;
+          if (typeof data.amountPaid === 'number') amountPaid = data.amountPaid;
+          if (data.promoCode) appliedPromo = data.promoCode;
+          if (data.paidAt) paidAt = data.paidAt;
+        }
+      } catch {
+        // Use local fallback receipt calculation when server request fails
+      }
+    }
+
+    const accessWindow = createDefaultCourseEnrollment(
+      targetCourse.id,
+      targetCourse.defaultAccessDays
+    );
+
+    // Enroll student & unlock full access window
+    enrollInCourse(targetCourse.id, {
+      startDate: accessWindow.startDate,
+      endDate: accessWindow.endDate,
+      expiresAt: accessWindow.expiresAt
+    });
+
+    const record: CoursePaymentRecord = {
+      id: `pay-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+      transactionId,
+      invoiceNumber,
+      studentId: currentUser.id,
+      studentName: (params.billingName || currentUser.name).trim(),
+      studentEmail: (params.billingEmail || currentUser.email).trim(),
+      courseId: targetCourse.id,
+      courseCode: targetCourse.code,
+      courseTitle: targetCourse.title,
+      originalPrice,
+      discountAmount,
+      amountPaid,
+      currency: 'USD',
+      ...(appliedPromo ? { promoCode: appliedPromo } : {}),
+      paymentMethod: params.paymentMethod,
+      ...(params.paymentMethod === 'card'
+        ? { cardLast4: (params.cardLast4 || '4242').slice(-4) }
+        : {}),
+      status: 'paid',
+      paidAt,
+      accessStartDate: accessWindow.startDate,
+      accessExpiresAt: accessWindow.expiresAt
+    };
+
+    setCoursePayments(prev => [record, ...prev]);
+
+    // Persist payment receipt to Firestore when Firebase auth is active
+    saveCoursePaymentToFirestore(record).catch(() => {});
+
+    triggerSystemNotification(
+      `Course Payment Confirmed: ${targetCourse.code}`,
+      `Paid $${amountPaid.toFixed(2)} USD for ${targetCourse.title}. Invoice #${invoiceNumber} is saved to your receipts.`,
+      'billing',
+      {
+        subject: `Netplus Academy Receipt #${invoiceNumber} — ${targetCourse.code}`,
+        to: record.studentEmail,
+        bodyHtml: `<div style="font-family:sans-serif;padding:24px;background:#f8fafc;border-radius:12px;">
+          <h2 style="color:#1d4ed8;margin-bottom:8px;">Course Enrollment Receipt</h2>
+          <p>Hi <strong>${record.studentName}</strong>,</p>
+          <p>Your payment for <strong>${targetCourse.title} (${targetCourse.code})</strong> has been processed and your enrollment is now active.</p>
+          <div style="background:#fff;padding:16px;border:1px solid #e2e8f0;border-radius:8px;margin:16px 0;">
+            <p><strong>Invoice Number:</strong> <code>${invoiceNumber}</code></p>
+            <p><strong>Transaction ID:</strong> <code>${transactionId}</code></p>
+            <p><strong>Amount Paid:</strong> $${amountPaid.toFixed(2)} USD</p>
+            <p><strong>Access Window:</strong> ${accessWindow.startDate} to ${accessWindow.expiresAt}</p>
+          </div>
+        </div>`
+      }
+    );
+
+    return { success: true, payment: record };
+  };
+
   // Subscriptions & Payments
   const upgradeSubscription = async (tier: SubscriptionTier, billingCycle: 'monthly' | 'annual', cardLast4 = '4242') => {
     try {
@@ -2283,6 +2468,9 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         markAllClassAttendance,
         generateCertificate,
         verifyCertificate,
+        coursePayments,
+        getCoursePaymentForStudent,
+        completeCoursePaymentAndEnroll,
         upgradeSubscription,
         addForumPost,
         addForumReply,

@@ -14,9 +14,12 @@ import {
   AlertTriangle,
   XCircle,
   Play,
-  Building2
+  Building2,
+  CreditCard,
+  FileText
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
+import { Course, CoursePaymentRecord } from '../../types';
 import { CourseThumbnail } from '../Courses/CourseThumbnail';
 import { CourseRadialProgressChart } from './CourseRadialProgressChart';
 import {
@@ -30,6 +33,7 @@ interface StudentDashboardProps {
   onViewCertificates: () => void;
   onOpenPricing: () => void;
   onOpenCliLab: () => void;
+  onOpenCourseCheckout?: (course: Course | null, receipt?: CoursePaymentRecord) => void;
 }
 
 type DashboardViewMode = 'grid' | 'list';
@@ -39,9 +43,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onSelectCourse,
   onViewCertificates,
   onOpenPricing,
-  onOpenCliLab
+  onOpenCliLab,
+  onOpenCourseCheckout
 }) => {
-  const { currentUser, courses } = useAcademy();
+  const { currentUser, courses, coursePayments } = useAcademy();
   const [viewMode, setViewMode] = useState<DashboardViewMode>(() => {
     try {
       const saved = localStorage.getItem(DASHBOARD_VIEW_STORAGE_KEY);
@@ -71,6 +76,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const expiringSoonCount = enrolledItems.filter(i => i.expiryInfo?.status === 'expiring_soon').length;
   const expiredCount = enrolledItems.filter(i => i.expiryInfo?.status === 'expired').length;
   const activeCount = enrolledItems.length - expiredCount;
+
+  const studentPayments = coursePayments.filter(
+    p =>
+      p.studentId === currentUser.id ||
+      (p.studentEmail && p.studentEmail.toLowerCase() === currentUser.email.toLowerCase())
+  );
 
   return (
     <div className="w-full space-y-8">
@@ -336,12 +347,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            onOpenPricing();
+                            if (course.price > 0 && onOpenCourseCheckout) {
+                              onOpenCourseCheckout(course);
+                            } else {
+                              onOpenPricing();
+                            }
                           }}
                           className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
                         >
                           <Sparkles className="w-3.5 h-3.5" />
-                          <span>Renew Access</span>
+                          <span>{course.price > 0 ? `Renew · $${course.price}` : 'Renew Access'}</span>
                         </button>
                       ) : (
                         <button
@@ -533,12 +548,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              onOpenPricing();
+                              if (course.price > 0 && onOpenCourseCheckout) {
+                                onOpenCourseCheckout(course);
+                              } else {
+                                onOpenPricing();
+                              }
                             }}
                             className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
                           >
                             <Sparkles className="w-3.5 h-3.5" />
-                            <span>Renew Access</span>
+                            <span>{course.price > 0 ? `Renew · $${course.price}` : 'Renew Access'}</span>
                           </button>
                         ) : (
                           <button
@@ -602,6 +621,107 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <ArrowRight className="w-4 h-4 text-amber-600 shrink-0" />
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* Course Payments & Receipts */}
+      <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <CreditCard className="w-5 h-5 text-blue-600 dark:text-cyan-400" />
+            <div>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                Course Payments &amp; Receipts
+              </h2>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Per-course tuition transactions and downloadable enrollment invoices.
+              </p>
+            </div>
+          </div>
+          {studentPayments.length > 0 && (
+            <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
+              {studentPayments.length} {studentPayments.length === 1 ? 'Receipt' : 'Receipts'}
+            </span>
+          )}
+        </div>
+
+        {studentPayments.length === 0 ? (
+          <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              No course payments recorded yet. Receipts and invoices appear here after completing course enrollment checkout.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 dark:bg-slate-800/70 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                <tr>
+                  <th className="py-2.5 px-3.5 font-semibold">Date</th>
+                  <th className="py-2.5 px-3.5 font-semibold">Course</th>
+                  <th className="py-2.5 px-3.5 font-semibold">Invoice #</th>
+                  <th className="py-2.5 px-3.5 font-semibold">Method</th>
+                  <th className="py-2.5 px-3.5 font-semibold text-right">Amount Paid</th>
+                  <th className="py-2.5 px-3.5 font-semibold">Status</th>
+                  <th className="py-2.5 px-3.5 font-semibold text-right">Receipt</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {studentPayments.map((payment) => {
+                  const matchedCourse = courses.find(c => c.id === payment.courseId) || null;
+                  const methodLabel =
+                    payment.paymentMethod === 'card'
+                      ? `Card${payment.cardLast4 ? ` ···· ${payment.cardLast4}` : ''}`
+                      : payment.paymentMethod === 'paypal'
+                      ? 'PayPal'
+                      : 'Bank Transfer';
+
+                  return (
+                    <tr
+                      key={payment.id}
+                      className="hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors"
+                    >
+                      <td className="py-3 px-3.5 font-mono tabular-nums text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                        {payment.paidAt.slice(0, 10)}
+                      </td>
+                      <td className="py-3 px-3.5 min-w-[180px]">
+                        <span className="font-mono text-[10px] font-bold text-blue-600 dark:text-cyan-400 block">
+                          {payment.courseCode}
+                        </span>
+                        <span className="font-semibold text-slate-900 dark:text-white line-clamp-1">
+                          {payment.courseTitle}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3.5 font-mono tabular-nums text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                        {payment.invoiceNumber}
+                      </td>
+                      <td className="py-3 px-3.5 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                        {methodLabel}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold tabular-nums text-slate-900 dark:text-white whitespace-nowrap">
+                        ${payment.amountPaid.toFixed(2)} {payment.currency}
+                      </td>
+                      <td className="py-3 px-3.5 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                          <span>Paid</span>
+                        </span>
+                      </td>
+                      <td className="py-3 px-3.5 text-right whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => onOpenCourseCheckout?.(matchedCourse, payment)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-cyan-500 text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-cyan-300 text-[11px] font-semibold transition-colors"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>Receipt</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

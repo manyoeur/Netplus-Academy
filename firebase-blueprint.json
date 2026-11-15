@@ -181,6 +181,156 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "CoursePayment": {
+      "title": "CoursePayment",
+      "description": "Completed payment and invoice record for a student enrolling in a course.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Payment record document ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "transactionId": {
+          "type": "string",
+          "description": "Payment transaction identifier",
+          "minLength": 4,
+          "maxLength": 64
+        },
+        "invoiceNumber": {
+          "type": "string",
+          "description": "Invoice receipt number",
+          "minLength": 4,
+          "maxLength": 64
+        },
+        "studentUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the paying student",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentName": {
+          "type": "string",
+          "description": "Paying student display name",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "studentEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Paying student email address",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Enrolled course ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "courseCode": {
+          "type": "string",
+          "description": "Enrolled course code",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "courseTitle": {
+          "type": "string",
+          "description": "Enrolled course title",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "originalPrice": {
+          "type": "number",
+          "description": "Base course tuition in USD"
+        },
+        "discountAmount": {
+          "type": "number",
+          "description": "Discount applied in USD"
+        },
+        "amountPaid": {
+          "type": "number",
+          "description": "Final amount charged in USD"
+        },
+        "currency": {
+          "type": "string",
+          "enum": ["USD"],
+          "description": "Payment currency code"
+        },
+        "promoCode": {
+          "type": "string",
+          "description": "Optional promo voucher code applied",
+          "maxLength": 40
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["card", "paypal", "bank_transfer"],
+          "description": "Selected checkout payment method"
+        },
+        "cardLast4": {
+          "type": "string",
+          "description": "Last 4 digits when paid by card",
+          "maxLength": 8
+        },
+        "status": {
+          "type": "string",
+          "enum": ["paid", "refunded"],
+          "description": "Payment settlement status"
+        },
+        "paidAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp of settlement",
+          "maxLength": 64
+        },
+        "accessStartDate": {
+          "type": "string",
+          "description": "Enrollment access start date (YYYY-MM-DD)",
+          "maxLength": 32
+        },
+        "accessExpiresAt": {
+          "type": "string",
+          "description": "Enrollment access expiration date (YYYY-MM-DD)",
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "transactionId",
+        "invoiceNumber",
+        "studentUid",
+        "studentName",
+        "studentEmail",
+        "courseId",
+        "courseCode",
+        "courseTitle",
+        "originalPrice",
+        "discountAmount",
+        "amountPaid",
+        "currency",
+        "paymentMethod",
+        "status",
+        "paidAt",
+        "accessStartDate",
+        "accessExpiresAt",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -191,6 +341,10 @@
     "/invitations/{inviteId}": {
       "schema": { "$ref": "#/entities/Invitation" },
       "description": "Admin-managed instructor and student registration invitations."
+    },
+    "/coursePayments/{paymentId}": {
+      "schema": { "$ref": "#/entities/CoursePayment" },
+      "description": "Student course enrollment payment receipts and transaction records."
     }
   }
 }
