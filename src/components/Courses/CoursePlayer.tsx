@@ -1,28 +1,62 @@
-import React, { useState } from 'react';
-import { 
-  ArrowLeft, 
-  CheckCircle, 
-  Play, 
-  Terminal, 
-  FileText, 
-  HelpCircle, 
-  Activity, 
-  ChevronRight, 
-  ChevronLeft, 
-  Sparkles, 
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  ArrowLeft,
+  CheckCircle,
+  Play,
+  ChevronRight,
+  ChevronLeft,
   Award,
-  Video,
-  Download,
-  ShieldCheck
+  BookmarkCheck,
+  ArrowUp,
+  X
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
-import { Course, CourseModule } from '../../types';
 import { InteractiveCliTerminal } from '../Lab/InteractiveCliTerminal';
+import { CourseThumbnail } from './CourseThumbnail';
 
 interface CoursePlayerProps {
   courseId: string;
   onBack: () => void;
   onViewCertificates: () => void;
+}
+
+interface ModuleReadingProgress {
+  scrollY: number;
+  scrollRatio: number;
+  percent: number;
+  updatedAt: string;
+}
+
+interface CourseReadingState {
+  lastModuleId: string;
+  modules: Record<string, ModuleReadingProgress>;
+}
+
+type ReadingStore = Record<string, CourseReadingState>;
+
+const READING_PROGRESS_STORAGE_PREFIX = 'netpulse_academy_reading_progress_v1';
+
+function getReadingStorageKey(userId: string): string {
+  return `${READING_PROGRESS_STORAGE_PREFIX}:${userId}`;
+}
+
+function readReadingStore(userId: string): ReadingStore {
+  try {
+    const raw = localStorage.getItem(getReadingStorageKey(userId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeReadingStore(userId: string, store: ReadingStore): void {
+  try {
+    localStorage.setItem(getReadingStorageKey(userId), JSON.stringify(store));
+  } catch {
+    // Ignore localStorage quota or private-mode errors
+  }
 }
 
 export const CoursePlayer: React.FC<CoursePlayerProps> = ({
@@ -33,7 +67,19 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const { courses, currentUser, completeModule, enrollInCourse } = useAcademy();
   const course = courses.find(c => c.id === courseId) || courses[0];
 
-  const [activeModuleIndex, setActiveModuleIndex] = useState(0);
+  const [readingStore, setReadingStore] = useState<ReadingStore>(() =>
+    readReadingStore(currentUser.id)
+  );
+
+  // Initialize active module to the last module the user was reading in this course (if saved)
+  const [activeModuleIndex, setActiveModuleIndex] = useState<number>(() => {
+    const store = readReadingStore(currentUser.id);
+    const lastModId = store[course.id]?.lastModuleId;
+    if (!lastModId) return 0;
+    const foundIdx = course.modules.findIndex(m => m.id === lastModId);
+    return foundIdx >= 0 ? foundIdx : 0;
+  });
+
   const activeModule = course.modules[activeModuleIndex] || course.modules[0];
 
   // Quiz state
@@ -41,19 +87,276 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [quizScore, setQuizScore] = useState(0);
 
+  // Reading scroll progress state
+  const moduleContentRef = useRef<HTMLDivElement>(null);
+  const isRestoringRef = useRef<boolean>(false);
+  const saveTimeoutRef = useRef<number | null>(null);
+  const [currentReadingPercent, setCurrentReadingPercent] = useState<number>(() => {
+    const store = readReadingStore(currentUser.id);
+    const initialMod = course.modules[0];
+    if (!initialMod) return 0;
+    const targetModId = store[course.id]?.lastModuleId || initialMod.id;
+    return store[course.id]?.modules?.[targetModId]?.percent ?? 0;
+  });
+  const [resumedFromPercent, setResumedFromPercent] = useState<number | null>(null);
+
+  // Reload reading store if user or courseId changes
+  useEffect(() => {
+    const freshStore = readReadingStore(currentUser.id);
+    setReadingStore(freshStore);
+    const lastModId = freshStore[course.id]?.lastModuleId;
+    const foundIdx = lastModId ? course.modules.findIndex(m => m.id === lastModId) : -1;
+    setActiveModuleIndex(foundIdx >= 0 ? foundIdx : 0);
+    setSelectedAnswers({});
+    setQuizSubmitted(false);
+  }, [currentUser.id, course.id, course.modules]);
+
+  const computeScrollMetrics = useCallback(() => {
+    const el = moduleContentRef.current;
+    const scrollY = Math.max(0, window.scrollY || document.documentElement.scrollTop || 0);
+    const docMaxScroll = Math.max(
+      0,
+      document.documentElement.scrollHeight - window.innerHeight
+    );
+
+    if (!el || docMaxScroll <= 0) {
+      return {
+        scrollY,
+        scrollRatio: 0,
+        percent: 0
+      };
+    }
+
+    const rect = el.getBoundingClientRect();
+    const elTop = scrollY + rect.top;
+    const elBottom = elTop + el.offsetHeight;
+    // Start measuring once top of module enters main viewport area, end when bottom reaches viewport bottom
+    const startY = Math.max(0, elTop - 100);
+    const endY = Math.max(startY + 1, elBottom - window.innerHeight);
+    const span = Math.min(docMaxScroll, endY) - startY;
+
+    let ratio = 0;
+    if (span > 20) {
+      ratio = Math.min(1, Math.max(0, (scrollY - startY) / span));
+    } else if (docMaxScroll > 0) {
+      ratio = Math.min(1, Math.max(0, scrollY / docMaxScroll));
+    }
+
+    return {
+      scrollY: Math.round(scrollY),
+      scrollRatio: Number(ratio.toFixed(4)),
+      percent: Math.round(ratio * 100)
+    };
+  }, []);
+
+  const persistModuleReading = useCallback(
+    (targetCourseId: string, targetModuleId: string, metrics: { scrollY: number; scrollRatio: number; percent: number }) => {
+      setReadingStore(prev => {
+        const existingCourse = prev[targetCourseId] || {
+          lastModuleId: targetModuleId,
+          modules: {}
+        };
+        const updatedCourse: CourseReadingState = {
+          lastModuleId: targetModuleId,
+          modules: {
+            ...existingCourse.modules,
+            [targetModuleId]: {
+              scrollY: metrics.scrollY,
+              scrollRatio: metrics.scrollRatio,
+              percent: metrics.percent,
+              updatedAt: new Date().toISOString()
+            }
+          }
+        };
+        const nextStore: ReadingStore = {
+          ...prev,
+          [targetCourseId]: updatedCourse
+        };
+        writeReadingStore(currentUser.id, nextStore);
+        return nextStore;
+      });
+    },
+    [currentUser.id]
+  );
+
+  // Save active module reference & restore its saved scroll position whenever course or module changes
+  useEffect(() => {
+    if (!activeModule) return;
+
+    isRestoringRef.current = true;
+    setResumedFromPercent(null);
+
+    const store = readReadingStore(currentUser.id);
+    const courseState = store[course.id];
+    const savedProgress = courseState?.modules?.[activeModule.id];
+
+    // Record this module as the most recently opened module for the course
+    const nextStore: ReadingStore = {
+      ...store,
+      [course.id]: {
+        lastModuleId: activeModule.id,
+        modules: courseState?.modules || {}
+      }
+    };
+    writeReadingStore(currentUser.id, nextStore);
+    setReadingStore(nextStore);
+
+    if (savedProgress) {
+      setCurrentReadingPercent(savedProgress.percent);
+    } else {
+      setCurrentReadingPercent(0);
+    }
+
+    let releaseTimer: number | null = null;
+    let raf2 = 0;
+    const raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(() => {
+        const docMaxScroll = Math.max(
+          0,
+          document.documentElement.scrollHeight - window.innerHeight
+        );
+
+        if (savedProgress && savedProgress.scrollY > 24 && docMaxScroll > 24) {
+          let targetScrollY = savedProgress.scrollY;
+          const el = moduleContentRef.current;
+          if (el && savedProgress.scrollRatio > 0) {
+            const currentY = window.scrollY || 0;
+            const rect = el.getBoundingClientRect();
+            const elTop = currentY + rect.top;
+            const elBottom = elTop + el.offsetHeight;
+            const startY = Math.max(0, elTop - 100);
+            const endY = Math.max(startY + 1, elBottom - window.innerHeight);
+            const span = Math.min(docMaxScroll, endY) - startY;
+            if (span > 20) {
+              const ratioTarget = Math.round(startY + savedProgress.scrollRatio * span);
+              targetScrollY = Math.abs(ratioTarget - savedProgress.scrollY) < 160
+                ? savedProgress.scrollY
+                : ratioTarget;
+            }
+          }
+
+          const clampedY = Math.min(docMaxScroll, Math.max(0, targetScrollY));
+          window.scrollTo({ top: clampedY, behavior: 'auto' });
+          if (savedProgress.percent > 0) {
+            setResumedFromPercent(savedProgress.percent);
+          }
+        } else {
+          window.scrollTo({ top: 0, behavior: 'auto' });
+        }
+
+        releaseTimer = window.setTimeout(() => {
+          isRestoringRef.current = false;
+        }, 120);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      if (raf2) {
+        window.cancelAnimationFrame(raf2);
+      }
+      if (releaseTimer !== null) {
+        window.clearTimeout(releaseTimer);
+      }
+      isRestoringRef.current = false;
+    };
+  }, [course.id, activeModule?.id, currentUser.id]);
+
+  // Listen for scroll events on the active module and persist reading progress to localStorage
+  useEffect(() => {
+    if (!activeModule) return;
+
+    let pendingMetrics: { scrollY: number; scrollRatio: number; percent: number } | null = null;
+
+    const writePendingToStorage = () => {
+      if (!pendingMetrics) return;
+      const metricsToSave = pendingMetrics;
+      pendingMetrics = null;
+      const current = readReadingStore(currentUser.id);
+      const existingCourse = current[course.id] || {
+        lastModuleId: activeModule.id,
+        modules: {}
+      };
+      const updatedStore: ReadingStore = {
+        ...current,
+        [course.id]: {
+          lastModuleId: activeModule.id,
+          modules: {
+            ...existingCourse.modules,
+            [activeModule.id]: {
+              scrollY: metricsToSave.scrollY,
+              scrollRatio: metricsToSave.scrollRatio,
+              percent: metricsToSave.percent,
+              updatedAt: new Date().toISOString()
+            }
+          }
+        }
+      };
+      writeReadingStore(currentUser.id, updatedStore);
+    };
+
+    const handleScroll = () => {
+      if (isRestoringRef.current) return;
+      const metrics = computeScrollMetrics();
+      pendingMetrics = metrics;
+      setCurrentReadingPercent(metrics.percent);
+
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+      }
+      saveTimeoutRef.current = window.setTimeout(() => {
+        pendingMetrics = null;
+        persistModuleReading(course.id, activeModule.id, metrics);
+      }, 150);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('pagehide', writePendingToStorage);
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('pagehide', writePendingToStorage);
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      writePendingToStorage();
+    };
+  }, [course.id, activeModule?.id, currentUser.id, computeScrollMetrics, persistModuleReading]);
+
+  const flushCurrentModuleProgress = useCallback(() => {
+    if (!activeModule || isRestoringRef.current) return;
+    if (saveTimeoutRef.current !== null) {
+      window.clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    const metrics = computeScrollMetrics();
+    persistModuleReading(course.id, activeModule.id, metrics);
+  }, [activeModule, course.id, computeScrollMetrics, persistModuleReading]);
+
+  const handleJumpToTop = () => {
+    setResumedFromPercent(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const isModuleCompleted = (modId: string) => currentUser.completedModuleIds.includes(modId);
 
   const completedCount = course.modules.filter(m => isModuleCompleted(m.id)).length;
   const progressPercent = Math.round((completedCount / course.modules.length) * 100);
   const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
 
+  const handleSelectModule = (idx: number) => {
+    flushCurrentModuleProgress();
+    setActiveModuleIndex(idx);
+    setSelectedAnswers({});
+    setQuizSubmitted(false);
+  };
+
   const handleNextModule = () => {
-    // Complete current module
+    flushCurrentModuleProgress();
     completeModule(course.id, activeModule.id);
 
     if (activeModuleIndex < course.modules.length - 1) {
       setActiveModuleIndex(prev => prev + 1);
-      // Reset quiz state for next module
       setSelectedAnswers({});
       setQuizSubmitted(false);
     }
@@ -61,6 +364,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
   const handlePrevModule = () => {
     if (activeModuleIndex > 0) {
+      flushCurrentModuleProgress();
       setActiveModuleIndex(prev => prev - 1);
       setSelectedAnswers({});
       setQuizSubmitted(false);
@@ -88,33 +392,38 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     <div className="w-full space-y-4">
       {/* Top Navigation Bar */}
       <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <button
-            onClick={onBack}
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 transition-colors"
+            onClick={() => {
+              flushCurrentModuleProgress();
+              onBack();
+            }}
+            className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 transition-colors shrink-0"
+            aria-label="Back to courses"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="font-mono text-blue-600 dark:text-cyan-400 font-bold shrink-0">
                 {course.code}
               </span>
-              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate max-w-md">
+              <span className="text-slate-300 dark:text-slate-700">·</span>
+              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
                 {course.title}
               </h2>
             </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Module {activeModuleIndex + 1} of {course.modules.length}: {activeModule.title}
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
+              Module {activeModuleIndex + 1} of {course.modules.length}: {activeModule.title} · Scroll {currentReadingPercent}%
             </p>
           </div>
         </div>
 
         {/* Progress & Actions */}
-        <div className="flex items-center gap-4">
-          <div className="w-32 hidden sm:block text-right">
-            <div className="flex justify-between text-[11px] font-mono font-bold text-slate-500 mb-1">
-              <span>Progress</span>
+        <div className="flex items-center gap-4 shrink-0">
+          <div className="w-36 hidden sm:block text-right">
+            <div className="flex justify-between text-[11px] font-mono tabular-nums font-bold text-slate-500 mb-1">
+              <span>Course</span>
               <span className="text-blue-600 dark:text-cyan-400">{progressPercent}%</span>
             </div>
             <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
@@ -128,7 +437,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           {progressPercent === 100 && (
             <button
               onClick={onViewCertificates}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 text-white text-xs font-bold shadow-md shadow-amber-500/20"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 text-white text-xs font-bold shadow-md shadow-amber-500/20 whitespace-nowrap shrink-0"
             >
               <Award className="w-3.5 h-3.5" />
               <span>View Certificate</span>
@@ -138,43 +447,40 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       </div>
 
       {/* Main 2-Column Workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+
         {/* Left Column: Syllabus Navigation */}
         <div className="lg:col-span-1 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
           {/* Course Thumbnail Mini Card */}
-          <div className="relative aspect-video rounded-xl overflow-hidden bg-slate-950 border border-slate-200 dark:border-slate-800 shadow-sm">
-            <img
-              src={course.thumbnail || 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&q=80&w=800'}
-              alt={course.title}
-              className="w-full h-full object-cover"
-            />
-            <span className="absolute top-2 left-2 px-2 py-0.5 rounded text-[9px] font-bold bg-slate-900/80 backdrop-blur-md text-white border border-white/10">
-              {course.category}
-            </span>
-            <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-blue-600 text-white">
-              {course.level}
-            </span>
-          </div>
+          <CourseThumbnail
+            course={course}
+            className="aspect-video rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm"
+          >
+            <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between gap-2 z-10 text-[10px] font-mono">
+              <span className="text-cyan-300 font-bold">{course.code}</span>
+              <span className="text-slate-200">{course.level}</span>
+            </div>
+          </CourseThumbnail>
 
           <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
             <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Course Modules</span>
-            <span className="text-[10px] font-mono text-slate-400">{completedCount}/{course.modules.length} Done</span>
+            <span className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+              {completedCount}/{course.modules.length} Done
+            </span>
           </div>
 
           <div className="space-y-1.5">
             {course.modules.map((m, idx) => {
               const isActive = idx === activeModuleIndex;
               const isDone = isModuleCompleted(m.id);
+              const savedModPercent = isActive
+                ? currentReadingPercent
+                : readingStore[course.id]?.modules?.[m.id]?.percent ?? 0;
 
               return (
                 <button
                   key={m.id}
-                  onClick={() => {
-                    setActiveModuleIndex(idx);
-                    setSelectedAnswers({});
-                    setQuizSubmitted(false);
-                  }}
+                  onClick={() => handleSelectModule(idx)}
                   className={`w-full p-2.5 rounded-xl text-left transition-all flex items-start gap-2.5 ${
                     isActive
                       ? 'bg-blue-600 text-white shadow-sm font-semibold'
@@ -185,7 +491,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                     {isDone ? (
                       <CheckCircle className={`w-4 h-4 ${isActive ? 'text-white' : 'text-emerald-500'}`} />
                     ) : (
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center text-[9px] font-mono ${
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center text-[9px] font-mono tabular-nums ${
                         isActive ? 'border-white text-white' : 'border-slate-400 text-slate-400'
                       }`}>
                         {idx + 1}
@@ -195,8 +501,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
                   <div className="flex-1 min-w-0">
                     <p className="text-xs line-clamp-1">{m.title}</p>
-                    <span className={`text-[10px] font-mono capitalize ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>
-                      {m.type} • {m.durationMin}m
+                    <span className={`text-[10px] font-mono tabular-nums capitalize ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>
+                      {m.type} · {m.durationMin}m
+                      {!isDone && savedModPercent > 0 ? ` · ${savedModPercent}% read` : ''}
                     </span>
                   </div>
                 </button>
@@ -219,8 +526,65 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
         </div>
 
         {/* Right Column: Module Learning Workspace */}
-        <div className="lg:col-span-3 space-y-4">
-          
+        <div ref={moduleContentRef} className="lg:col-span-3 space-y-4">
+          {/* Reading Progress & Resume Banner */}
+          <div className="px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 min-w-0">
+                <BookmarkCheck className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
+                {resumedFromPercent !== null ? (
+                  <span className="truncate tabular-nums">
+                    Resumed <strong className="text-slate-900 dark:text-white">{activeModule.title}</strong> from your last scroll position ({resumedFromPercent}%)
+                  </span>
+                ) : (
+                  <span className="truncate">
+                    Reading progress auto-saved for <strong className="text-slate-900 dark:text-white">{activeModule.title}</strong>
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="font-mono text-[11px] font-bold tabular-nums text-blue-600 dark:text-cyan-400">
+                  {currentReadingPercent}% read
+                </span>
+                {resumedFromPercent !== null && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleJumpToTop}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-cyan-400 whitespace-nowrap"
+                    >
+                      <ArrowUp className="w-3 h-3" />
+                      <span>Top</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setResumedFromPercent(null)}
+                      aria-label="Dismiss resume notice"
+                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div
+              role="progressbar"
+              aria-valuenow={currentReadingPercent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`Module reading progress ${currentReadingPercent}%`}
+              className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden"
+            >
+              <div
+                className="h-full bg-gradient-to-r from-blue-600 to-cyan-400 rounded-full transition-[width] duration-150"
+                style={{ width: `${currentReadingPercent}%` }}
+              />
+            </div>
+          </div>
+
           {/* Theory Module */}
           {activeModule.type === 'theory' && (
             <div className="p-6 sm:p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
