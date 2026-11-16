@@ -20,7 +20,12 @@ import {
   Award,
   Layers,
   FolderPlus,
-  ChevronRight
+  ChevronRight,
+  Mouse,
+  Clapperboard,
+  SquarePen,
+  Check,
+  X
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
@@ -230,61 +235,231 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
   const [activeDropIndex, setActiveDropIndex] = useState<number | null>(null);
   const [activeCheckpointDropId, setActiveCheckpointDropId] = useState<string | null>(null);
 
-  // Canvas mode: flat drag-and-drop sequence OR 3-level multi-section organizer (L1 Chapter -> L2 Main Contents -> L3 Course Contents)
+  // Canvas mode: clean 3-level outline tree (default) OR flat drag-and-drop sequence
   const [canvasViewMode, setCanvasViewMode] = useState<'sequence' | 'hierarchy'>('hierarchy');
   const [newChapterTitle, setNewChapterTitle] = useState('');
-  const [newMainContentTitle, setNewMainContentTitle] = useState('');
-  const [targetChapterForNewMain, setTargetChapterForNewMain] = useState('');
+
+  // Easy inline outline controls (mirroring clean NetAcad/DataCamp tree)
+  const [expandedChapters, setExpandedChapters] = useState<Record<string, boolean>>({});
+  const [selectedSection, setSelectedSection] = useState<{
+    chapterTitle: string;
+    mainContentTitle: string;
+  } | null>(null);
+  const [addingSubToChapterId, setAddingSubToChapterId] = useState<string | null>(null);
+  const [inlineSubTitle, setInlineSubTitle] = useState('');
+  const [addingItemToSectionKey, setAddingItemToSectionKey] = useState<string | null>(null);
+  const [inlineItemTitle, setInlineItemTitle] = useState('');
+  const [inlineItemType, setInlineItemType] = useState<ModuleType>('theory');
+
+  const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
+  const [editingChapterDraft, setEditingChapterDraft] = useState('');
+  const [editingMainKey, setEditingMainKey] = useState<string | null>(null);
+  const [editingMainDraft, setEditingMainDraft] = useState('');
+  const [dropSectionKey, setDropSectionKey] = useState<string | null>(null);
 
   const hierarchyTree = useMemo(() => resolveCourseHierarchy(course), [course]);
+
+  // Keep selectedSection synced to a valid section in the course
+  const activeTargetSection = useMemo(() => {
+    if (selectedSection) {
+      const ch = hierarchyTree.find(
+        c => c.title.toLowerCase() === selectedSection.chapterTitle.toLowerCase()
+      );
+      const mc = ch?.mainContents.find(
+        m => m.title.toLowerCase() === selectedSection.mainContentTitle.toLowerCase()
+      );
+      if (ch && mc) {
+        return { chapterTitle: ch.title, mainContentTitle: mc.title, sectionNumber: mc.sectionNumber, chapterNumber: ch.chapterNumber };
+      }
+    }
+    const firstCh = hierarchyTree[0];
+    const firstMc = firstCh?.mainContents[0];
+    if (firstCh && firstMc) {
+      return {
+        chapterTitle: firstCh.title,
+        mainContentTitle: firstMc.title,
+        sectionNumber: firstMc.sectionNumber,
+        chapterNumber: firstCh.chapterNumber
+      };
+    }
+    return null;
+  }, [hierarchyTree, selectedSection]);
+
+  const toChapterConfig = (): CourseChapterSection[] =>
+    hierarchyTree.map(ch => ({
+      id: ch.id,
+      title: ch.title,
+      summary: ch.summary,
+      mainContents: ch.mainContents.map(mc => ({ id: mc.id, title: mc.title, summary: mc.summary }))
+    }));
 
   const handleAddLevel1Chapter = (e: React.FormEvent) => {
     e.preventDefault();
     const clean = newChapterTitle.trim();
     if (!clean) return;
-    const baseChapters: CourseChapterSection[] = hierarchyTree.map(ch => ({
-      id: ch.id,
-      title: ch.title,
-      summary: ch.summary,
-      mainContents: ch.mainContents.map(mc => ({ id: mc.id, title: mc.title, summary: mc.summary }))
-    }));
+    const baseChapters = toChapterConfig();
     if (baseChapters.some(ch => ch.title.toLowerCase() === clean.toLowerCase())) {
       onToast(`Chapter "${clean}" already exists.`);
       return;
     }
     const newChapId = `chap-${Date.now()}`;
+    const defaultSubTitle = 'Overview & Core Concepts';
     baseChapters.push({
       id: newChapId,
       title: clean,
-      mainContents: [{ id: `sec-${Date.now()}`, title: 'Core Topics & Lessons' }]
+      mainContents: [{ id: `sec-${Date.now()}`, title: defaultSubTitle }]
     });
     updateCourse(course.id, { chapters: baseChapters });
     setNewChapterTitle('');
-    setTargetChapterForNewMain(clean);
-    onToast(`Added Level-1 Chapter: "${clean}"`);
+    setExpandedChapters(prev => ({ ...prev, [newChapId]: true }));
+    setSelectedSection({ chapterTitle: clean, mainContentTitle: defaultSubTitle });
+    onToast(`Added ${baseChapters.length}.0 ${clean}`);
   };
 
-  const handleAddLevel2MainContent = (e: React.FormEvent) => {
+  const handleAddSubSectionToChapter = (
+    e: React.FormEvent,
+    chapterId: string,
+    chapterTitle: string
+  ) => {
     e.preventDefault();
-    const clean = newMainContentTitle.trim();
-    const targetChapTitle = (targetChapterForNewMain || hierarchyTree[0]?.title || '').trim();
-    if (!clean || !targetChapTitle) return;
-    const baseChapters: CourseChapterSection[] = hierarchyTree.map(ch => ({
-      id: ch.id,
-      title: ch.title,
-      summary: ch.summary,
-      mainContents: ch.mainContents.map(mc => ({ id: mc.id, title: mc.title, summary: mc.summary }))
-    }));
-    const chap = baseChapters.find(ch => ch.title.toLowerCase() === targetChapTitle.toLowerCase());
+    const clean = inlineSubTitle.trim();
+    if (!clean) return;
+    const baseChapters = toChapterConfig();
+    const chap = baseChapters.find(ch => ch.id === chapterId || ch.title.toLowerCase() === chapterTitle.toLowerCase());
     if (!chap) return;
     if (chap.mainContents.some(mc => mc.title.toLowerCase() === clean.toLowerCase())) {
-      onToast(`Main content "${clean}" already exists in "${chap.title}".`);
+      onToast(`Section "${clean}" already exists.`);
       return;
     }
     chap.mainContents.push({ id: `sec-${Date.now()}`, title: clean });
     updateCourse(course.id, { chapters: baseChapters });
-    setNewMainContentTitle('');
-    onToast(`Added Level-2 Section "${clean}" inside "${chap.title}"`);
+    setInlineSubTitle('');
+    setAddingSubToChapterId(null);
+    setSelectedSection({ chapterTitle: chap.title, mainContentTitle: clean });
+    onToast(`Added section "${clean}" under ${chap.title}`);
+  };
+
+  const handleRenameChapter = (oldTitle: string) => {
+    const clean = editingChapterDraft.trim();
+    if (!clean || clean === oldTitle) {
+      setEditingChapterId(null);
+      return;
+    }
+    const baseChapters = toChapterConfig().map(ch =>
+      ch.title.toLowerCase() === oldTitle.toLowerCase() ? { ...ch, title: clean } : ch
+    );
+    const updatedModules = course.modules.map(m =>
+      (m.chapterTitle || '').trim().toLowerCase() === oldTitle.toLowerCase()
+        ? { ...m, chapterTitle: clean }
+        : m
+    );
+    updateCourse(course.id, { chapters: baseChapters, modules: updatedModules });
+    if (selectedSection?.chapterTitle.toLowerCase() === oldTitle.toLowerCase()) {
+      setSelectedSection({ ...selectedSection, chapterTitle: clean });
+    }
+    setEditingChapterId(null);
+    onToast(`Renamed chapter to "${clean}"`);
+  };
+
+  const handleDeleteChapter = (chapterTitle: string) => {
+    if (hierarchyTree.length <= 1) {
+      onToast('A course must have at least one chapter.');
+      return;
+    }
+    const baseChapters = toChapterConfig().filter(
+      ch => ch.title.toLowerCase() !== chapterTitle.toLowerCase()
+    );
+    const fallbackCh = baseChapters[0];
+    const fallbackMc = fallbackCh?.mainContents[0]?.title || 'Core Concepts';
+    const updatedModules = course.modules.map(m =>
+      (m.chapterTitle || '').trim().toLowerCase() === chapterTitle.toLowerCase()
+        ? { ...m, chapterTitle: fallbackCh.title, mainContentTitle: fallbackMc }
+        : m
+    );
+    updateCourse(course.id, { chapters: baseChapters, modules: updatedModules });
+    setSelectedSection({ chapterTitle: fallbackCh.title, mainContentTitle: fallbackMc });
+    onToast(`Removed chapter "${chapterTitle}"`);
+  };
+
+  const handleRenameMainContent = (chapterTitle: string, oldMainTitle: string) => {
+    const clean = editingMainDraft.trim();
+    if (!clean || clean === oldMainTitle) {
+      setEditingMainKey(null);
+      return;
+    }
+    const baseChapters = toChapterConfig().map(ch =>
+      ch.title.toLowerCase() === chapterTitle.toLowerCase()
+        ? {
+            ...ch,
+            mainContents: ch.mainContents.map(mc =>
+              mc.title.toLowerCase() === oldMainTitle.toLowerCase()
+                ? { ...mc, title: clean }
+                : mc
+            )
+          }
+        : ch
+    );
+    const updatedModules = course.modules.map(m =>
+      (m.chapterTitle || '').trim().toLowerCase() === chapterTitle.toLowerCase() &&
+      (m.mainContentTitle || '').trim().toLowerCase() === oldMainTitle.toLowerCase()
+        ? { ...m, mainContentTitle: clean }
+        : m
+    );
+    updateCourse(course.id, { chapters: baseChapters, modules: updatedModules });
+    if (
+      selectedSection?.chapterTitle.toLowerCase() === chapterTitle.toLowerCase() &&
+      selectedSection?.mainContentTitle.toLowerCase() === oldMainTitle.toLowerCase()
+    ) {
+      setSelectedSection({ chapterTitle, mainContentTitle: clean });
+    }
+    setEditingMainKey(null);
+    onToast(`Renamed section to "${clean}"`);
+  };
+
+  const handleDeleteMainContent = (chapterTitle: string, mainTitle: string) => {
+    const baseChapters = toChapterConfig();
+    const chap = baseChapters.find(ch => ch.title.toLowerCase() === chapterTitle.toLowerCase());
+    if (!chap || chap.mainContents.length <= 1) {
+      onToast('Each chapter needs at least one section.');
+      return;
+    }
+    chap.mainContents = chap.mainContents.filter(
+      mc => mc.title.toLowerCase() !== mainTitle.toLowerCase()
+    );
+    const fallbackMain = chap.mainContents[0].title;
+    const updatedModules = course.modules.map(m =>
+      (m.chapterTitle || '').trim().toLowerCase() === chapterTitle.toLowerCase() &&
+      (m.mainContentTitle || '').trim().toLowerCase() === mainTitle.toLowerCase()
+        ? { ...m, mainContentTitle: fallbackMain }
+        : m
+    );
+    updateCourse(course.id, { chapters: baseChapters, modules: updatedModules });
+    setSelectedSection({ chapterTitle, mainContentTitle: fallbackMain });
+    onToast(`Removed section "${mainTitle}"`);
+  };
+
+  const handleQuickAddItemInSection = (
+    e: React.FormEvent,
+    chapterTitle: string,
+    mainContentTitle: string
+  ) => {
+    e.preventDefault();
+    const starter = createStarterModule(inlineItemType, course, gradingForm.quizPassingScore);
+    const cleanTitle = inlineItemTitle.trim();
+    const newMod: CourseModule = {
+      ...starter,
+      title: cleanTitle || starter.title.replace(/^Module \d+:\s*/, ''),
+      chapterTitle,
+      mainContentTitle
+    };
+    addModuleToCourse(course.id, newMod);
+    setInlineItemTitle('');
+    setAddingItemToSectionKey(null);
+    setSelectedSection({ chapterTitle, mainContentTitle });
+    if (newMod.type === 'quiz') {
+      setInspectorTarget({ kind: 'quiz-module', moduleId: newMod.id });
+    }
+    onToast(`Added "${newMod.title}" to ${mainContentTitle}`);
   };
 
   const handleAssignModuleSection = (
@@ -296,7 +471,44 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
       chapterTitle,
       mainContentTitle
     });
-    onToast(`Assigned module to "${chapterTitle} › ${mainContentTitle}"`);
+    onToast(`Moved to "${chapterTitle} › ${mainContentTitle}"`);
+  };
+
+  const handleDropOnSection = (
+    e: React.DragEvent,
+    chapterTitle: string,
+    mainContentTitle: string
+  ) => {
+    e.preventDefault();
+    setDropSectionKey(null);
+    if (!dragPayload) return;
+
+    if (dragPayload.source === 'module') {
+      handleAssignModuleSection(dragPayload.moduleId, chapterTitle, mainContentTitle);
+      setDragPayload(null);
+      return;
+    }
+
+    if (dragPayload.source === 'palette') {
+      if (dragPayload.kind === 'checkpoint') {
+        handleInjectPaletteItem('checkpoint');
+      } else {
+        const starter = createStarterModule(dragPayload.kind, course, gradingForm.quizPassingScore);
+        const newMod: CourseModule = {
+          ...starter,
+          title: starter.title.replace(/^Module \d+:\s*/, ''),
+          chapterTitle,
+          mainContentTitle
+        };
+        addModuleToCourse(course.id, newMod);
+        setSelectedSection({ chapterTitle, mainContentTitle });
+        if (newMod.type === 'quiz') {
+          setInspectorTarget({ kind: 'quiz-module', moduleId: newMod.id });
+        }
+        onToast(`Added "${newMod.title}" into "${mainContentTitle}"`);
+      }
+      setDragPayload(null);
+    }
   };
 
   const [inspectorTarget, setInspectorTarget] = useState<SelectedInspectorTarget>({
@@ -485,13 +697,25 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
       return;
     }
 
-    const newMod = createStarterModule(kind, course, gradingForm.quizPassingScore);
+    const starter = createStarterModule(kind, course, gradingForm.quizPassingScore);
+    const newMod: CourseModule = activeTargetSection
+      ? {
+          ...starter,
+          title: starter.title.replace(/^Module \d+:\s*/, ''),
+          chapterTitle: activeTargetSection.chapterTitle,
+          mainContentTitle: activeTargetSection.mainContentTitle
+        }
+      : starter;
     const targetIdx = typeof insertAtIndex === 'number' ? insertAtIndex : course.modules.length;
     addModuleToCourse(course.id, newMod, targetIdx);
     if (newMod.type === 'quiz') {
       setInspectorTarget({ kind: 'quiz-module', moduleId: newMod.id });
     }
-    onToast(`Injected "${newMod.title}" at position #${targetIdx + 1}`);
+    onToast(
+      activeTargetSection
+        ? `Added "${newMod.title}" under ${activeTargetSection.sectionNumber} ${activeTargetSection.mainContentTitle}`
+        : `Injected "${newMod.title}" at position #${targetIdx + 1}`
+    );
   };
 
   const handleDropAtSlot = (e: React.DragEvent, slotIndex: number) => {
@@ -728,18 +952,21 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
           </div>
         </aside>
 
-        {/* Zone 2: Drag-and-Drop & Multi-Level Curriculum Canvas */}
+        {/* Zone 2: Clean 3-Level Course Outline & Drag-and-Drop Canvas */}
         <section
           aria-label="Curriculum drop canvas"
-          className="xl:col-span-5 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3"
+          className="xl:col-span-5 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4"
         >
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
             <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider font-mono text-slate-700 dark:text-slate-200">
-                Curriculum Canvas
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Layers className="w-4 h-4 text-blue-600 dark:text-cyan-400" />
+                <span>Course Outline</span>
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                Organize Level-1 Chapters, Level-2 Main Contents, and Level-3 Course Contents.
+                {canvasViewMode === 'hierarchy'
+                  ? 'Click any section to highlight it, then add or drag items directly into place.'
+                  : 'Drag blocks vertically to change sequential module order.'}
               </p>
             </div>
             <div className="inline-flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
@@ -752,7 +979,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                 }`}
               >
-                3-Level Sections
+                Outline Tree
               </button>
               <button
                 type="button"
@@ -763,179 +990,453 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                 }`}
               >
-                Drag &amp; Drop ({course.modules.length})
+                Sequence ({course.modules.length})
               </button>
             </div>
           </div>
 
           {canvasViewMode === 'hierarchy' ? (
             <div className="space-y-3">
-              {/* Quick Section Creators (Level 1 Chapter & Level 2 Main Content) */}
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 space-y-2.5">
-                <form onSubmit={handleAddLevel1Chapter} className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={newChapterTitle}
-                    onChange={(e) => setNewChapterTitle(e.target.value)}
-                    placeholder="New Level-1 Chapter Title..."
-                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
-                  />
-                  <button
-                    type="submit"
-                    className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap shrink-0"
-                  >
-                    <FolderPlus className="w-3.5 h-3.5" />
-                    <span>Add L1 Chapter</span>
-                  </button>
-                </form>
+              {/* Simple Single-Bar Add Chapter Input */}
+              <form onSubmit={handleAddLevel1Chapter} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={newChapterTitle}
+                  onChange={(e) => setNewChapterTitle(e.target.value)}
+                  placeholder={`New chapter ${hierarchyTree.length + 1}.0 title...`}
+                  className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+                >
+                  <FolderPlus className="w-3.5 h-3.5" />
+                  <span>Add Chapter</span>
+                </button>
+              </form>
 
-                <form onSubmit={handleAddLevel2MainContent} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
-                  <select
-                    value={targetChapterForNewMain || hierarchyTree[0]?.title || ''}
-                    onChange={(e) => setTargetChapterForNewMain(e.target.value)}
-                    aria-label="Target Level 1 chapter"
-                    className="w-full sm:w-40 px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-200"
-                  >
-                    {hierarchyTree.map(ch => (
-                      <option key={ch.id} value={ch.title}>
-                        {ch.chapterLabel}: {ch.title}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="text"
-                    value={newMainContentTitle}
-                    onChange={(e) => setNewMainContentTitle(e.target.value)}
-                    placeholder="New Level-2 Main Content..."
-                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
-                  />
-                  <button
-                    type="submit"
-                    className="px-2.5 py-1.5 rounded-lg border border-blue-200 dark:border-cyan-800 bg-blue-50 dark:bg-cyan-950/40 text-blue-700 dark:text-cyan-300 hover:bg-blue-100 dark:hover:bg-cyan-950/70 text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap shrink-0"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add L2 Section</span>
-                  </button>
-                </form>
-              </div>
+              {/* Clean Minimal Outline Tree (Matching Reference Screenshot: 1.0 -> 1.1 -> 1.1.1) */}
+              <div className="divide-y divide-slate-200/80 dark:divide-slate-800">
+                {hierarchyTree.map((ch) => {
+                  const isExpanded = expandedChapters[ch.id] !== false;
+                  const isEditingThisChapter = editingChapterId === ch.id;
+                  const isAddingSubHere = addingSubToChapterId === ch.id;
 
-              {/* 3-Level Nested Preview & Assignment Tree */}
-              <div className="space-y-2.5">
-                {hierarchyTree.map((ch) => (
-                  <div
-                    key={ch.id}
-                    className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-900"
-                  >
-                    {/* Level 1 */}
-                    <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Layers className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400 shrink-0" />
-                        <span className="font-mono text-[10px] font-bold uppercase text-blue-600 dark:text-cyan-400 shrink-0">
-                          L1 · {ch.chapterLabel}
-                        </span>
-                        <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                          {ch.title}
-                        </span>
-                      </div>
-                      <span className="font-mono text-[10px] tabular-nums text-slate-500 shrink-0">
-                        {ch.totalModules} items
-                      </span>
-                    </div>
+                  return (
+                    <div key={ch.id} className="py-3 first:pt-1 last:pb-1">
+                      {/* Level 1: Chapter Header (e.g. "1.0 Profiling and Cleansing Data   ^") */}
+                      {isEditingThisChapter ? (
+                        <div className="flex items-center gap-1.5 py-1">
+                          <span className="text-sm font-bold text-slate-500 tabular-nums shrink-0">
+                            {ch.chapterNumber}
+                          </span>
+                          <input
+                            type="text"
+                            autoFocus
+                            value={editingChapterDraft}
+                            onChange={(e) => setEditingChapterDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleRenameChapter(ch.title);
+                              } else if (e.key === 'Escape') {
+                                setEditingChapterId(null);
+                              }
+                            }}
+                            className="flex-1 min-w-0 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 border border-blue-400 text-sm font-semibold text-slate-900 dark:text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRenameChapter(ch.title)}
+                            className="p-1.5 rounded-lg bg-blue-600 text-white"
+                            title="Save chapter name"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingChapterId(null)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700"
+                            title="Cancel"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="group flex items-center justify-between gap-2 py-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedChapters(prev => ({ ...prev, [ch.id]: !isExpanded }))
+                            }
+                            aria-expanded={isExpanded}
+                            className="flex-1 min-w-0 text-left flex items-center gap-2 text-[14px] font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-cyan-400 transition-colors"
+                          >
+                            <span className="tabular-nums shrink-0">{ch.chapterNumber}</span>
+                            <span className="truncate">{ch.title}</span>
+                          </button>
 
-                    {/* Level 2 */}
-                    <div className="p-2.5 space-y-2">
-                      {ch.mainContents.map((mc) => (
-                        <div
-                          key={mc.id}
-                          className="pl-2.5 border-l border-slate-200 dark:border-slate-800 space-y-1.5"
-                        >
-                          <div className="flex items-center justify-between gap-2 text-[11px]">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <ChevronRight className="w-3 h-3 text-slate-400 shrink-0" />
-                              <span className="font-mono text-[10px] font-bold text-slate-500 dark:text-slate-400 shrink-0">
-                                L2 · {mc.sectionNumber}
-                              </span>
-                              <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                                {mc.title}
-                              </span>
-                            </div>
-                            <span className="font-mono text-[10px] tabular-nums text-slate-400 shrink-0">
-                              {mc.items.length} L3
-                            </span>
-                          </div>
-
-                          {/* Level 3 items */}
-                          <div className="pl-3 space-y-1.5">
-                            {mc.items.length === 0 ? (
-                              <p className="text-[10px] italic text-slate-400 py-1">
-                                Assign any module below or switch to Drag &amp; Drop to reorder.
-                              </p>
-                            ) : (
-                              mc.items.map(({ module: mod, itemNumber }) => (
-                                <div
-                                  key={mod.id}
-                                  className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (mod.type === 'quiz') {
-                                        setInspectorTarget({ kind: 'quiz-module', moduleId: mod.id });
-                                      } else {
-                                        onEditFullModule(course.id, mod);
-                                      }
-                                    }}
-                                    className="flex items-center gap-2 min-w-0 flex-1 text-left"
-                                  >
-                                    <span className="font-mono text-[10px] font-bold text-slate-400 shrink-0">
-                                      {itemNumber}
-                                    </span>
-                                    <span className="font-semibold text-slate-900 dark:text-slate-100 truncate hover:text-blue-600 dark:hover:text-cyan-400">
-                                      {mod.title}
-                                    </span>
-                                  </button>
-
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    <select
-                                      aria-label={`Move ${mod.title} to another section`}
-                                      value={`${ch.title}:::${mc.title}`}
-                                      onChange={(e) => {
-                                        const [nextCh, nextMc] = e.target.value.split(':::');
-                                        if (nextCh && nextMc) {
-                                          handleAssignModuleSection(mod.id, nextCh, nextMc);
-                                        }
-                                      }}
-                                      className="max-w-[170px] px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[10px] text-slate-600 dark:text-slate-300"
-                                    >
-                                      {hierarchyTree.map(optCh =>
-                                        optCh.mainContents.map(optMc => (
-                                          <option
-                                            key={`${optCh.id}-${optMc.id}`}
-                                            value={`${optCh.title}:::${optMc.title}`}
-                                          >
-                                            {optCh.chapterLabel} › {optMc.sectionNumber} {optMc.title}
-                                          </option>
-                                        ))
-                                      )}
-                                    </select>
-                                    <button
-                                      type="button"
-                                      onClick={() => onEditFullModule(course.id, mod)}
-                                      className="p-1 rounded text-slate-500 hover:text-blue-600 dark:hover:text-cyan-400"
-                                      title="Edit Course Content"
-                                    >
-                                      <Edit3 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </div>
-                              ))
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setExpandedChapters(prev => ({ ...prev, [ch.id]: true }));
+                                setAddingSubToChapterId(isAddingSubHere ? null : ch.id);
+                                setInlineSubTitle('');
+                              }}
+                              className="px-2 py-1 rounded-md text-[11px] font-semibold text-blue-600 dark:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+                              title="Add Level-2 sub-section"
+                            >
+                              + Section
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingChapterId(ch.id);
+                                setEditingChapterDraft(ch.title);
+                              }}
+                              className="p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 opacity-70 group-hover:opacity-100"
+                              title="Rename chapter"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            {hierarchyTree.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteChapter(ch.title)}
+                                className="p-1 rounded-md text-slate-400 hover:text-red-500 opacity-70 group-hover:opacity-100"
+                                title="Delete chapter"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             )}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedChapters(prev => ({ ...prev, [ch.id]: !isExpanded }))
+                              }
+                              className="p-1 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              aria-label={isExpanded ? 'Collapse chapter' : 'Expand chapter'}
+                            >
+                              {isExpanded ? (
+                                <ChevronUp className="w-4 h-4" />
+                              ) : (
+                                <ChevronDown className="w-4 h-4" />
+                              )}
+                            </button>
                           </div>
                         </div>
-                      ))}
+                      )}
+
+                      {isExpanded && (
+                        <div className="mt-1.5 space-y-2.5 pl-1">
+                          {/* Inline Sub-section Creator when "+ Section" is clicked */}
+                          {isAddingSubHere && (
+                            <form
+                              onSubmit={(e) => handleAddSubSectionToChapter(e, ch.id, ch.title)}
+                              className="flex items-center gap-2 pl-3 py-1"
+                            >
+                              <span className="text-xs font-semibold text-slate-400 tabular-nums shrink-0">
+                                {ch.chapterIndex}.{ch.mainContents.length + 1}
+                              </span>
+                              <input
+                                type="text"
+                                autoFocus
+                                value={inlineSubTitle}
+                                onChange={(e) => setInlineSubTitle(e.target.value)}
+                                placeholder="Sub-section title (e.g. Profile Data)..."
+                                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                              />
+                              <button
+                                type="submit"
+                                className="px-2.5 py-1.5 rounded-lg bg-blue-600 text-white text-[11px] font-semibold whitespace-nowrap"
+                              >
+                                Add
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAddingSubToChapterId(null)}
+                                className="p-1 text-slate-400 hover:text-slate-700"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </form>
+                          )}
+
+                          {/* Level 2: Main Content Sections (e.g. "1.1 Profile Data") */}
+                          {ch.mainContents.map((mc) => {
+                            const secKey = `${ch.id}::${mc.id}`;
+                            const isSelectedTarget =
+                              activeTargetSection?.chapterTitle.toLowerCase() === ch.title.toLowerCase() &&
+                              activeTargetSection?.mainContentTitle.toLowerCase() === mc.title.toLowerCase();
+                            const isDropHover = dropSectionKey === secKey;
+                            const isEditingThisMain = editingMainKey === secKey;
+                            const isAddingItemHere = addingItemToSectionKey === secKey;
+
+                            return (
+                              <div
+                                key={mc.id}
+                                onDragOver={(e) => {
+                                  e.preventDefault();
+                                  setDropSectionKey(secKey);
+                                }}
+                                onDragLeave={() => {
+                                  if (dropSectionKey === secKey) setDropSectionKey(null);
+                                }}
+                                onDrop={(e) => handleDropOnSection(e, ch.title, mc.title)}
+                                className="space-y-1"
+                              >
+                                {isEditingThisMain ? (
+                                  <div className="flex items-center gap-1.5 pl-3 py-1">
+                                    <span className="text-xs font-semibold text-slate-500 tabular-nums shrink-0">
+                                      {mc.sectionNumber}
+                                    </span>
+                                    <input
+                                      type="text"
+                                      autoFocus
+                                      value={editingMainDraft}
+                                      onChange={(e) => setEditingMainDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          handleRenameMainContent(ch.title, mc.title);
+                                        } else if (e.key === 'Escape') {
+                                          setEditingMainKey(null);
+                                        }
+                                      }}
+                                      className="flex-1 min-w-0 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 border border-blue-400 text-xs font-semibold text-slate-900 dark:text-white"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRenameMainContent(ch.title, mc.title)}
+                                      className="p-1 rounded-md bg-blue-600 text-white"
+                                      title="Save section name"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingMainKey(null)}
+                                      className="p-1 text-slate-400 hover:text-slate-700"
+                                      title="Cancel"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div
+                                    onClick={() =>
+                                      setSelectedSection({
+                                        chapterTitle: ch.title,
+                                        mainContentTitle: mc.title
+                                      })
+                                    }
+                                    className={`group/sec flex items-center justify-between gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
+                                      isDropHover
+                                        ? 'bg-blue-50 dark:bg-blue-950/60 ring-1 ring-blue-400'
+                                        : isSelectedTarget
+                                        ? 'bg-slate-100 dark:bg-slate-800/80'
+                                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className="text-[13px] font-bold text-slate-900 dark:text-slate-100 tabular-nums shrink-0">
+                                        {mc.sectionNumber}
+                                      </span>
+                                      <span className="text-[13px] font-bold text-slate-900 dark:text-slate-100 truncate">
+                                        {mc.title}
+                                      </span>
+                                    </div>
+
+                                    <div
+                                      className="flex items-center gap-1 shrink-0"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedSection({
+                                            chapterTitle: ch.title,
+                                            mainContentTitle: mc.title
+                                          });
+                                          setAddingItemToSectionKey(isAddingItemHere ? null : secKey);
+                                          setInlineItemTitle('');
+                                        }}
+                                        className="px-2 py-0.5 rounded-md text-[11px] font-semibold text-blue-600 dark:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 whitespace-nowrap"
+                                        title="Add course content directly into this section"
+                                      >
+                                        + Item
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingMainKey(secKey);
+                                          setEditingMainDraft(mc.title);
+                                        }}
+                                        className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 opacity-60 group-hover/sec:opacity-100"
+                                        title="Rename sub-section"
+                                      >
+                                        <Edit3 className="w-3 h-3" />
+                                      </button>
+                                      {ch.mainContents.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteMainContent(ch.title, mc.title)}
+                                          className="p-1 rounded text-slate-400 hover:text-red-500 opacity-60 group-hover/sec:opacity-100"
+                                          title="Remove sub-section"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Quick Inline Add Course Content Item directly under Level 2 */}
+                                {isAddingItemHere && (
+                                  <form
+                                    onSubmit={(e) => handleQuickAddItemInSection(e, ch.title, mc.title)}
+                                    className="ml-7 mr-1 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-wrap sm:flex-nowrap items-center gap-1.5"
+                                  >
+                                    <select
+                                      value={inlineItemType}
+                                      onChange={(e) => setInlineItemType(e.target.value as ModuleType)}
+                                      className="px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-200"
+                                    >
+                                      <option value="theory">Reading</option>
+                                      <option value="lab">Live Lab</option>
+                                      <option value="video">Video</option>
+                                      <option value="quiz">Quiz Review</option>
+                                      <option value="pcap">PCAP Lab</option>
+                                    </select>
+                                    <input
+                                      type="text"
+                                      autoFocus
+                                      value={inlineItemTitle}
+                                      onChange={(e) => setInlineItemTitle(e.target.value)}
+                                      placeholder={`${mc.sectionNumber}.${mc.items.length + 1} Lesson or Lab title...`}
+                                      className="flex-1 min-w-0 px-2.5 py-1 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                                    />
+                                    <button
+                                      type="submit"
+                                      className="px-2.5 py-1 rounded-md bg-blue-600 text-white text-[11px] font-semibold whitespace-nowrap"
+                                    >
+                                      Add
+                                    </button>
+                                  </form>
+                                )}
+
+                                {/* Level 3: Course Content Items (e.g. "1.1.1 Steps of Data Profiling") */}
+                                <div className="pl-7 space-y-0.5">
+                                  {mc.items.length === 0 ? (
+                                    <p className="px-2 py-1.5 text-[11px] text-slate-400">
+                                      No items yet — click <span className="font-semibold">+ Item</span> or drag a block here.
+                                    </p>
+                                  ) : (
+                                    mc.items.map(({ module: mod, flatIndex, itemNumber }) => {
+                                      const isSelectedQuiz =
+                                        inspectorTarget.kind === 'quiz-module' &&
+                                        inspectorTarget.moduleId === mod.id;
+
+                                      const ItemIcon =
+                                        mod.type === 'lab'
+                                          ? Mouse
+                                          : mod.type === 'video'
+                                          ? Clapperboard
+                                          : mod.type === 'quiz'
+                                          ? SquarePen
+                                          : mod.type === 'pcap'
+                                          ? Activity
+                                          : FileText;
+
+                                      return (
+                                        <div
+                                          key={mod.id}
+                                          draggable
+                                          onDragStart={(e) => {
+                                            e.dataTransfer.effectAllowed = 'move';
+                                            e.dataTransfer.setData('text/plain', `module:${mod.id}`);
+                                            setDragPayload({
+                                              source: 'module',
+                                              moduleId: mod.id,
+                                              fromIndex: flatIndex
+                                            });
+                                          }}
+                                          onDragEnd={() => {
+                                            setDragPayload(null);
+                                            setDropSectionKey(null);
+                                          }}
+                                          className={`group/item flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg transition-colors ${
+                                            isSelectedQuiz
+                                              ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold'
+                                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
+                                          }`}
+                                        >
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setSelectedSection({
+                                                chapterTitle: ch.title,
+                                                mainContentTitle: mc.title
+                                              });
+                                              if (mod.type === 'quiz') {
+                                                setInspectorTarget({
+                                                  kind: 'quiz-module',
+                                                  moduleId: mod.id
+                                                });
+                                              } else {
+                                                onEditFullModule(course.id, mod);
+                                              }
+                                            }}
+                                            className="flex items-start gap-2.5 min-w-0 flex-1 text-left"
+                                          >
+                                            <ItemIcon className="w-4 h-4 mt-0.5 text-slate-500 dark:text-slate-400 shrink-0" />
+                                            <span className="text-[13px] leading-snug text-slate-800 dark:text-slate-200">
+                                              <span className="tabular-nums mr-1.5 font-medium text-slate-600 dark:text-slate-400">
+                                                {itemNumber}
+                                              </span>
+                                              {mod.title}
+                                            </span>
+                                          </button>
+
+                                          <div className="flex items-center gap-0.5 shrink-0 opacity-70 group-hover/item:opacity-100 transition-opacity">
+                                            <button
+                                              type="button"
+                                              onClick={() => onEditFullModule(course.id, mod)}
+                                              className="p-1 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400"
+                                              title="Edit content & section"
+                                            >
+                                              <Edit3 className="w-3.5 h-3.5" />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={course.modules.length <= 1}
+                                              onClick={() => {
+                                                deleteModuleFromCourse(course.id, mod.id);
+                                                if (isSelectedQuiz) {
+                                                  setInspectorTarget({ kind: 'grading' });
+                                                }
+                                                onToast(`Removed "${mod.title}"`);
+                                              }}
+                                              className="p-1 rounded text-slate-400 hover:text-red-500 disabled:opacity-30"
+                                              title="Delete item"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : (

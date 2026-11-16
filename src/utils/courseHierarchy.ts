@@ -24,6 +24,7 @@ export interface ResolvedChapterSection {
   title: string; // Level 1: Chapter Section
   summary?: string;
   chapterIndex: number; // 1-based
+  chapterNumber: string; // e.g. "1.0"
   chapterLabel: string; // e.g. "Chapter 1"
   mainContents: ResolvedMainContentSection[];
   totalModules: number;
@@ -31,6 +32,7 @@ export interface ResolvedChapterSection {
 
 export interface ModuleSectionBreadcrumb {
   chapterId: string;
+  chapterNumber: string;
   chapterLabel: string;
   chapterTitle: string;
   mainContentId: string;
@@ -183,6 +185,7 @@ export function resolveCourseHierarchy(course: Course): ResolvedChapterSection[]
       title: ch.title,
       summary: ch.summary,
       chapterIndex: chNum,
+      chapterNumber: `${chNum}.0`,
       chapterLabel: `Chapter ${chNum}`,
       mainContents: resolvedMains,
       totalModules
@@ -201,6 +204,7 @@ export function getModuleSectionBreadcrumb(
         if (item.module.id === moduleId) {
           return {
             chapterId: ch.id,
+            chapterNumber: ch.chapterNumber,
             chapterLabel: ch.chapterLabel,
             chapterTitle: ch.title,
             mainContentId: mc.id,

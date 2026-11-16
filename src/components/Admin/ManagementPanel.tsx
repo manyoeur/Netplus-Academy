@@ -2341,18 +2341,20 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                       </div>
                     </div>
 
-                    {/* Modules breakdown with Drag Reorder, Quizzes & Delete */}
+                    {/* Modules breakdown with 3-level section path, Drag Reorder, Quizzes & Delete */}
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
                       <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                        <span>Curriculum Modules ({course.modules.length}) · Drag to reorder</span>
+                        <span>
+                          Curriculum Outline ({resolveCourseHierarchy(course).length} Chapters · {course.modules.length} Items)
+                        </span>
                         <div className="flex items-center gap-3">
                           <button
                             type="button"
                             onClick={() => setBuilderCourseId(course.id)}
                             className="text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
                           >
-                            <Sliders className="w-3 h-3" />
-                            <span>Drag &amp; Drop Builder</span>
+                            <Layers className="w-3 h-3" />
+                            <span>Edit Sections &amp; Outline</span>
                           </button>
                           <button
                             type="button"
@@ -2375,6 +2377,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
 
                       <div className="space-y-1.5">
                         {course.modules.map((mod, idx) => {
+                          const crumb = getModuleSectionBreadcrumb(course, mod.id);
                           const nextMod = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
                           const betweenQuiz = nextMod ? getBetweenModuleQuiz(course, mod, nextMod) : null;
                           const hasCustomCheckpoint = Boolean(mod.checkpointQuiz?.questions?.length);
@@ -2450,11 +2453,16 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                   )}
                                   <div className="min-w-0 flex-1">
                                     <span className="block truncate text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-cyan-300">
+                                      {crumb ? (
+                                        <span className="tabular-nums font-semibold text-slate-500 dark:text-slate-400 mr-1.5">
+                                          {crumb.itemNumber}
+                                        </span>
+                                      ) : null}
                                       {mod.title}
                                     </span>
-                                    {(mod.chapterTitle || mod.mainContentTitle) && (
-                                      <span className="block truncate text-[10px] text-slate-400 dark:text-slate-500 font-mono">
-                                        L1: {mod.chapterTitle || 'Core Chapter'} › L2: {mod.mainContentTitle || 'Main Contents'}
+                                    {crumb && (
+                                      <span className="block truncate text-[10px] text-slate-400 dark:text-slate-500 tabular-nums">
+                                        {crumb.chapterNumber} {crumb.chapterTitle} › {crumb.sectionNumber} {crumb.mainContentTitle}
                                       </span>
                                     )}
                                   </div>
