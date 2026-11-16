@@ -245,6 +245,14 @@ export function getBetweenModuleQuiz(
 ): CheckpointQuizConfig | null {
   if (!fromModule || !toModule) return null;
 
+  // Respect explicit removal at module or course level
+  if (fromModule.disableCheckpoint === true) {
+    return null;
+  }
+  if (course.disableRetentionChecks && fromModule.disableCheckpoint !== false) {
+    return null;
+  }
+
   // Avoid stacking a transition quiz immediately adjacent to a dedicated quiz module
   if (fromModule.type === 'quiz' || toModule.type === 'quiz') {
     return null;

@@ -675,6 +675,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
 
       const existingOrBank = getBetweenModuleQuiz(course, fromMod, toMod);
       updateModuleInCourse(course.id, fromMod.id, {
+        disableCheckpoint: false,
         checkpointQuiz: {
           title: fromMod.checkpointQuiz?.title || `Retention Check: ${fromMod.title}`,
           passingScore: gradingForm.quizPassingScore,
@@ -761,6 +762,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     if (dragPayload.source === 'palette' && dragPayload.kind === 'checkpoint') {
       const existingOrBank = getBetweenModuleQuiz(course, fromMod, toMod);
       updateModuleInCourse(course.id, fromMod.id, {
+        disableCheckpoint: false,
         checkpointQuiz: {
           title: fromMod.checkpointQuiz?.title || `Retention Check: ${fromMod.title}`,
           passingScore: gradingForm.quizPassingScore,
@@ -791,6 +793,53 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     }
   };
 
+  const handleRemoveModuleCheckpoint = (moduleId: string, moduleTitle: string) => {
+    updateModuleInCourse(course.id, moduleId, { disableCheckpoint: true });
+    if (
+      inspectorTarget.kind === 'checkpoint' &&
+      inspectorTarget.fromModuleId === moduleId
+    ) {
+      setInspectorTarget({ kind: 'grading' });
+    }
+    onToast(`Removed retention check after "${moduleTitle}"`);
+  };
+
+  const handleRestoreModuleCheckpoint = (fromMod: CourseModule, toMod: CourseModule) => {
+    updateModuleInCourse(course.id, fromMod.id, { disableCheckpoint: false });
+    setInspectorTarget({ kind: 'checkpoint', fromModuleId: fromMod.id, toModuleId: toMod.id });
+    onToast(`Enabled retention check between "${fromMod.title}" and "${toMod.title}"`);
+  };
+
+  const handleClearCheckpointsInSection = (moduleIds: string[], sectionLabel: string) => {
+    const idSet = new Set(moduleIds);
+    const updatedModules = course.modules.map(m =>
+      idSet.has(m.id) ? { ...m, disableCheckpoint: true } : m
+    );
+    updateCourse(course.id, { modules: updatedModules });
+    if (
+      inspectorTarget.kind === 'checkpoint' &&
+      idSet.has(inspectorTarget.fromModuleId)
+    ) {
+      setInspectorTarget({ kind: 'grading' });
+    }
+    onToast(`Removed retention checks in "${sectionLabel}"`);
+  };
+
+  const handleToggleAllRetentionChecks = (disableAll: boolean) => {
+    updateCourse(course.id, {
+      disableRetentionChecks: disableAll,
+      modules: course.modules.map(m => ({ ...m, disableCheckpoint: disableAll }))
+    });
+    if (disableAll && inspectorTarget.kind === 'checkpoint') {
+      setInspectorTarget({ kind: 'grading' });
+    }
+    onToast(
+      disableAll
+        ? `Removed all Interactive Retention Checks for ${course.code}`
+        : `Restored Interactive Retention Checks for ${course.code}`
+    );
+  };
+
   const handleSaveQuizDraft = (e: React.FormEvent) => {
     e.preventDefault();
     if (quizDraft.questions.length === 0) return;
@@ -806,6 +855,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
       onToast(`Updated quiz "${quizDraft.title.trim() || selectedQuizModule.title}"`);
     } else if (inspectorTarget.kind === 'checkpoint' && selectedCheckpointPair) {
       updateModuleInCourse(course.id, selectedCheckpointPair.fromMod.id, {
+        disableCheckpoint: false,
         checkpointQuiz: {
           title: quizDraft.title.trim() || `Retention Check: ${selectedCheckpointPair.fromMod.title}`,
           passingScore: Number(quizDraft.passingScore) || 70,
@@ -878,6 +928,29 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {course.modules.length > 1 && (
+            <button
+              type="button"
+              onClick={() => handleToggleAllRetentionChecks(moduleBreakdown.retentionChecks > 0)}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                moduleBreakdown.retentionChecks > 0
+                  ? 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-red-400 hover:text-red-600 dark:hover:text-red-400'
+                  : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-blue-600 dark:text-cyan-400 hover:border-blue-400'
+              }`}
+              title={
+                moduleBreakdown.retentionChecks > 0
+                  ? 'Remove all between-module Interactive Retention Checks'
+                  : 'Restore between-module Interactive Retention Checks'
+              }
+            >
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span className="tabular-nums">
+                {moduleBreakdown.retentionChecks > 0
+                  ? `Clear All Checks (${moduleBreakdown.retentionChecks})`
+                  : 'Restore Checks'}
+              </span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setInspectorTarget({ kind: 'grading' })}
@@ -1077,6 +1150,29 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                           </button>
 
                           <div className="flex items-center gap-1 shrink-0">
+                            {(() => {
+                              const chapterModIds = ch.mainContents.flatMap(sec =>
+                                sec.items.map(item => item.module.id)
+                              );
+                              const hasChapterChecks = ch.mainContents.some(sec =>
+                                sec.items.some(item => {
+                                  const nextM = course.modules[item.flatIndex + 1];
+                                  return Boolean(nextM && getBetweenModuleQuiz(course, item.module, nextM));
+                                })
+                              );
+                              return hasChapterChecks ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleClearCheckpointsInSection(chapterModIds, ch.title)
+                                  }
+                                  className="px-2 py-1 rounded-md text-[11px] font-medium text-slate-400 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+                                  title="Remove all Interactive Retention Checks in this chapter"
+                                >
+                                  Clear Checks
+                                </button>
+                              ) : null;
+                            })()}
                             <button
                               type="button"
                               onClick={() => {
@@ -1252,6 +1348,24 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                       className="flex items-center gap-1 shrink-0"
                                       onClick={(e) => e.stopPropagation()}
                                     >
+                                      {mc.items.some(item => {
+                                        const nextM = course.modules[item.flatIndex + 1];
+                                        return Boolean(nextM && getBetweenModuleQuiz(course, item.module, nextM));
+                                      }) && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleClearCheckpointsInSection(
+                                              mc.items.map(i => i.module.id),
+                                              mc.title
+                                            )
+                                          }
+                                          className="px-1.5 py-0.5 rounded-md text-[10px] font-medium text-slate-400 hover:text-red-500 hover:bg-white dark:hover:bg-slate-900 whitespace-nowrap opacity-75 group-hover/sec:opacity-100"
+                                          title="Remove retention checks for all modules in this section"
+                                        >
+                                          Clear Checks
+                                        </button>
+                                      )}
                                       <button
                                         type="button"
                                         onClick={() => {
@@ -1349,82 +1463,136 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                           ? Activity
                                           : FileText;
 
-                                      return (
-                                        <div
-                                          key={mod.id}
-                                          draggable
-                                          onDragStart={(e) => {
-                                            e.dataTransfer.effectAllowed = 'move';
-                                            e.dataTransfer.setData('text/plain', `module:${mod.id}`);
-                                            setDragPayload({
-                                              source: 'module',
-                                              moduleId: mod.id,
-                                              fromIndex: flatIndex
-                                            });
-                                          }}
-                                          onDragEnd={() => {
-                                            setDragPayload(null);
-                                            setDropSectionKey(null);
-                                          }}
-                                          className={`group/item flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg transition-colors ${
-                                            isSelectedQuiz
-                                              ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold'
-                                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
-                                          }`}
-                                        >
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setSelectedSection({
-                                                chapterTitle: ch.title,
-                                                mainContentTitle: mc.title
-                                              });
-                                              if (mod.type === 'quiz') {
-                                                setInspectorTarget({
-                                                  kind: 'quiz-module',
-                                                  moduleId: mod.id
-                                                });
-                                              } else {
-                                                onEditFullModule(course.id, mod);
-                                              }
-                                            }}
-                                            className="flex items-start gap-2.5 min-w-0 flex-1 text-left"
-                                          >
-                                            <ItemIcon className="w-4 h-4 mt-0.5 text-slate-500 dark:text-slate-400 shrink-0" />
-                                            <span className="text-[13px] leading-snug text-slate-800 dark:text-slate-200">
-                                              <span className="tabular-nums mr-1.5 font-medium text-slate-600 dark:text-slate-400">
-                                                {itemNumber}
-                                              </span>
-                                              {mod.title}
-                                            </span>
-                                          </button>
+                                      const nextSequentialMod =
+                                        flatIndex < course.modules.length - 1
+                                          ? course.modules[flatIndex + 1]
+                                          : undefined;
+                                      const betweenCheck = nextSequentialMod
+                                        ? getBetweenModuleQuiz(course, mod, nextSequentialMod)
+                                        : null;
 
-                                          <div className="flex items-center gap-0.5 shrink-0 opacity-70 group-hover/item:opacity-100 transition-opacity">
+                                      return (
+                                        <React.Fragment key={mod.id}>
+                                          <div
+                                            draggable
+                                            onDragStart={(e) => {
+                                              e.dataTransfer.effectAllowed = 'move';
+                                              e.dataTransfer.setData('text/plain', `module:${mod.id}`);
+                                              setDragPayload({
+                                                source: 'module',
+                                                moduleId: mod.id,
+                                                fromIndex: flatIndex
+                                              });
+                                            }}
+                                            onDragEnd={() => {
+                                              setDragPayload(null);
+                                              setDropSectionKey(null);
+                                            }}
+                                            className={`group/item flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg transition-colors ${
+                                              isSelectedQuiz
+                                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold'
+                                                : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
+                                            }`}
+                                          >
                                             <button
                                               type="button"
-                                              onClick={() => onEditFullModule(course.id, mod)}
-                                              className="p-1 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400"
-                                              title="Edit content & section"
-                                            >
-                                              <Edit3 className="w-3.5 h-3.5" />
-                                            </button>
-                                            <button
-                                              type="button"
-                                              disabled={course.modules.length <= 1}
                                               onClick={() => {
-                                                deleteModuleFromCourse(course.id, mod.id);
-                                                if (isSelectedQuiz) {
-                                                  setInspectorTarget({ kind: 'grading' });
+                                                setSelectedSection({
+                                                  chapterTitle: ch.title,
+                                                  mainContentTitle: mc.title
+                                                });
+                                                if (mod.type === 'quiz') {
+                                                  setInspectorTarget({
+                                                    kind: 'quiz-module',
+                                                    moduleId: mod.id
+                                                  });
+                                                } else {
+                                                  onEditFullModule(course.id, mod);
                                                 }
-                                                onToast(`Removed "${mod.title}"`);
                                               }}
-                                              className="p-1 rounded text-slate-400 hover:text-red-500 disabled:opacity-30"
-                                              title="Delete item"
+                                              className="flex items-start gap-2.5 min-w-0 flex-1 text-left"
                                             >
-                                              <Trash2 className="w-3.5 h-3.5" />
+                                              <ItemIcon className="w-4 h-4 mt-0.5 text-slate-500 dark:text-slate-400 shrink-0" />
+                                              <span className="text-[13px] leading-snug text-slate-800 dark:text-slate-200">
+                                                <span className="tabular-nums mr-1.5 font-medium text-slate-600 dark:text-slate-400">
+                                                  {itemNumber}
+                                                </span>
+                                                {mod.title}
+                                              </span>
                                             </button>
+
+                                            <div className="flex items-center gap-0.5 shrink-0 opacity-70 group-hover/item:opacity-100 transition-opacity">
+                                              <button
+                                                type="button"
+                                                onClick={() => onEditFullModule(course.id, mod)}
+                                                className="p-1 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400"
+                                                title="Edit content & section"
+                                              >
+                                                <Edit3 className="w-3.5 h-3.5" />
+                                              </button>
+                                              <button
+                                                type="button"
+                                                disabled={course.modules.length <= 1}
+                                                onClick={() => {
+                                                  deleteModuleFromCourse(course.id, mod.id);
+                                                  if (isSelectedQuiz) {
+                                                    setInspectorTarget({ kind: 'grading' });
+                                                  }
+                                                  onToast(`Removed "${mod.title}"`);
+                                                }}
+                                                className="p-1 rounded text-slate-400 hover:text-red-500 disabled:opacity-30"
+                                                title="Delete item"
+                                              >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                              </button>
+                                            </div>
                                           </div>
-                                        </div>
+
+                                          {betweenCheck && nextSequentialMod && (
+                                            <div className="ml-6 mr-2 my-0.5 px-2.5 py-1 rounded-md border border-dashed border-slate-200 dark:border-slate-700/80 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setInspectorTarget({
+                                                    kind: 'checkpoint',
+                                                    fromModuleId: mod.id,
+                                                    toModuleId: nextSequentialMod.id
+                                                  })
+                                                }
+                                                className="flex items-center gap-1.5 truncate hover:text-blue-600 dark:hover:text-cyan-400 text-left flex-1"
+                                              >
+                                                <CheckSquare className="w-3 h-3 text-blue-600 dark:text-cyan-400 shrink-0" />
+                                                <span className="truncate">
+                                                  Retention Check · {betweenCheck.questions.length} Qs
+                                                </span>
+                                              </button>
+                                              <div className="flex items-center gap-2 shrink-0">
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setInspectorTarget({
+                                                      kind: 'checkpoint',
+                                                      fromModuleId: mod.id,
+                                                      toModuleId: nextSequentialMod.id
+                                                    })
+                                                  }
+                                                  className="text-[10px] font-semibold text-blue-600 dark:text-cyan-400 hover:underline"
+                                                >
+                                                  Edit
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleRemoveModuleCheckpoint(mod.id, mod.title)}
+                                                  className="text-[10px] text-slate-400 hover:text-red-500 inline-flex items-center gap-0.5"
+                                                  title={`Remove retention check after "${mod.title}"`}
+                                                >
+                                                  <X className="w-3 h-3" />
+                                                  <span>Remove</span>
+                                                </button>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </React.Fragment>
                                       );
                                     })
                                   )}
@@ -1610,8 +1778,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                         const hasCustom = Boolean(mod.checkpointQuiz?.questions?.length);
 
                         return (
-                          <button
-                            type="button"
+                          <div
                             onDragOver={(e) => {
                               e.preventDefault();
                               setActiveCheckpointDropId(slotKey);
@@ -1622,36 +1789,83 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                               }
                             }}
                             onDrop={(e) => handleDropOnCheckpointSlot(e, mod, nextMod)}
-                            onClick={() =>
-                              setInspectorTarget({
-                                kind: 'checkpoint',
-                                fromModuleId: mod.id,
-                                toModuleId: nextMod.id
-                              })
-                            }
                             className={`w-full px-3 py-2 rounded-lg border text-left transition-colors duration-150 motion-reduce:transition-none flex items-center justify-between gap-2 text-[11px] ${
                               isCheckpointHovered
                                 ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-cyan-200 font-semibold'
                                 : isSelectedCheckpoint
                                 ? 'border-blue-500 dark:border-cyan-400 bg-blue-50/70 dark:bg-blue-950/40 text-blue-900 dark:text-cyan-200 font-semibold'
-                                : 'border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/70 text-slate-600 dark:text-slate-300 hover:border-blue-400 dark:hover:border-cyan-500'
+                                : betweenQuiz
+                                ? 'border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/70 text-slate-600 dark:text-slate-300 hover:border-blue-400 dark:hover:border-cyan-500'
+                                : 'border-dashed border-slate-200/60 dark:border-slate-800 text-slate-400 dark:text-slate-500 hover:border-blue-300'
                             }`}
                           >
-                            <span className="flex items-center gap-1.5 truncate">
-                              <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400 shrink-0" />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (betweenQuiz) {
+                                  setInspectorTarget({
+                                    kind: 'checkpoint',
+                                    fromModuleId: mod.id,
+                                    toModuleId: nextMod.id
+                                  });
+                                } else {
+                                  handleRestoreModuleCheckpoint(mod, nextMod);
+                                }
+                              }}
+                              className="flex items-center gap-1.5 truncate flex-1 text-left"
+                            >
+                              <CheckSquare
+                                className={`w-3.5 h-3.5 shrink-0 ${
+                                  betweenQuiz ? 'text-blue-600 dark:text-cyan-400' : 'text-slate-400'
+                                }`}
+                              />
                               <span className="truncate tabular-nums">
-                                Retention Check · {betweenQuiz ? `${betweenQuiz.questions.length} Qs` : 'Inject Quiz'}
-                                {betweenQuiz ? ` · Pass ${betweenQuiz.passingScore}%` : ''}
+                                {betweenQuiz
+                                  ? `Retention Check · ${betweenQuiz.questions.length} Qs · Pass ${betweenQuiz.passingScore}%`
+                                  : 'No Retention Check · Click or drop check here to add'}
                               </span>
-                            </span>
-                            <span className="font-mono text-[10px] text-blue-600 dark:text-cyan-400 font-semibold whitespace-nowrap shrink-0">
-                              {isCheckpointHovered
-                                ? 'Drop to Inject'
-                                : hasCustom
-                                ? 'Custom · Edit'
-                                : 'Configure'}
-                            </span>
-                          </button>
+                            </button>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {betweenQuiz ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setInspectorTarget({
+                                        kind: 'checkpoint',
+                                        fromModuleId: mod.id,
+                                        toModuleId: nextMod.id
+                                      })
+                                    }
+                                    className="font-mono text-[10px] text-blue-600 dark:text-cyan-400 font-semibold hover:underline whitespace-nowrap"
+                                  >
+                                    {isCheckpointHovered
+                                      ? 'Drop to Inject'
+                                      : hasCustom
+                                      ? 'Custom · Edit'
+                                      : 'Configure'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveModuleCheckpoint(mod.id, mod.title)}
+                                    className="font-mono text-[10px] text-slate-400 hover:text-red-500 inline-flex items-center gap-0.5 whitespace-nowrap"
+                                    title={`Remove retention check after "${mod.title}"`}
+                                  >
+                                    <X className="w-3 h-3" />
+                                    <span>Remove</span>
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRestoreModuleCheckpoint(mod, nextMod)}
+                                  className="font-mono text-[10px] text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
+                                >
+                                  + Enable
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         );
                       })()}
                     </div>
@@ -2118,6 +2332,22 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                 <Save className="w-3.5 h-3.5" />
                 <span>Save Assessment Changes</span>
               </button>
+
+              {inspectorTarget.kind === 'checkpoint' && selectedCheckpointPair && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleRemoveModuleCheckpoint(
+                      selectedCheckpointPair.fromMod.id,
+                      selectedCheckpointPair.fromMod.title
+                    )
+                  }
+                  className="w-full py-2 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50/70 dark:bg-red-950/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-950/60 font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Remove This Retention Check</span>
+                </button>
+              )}
             </form>
           )}
         </aside>

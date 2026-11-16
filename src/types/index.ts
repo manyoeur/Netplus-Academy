@@ -113,6 +113,7 @@ export interface CourseModule {
     passingScore: number;
     questions: QuizQuestion[];
   };
+  disableCheckpoint?: boolean;
   lab?: {
     objective: string;
     nodes: LabTopologyNode[];
@@ -165,6 +166,7 @@ export interface Course {
   chapters?: CourseChapterSection[];
   modules: CourseModule[];
   gradingCriteria?: CourseGradingCriteria;
+  disableRetentionChecks?: boolean;
   createdById?: string;
   createdByEmail?: string;
   isPublished: boolean;
