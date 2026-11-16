@@ -148,43 +148,37 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     [course, activeModule]
   );
 
-  // Accordion expand/collapse state for Level 1 chapters and Level 2 main contents
+  // Accordion expand/collapse state for Level 1 chapters and Level 2 main contents (collapsed by default)
   const [expandedChapters, setExpandedChapters] = useState<Record<string, boolean>>({});
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
 
+  // Reset outline to collapsed by default when switching courses
   useEffect(() => {
-    if (!activeBreadcrumb) return;
-    setExpandedChapters(prev =>
-      prev[activeBreadcrumb.chapterId] === false
-        ? { ...prev, [activeBreadcrumb.chapterId]: true }
-        : prev
-    );
-    setExpandedSections(prev =>
-      prev[activeBreadcrumb.mainContentId] === false
-        ? { ...prev, [activeBreadcrumb.mainContentId]: true }
-        : prev
-    );
-  }, [activeBreadcrumb?.chapterId, activeBreadcrumb?.mainContentId]);
+    setExpandedChapters({});
+    setExpandedSections({});
+  }, [course.id]);
 
   const toggleChapterAccordion = (chapterId: string) => {
     setExpandedChapters(prev => ({
       ...prev,
-      [chapterId]: prev[chapterId] === false
+      [chapterId]: !prev[chapterId]
     }));
   };
 
   const toggleSectionAccordion = (sectionId: string) => {
     setExpandedSections(prev => ({
       ...prev,
-      [sectionId]: prev[sectionId] === false
+      [sectionId]: !prev[sectionId]
     }));
   };
 
-  const allExpanded = hierarchyTree.every(
-    ch =>
-      expandedChapters[ch.id] !== false &&
-      ch.mainContents.every(mc => expandedSections[mc.id] !== false)
-  );
+  const allExpanded =
+    hierarchyTree.length > 0 &&
+    hierarchyTree.every(
+      ch =>
+        expandedChapters[ch.id] === true &&
+        ch.mainContents.every(mc => expandedSections[mc.id] === true)
+    );
 
   const handleToggleAllHierarchy = () => {
     const nextState = !allExpanded;
@@ -676,7 +670,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           {/* 3-Level Nested Course Outline: 1.0 Chapter -> 1.1 Main Contents -> 1.1.1 Course Contents */}
           <div className="divide-y divide-slate-200/80 dark:divide-slate-800">
             {hierarchyTree.map((chapter) => {
-              const isChapterOpen = expandedChapters[chapter.id] !== false;
+              const isChapterOpen = Boolean(expandedChapters[chapter.id]);
               const chapterModules = chapter.mainContents.flatMap(mc => mc.items);
               const chapterDoneCount = chapterModules.filter(item =>
                 isModuleCompleted(item.module.id)
@@ -711,7 +705,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                   {isChapterOpen && (
                     <div className="mt-1 space-y-2">
                       {chapter.mainContents.map((section) => {
-                        const isSectionOpen = expandedSections[section.id] !== false;
+                        const isSectionOpen = Boolean(expandedSections[section.id]);
 
                         return (
                           <div key={section.id} className="space-y-1">

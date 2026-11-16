@@ -32,7 +32,10 @@ import {
   XCircle,
   CheckSquare,
   GripVertical,
-  Sliders
+  Sliders,
+  Mouse,
+  Clapperboard,
+  SquarePen
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
@@ -455,6 +458,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
 
   // Drag-and-Drop Module Builder Studio & Card Drag State
   const [builderCourseId, setBuilderCourseId] = useState<string | null>(null);
+  const [expandedCardChapters, setExpandedCardChapters] = useState<Record<string, boolean>>({});
+  const [collapsedCardSections, setCollapsedCardSections] = useState<Record<string, boolean>>({});
   const [cardDragMod, setCardDragMod] = useState<{
     courseId: string;
     fromIndex: number;
@@ -2368,248 +2373,441 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                       </div>
                     </div>
 
-                    {/* Modules breakdown with 3-level section path, Drag Reorder, Quizzes & Delete */}
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                        <span>
-                          Curriculum Outline ({resolveCourseHierarchy(course).length} Chapters · {course.modules.length} Items)
-                        </span>
-                        <div className="flex flex-wrap items-center gap-3">
-                          {(() => {
-                            const hasAnyChecks = course.modules.some((m, idx) => {
-                              const nextM = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
-                              return Boolean(nextM && getBetweenModuleQuiz(course, m, nextM));
-                            });
-                            return course.modules.length > 1 ? (
-                              <button
-                                type="button"
-                                onClick={() => handleToggleAllCourseCheckpoints(course, hasAnyChecks)}
-                                className="text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
-                                title={
-                                  hasAnyChecks
-                                    ? 'Remove all Interactive Retention Checks in this course'
-                                    : 'Restore Interactive Retention Checks across this course'
-                                }
-                              >
-                                <XCircle className="w-3 h-3" />
-                                <span>{hasAnyChecks ? 'Clear All Checks' : 'Restore Checks'}</span>
-                              </button>
-                            ) : null;
-                          })()}
-                          <button
-                            type="button"
-                            onClick={() => setBuilderCourseId(course.id)}
-                            className="text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
-                          >
-                            <Layers className="w-3 h-3" />
-                            <span>Edit Sections &amp; Outline</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openAddModuleModal(course.id, 'quiz')}
-                            className="text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
-                          >
-                            <CheckSquare className="w-3 h-3" />
-                            <span>Add Quiz</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openAddModuleModal(course.id, 'theory')}
-                            className="text-blue-600 dark:text-cyan-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
-                          >
-                            <Plus className="w-3 h-3" />
-                            <span>Add Module</span>
-                          </button>
-                        </div>
-                      </div>
+                    {/* Modules breakdown with 3-level indentation (collapsed by default) matching Course Builder */}
+                    {(() => {
+                      const cardHierarchy = resolveCourseHierarchy(course);
+                      const allCardChaptersExpanded =
+                        cardHierarchy.length > 0 &&
+                        cardHierarchy.every(ch => expandedCardChapters[`${course.id}::${ch.id}`] === true);
+                      const hasAnyChecks = course.modules.some((m, idx) => {
+                        const nextM = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
+                        return Boolean(nextM && getBetweenModuleQuiz(course, m, nextM));
+                      });
 
-                      <div className="space-y-1.5">
-                        {course.modules.map((mod, idx) => {
-                          const crumb = getModuleSectionBreadcrumb(course, mod.id);
-                          const nextMod = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
-                          const betweenQuiz = nextMod ? getBetweenModuleQuiz(course, mod, nextMod) : null;
-                          const hasCustomCheckpoint = Boolean(mod.checkpointQuiz?.questions?.length);
-                          const isBeingDragged =
-                            cardDragMod?.courseId === course.id && cardDragMod.fromIndex === idx;
-                          const isDropTarget =
-                            cardDragOverMod?.courseId === course.id &&
-                            cardDragOverMod.overIndex === idx &&
-                            cardDragMod?.fromIndex !== idx;
-
-                          return (
-                            <React.Fragment key={mod.id}>
-                              <div
-                                draggable
-                                onDragStart={(e) => {
-                                  e.dataTransfer.effectAllowed = 'move';
-                                  e.dataTransfer.setData('text/plain', mod.id);
-                                  setCardDragMod({ courseId: course.id, fromIndex: idx });
-                                }}
-                                onDragOver={(e) => {
-                                  if (cardDragMod?.courseId !== course.id) return;
-                                  e.preventDefault();
-                                  setCardDragOverMod({ courseId: course.id, overIndex: idx });
-                                }}
-                                onDrop={(e) => {
-                                  e.preventDefault();
-                                  if (
-                                    cardDragMod &&
-                                    cardDragMod.courseId === course.id &&
-                                    cardDragMod.fromIndex !== idx
-                                  ) {
-                                    const reordered = [...course.modules];
-                                    const [moved] = reordered.splice(cardDragMod.fromIndex, 1);
-                                    reordered.splice(idx, 0, moved);
-                                    setCourseModulesOrder(course.id, reordered);
-                                    showToast(`Reordered "${moved.title}"`);
-                                  }
-                                  setCardDragMod(null);
-                                  setCardDragOverMod(null);
-                                }}
-                                onDragEnd={() => {
-                                  setCardDragMod(null);
-                                  setCardDragOverMod(null);
-                                }}
-                                className={`p-2 rounded-xl border flex items-center justify-between gap-2 text-xs group transition-colors ${
-                                  isBeingDragged
-                                    ? 'opacity-45 border-blue-400 bg-blue-50/40 dark:bg-blue-950/30'
-                                    : isDropTarget
-                                    ? 'border-blue-500 dark:border-cyan-400 bg-blue-50/70 dark:bg-blue-950/50'
-                                    : 'bg-slate-50 dark:bg-slate-800/60 border-slate-100 dark:border-slate-800'
-                                }`}
-                              >
-                                <span
-                                  className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 shrink-0"
-                                  title="Drag to reorder module"
-                                >
-                                  <GripVertical className="w-3.5 h-3.5" />
-                                </span>
+                      return (
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                            <span>
+                              Curriculum Outline ({cardHierarchy.length} Chapters · {course.modules.length} Items)
+                            </span>
+                            <div className="flex flex-wrap items-center gap-3">
+                              {cardHierarchy.length > 0 && (
                                 <button
                                   type="button"
-                                  onClick={() => openEditModuleModal(course.id, mod)}
-                                  className="flex items-center gap-2 truncate flex-1 text-left hover:text-blue-600 dark:hover:text-cyan-400 transition-colors"
-                                  title="Click to edit module content"
+                                  onClick={() => {
+                                    const nextVal = !allCardChaptersExpanded;
+                                    const nextChapters: Record<string, boolean> = { ...expandedCardChapters };
+                                    const nextSections: Record<string, boolean> = { ...collapsedCardSections };
+                                    cardHierarchy.forEach(ch => {
+                                      nextChapters[`${course.id}::${ch.id}`] = nextVal;
+                                      ch.mainContents.forEach(mc => {
+                                        nextSections[`${course.id}::${mc.id}`] = !nextVal;
+                                      });
+                                    });
+                                    setExpandedCardChapters(nextChapters);
+                                    setCollapsedCardSections(nextSections);
+                                  }}
+                                  className="text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
                                 >
-                                  {mod.type === 'lab' ? (
-                                    <Terminal className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
-                                  ) : mod.type === 'video' ? (
-                                    <Video className="w-3.5 h-3.5 text-purple-500 shrink-0" />
-                                  ) : mod.type === 'quiz' ? (
-                                    <HelpCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                  {allCardChaptersExpanded ? (
+                                    <ChevronUp className="w-3 h-3" />
                                   ) : (
-                                    <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                                    <ChevronDown className="w-3 h-3" />
                                   )}
-                                  <div className="min-w-0 flex-1">
-                                    <span className="block truncate text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-cyan-300">
-                                      {crumb ? (
-                                        <span className="tabular-nums font-semibold text-slate-500 dark:text-slate-400 mr-1.5">
-                                          {crumb.itemNumber}
-                                        </span>
-                                      ) : null}
-                                      {mod.title}
-                                    </span>
-                                    {crumb && (
-                                      <span className="block truncate text-[10px] text-slate-400 dark:text-slate-500 tabular-nums">
-                                        {crumb.chapterNumber} {crumb.chapterTitle} › {crumb.sectionNumber} {crumb.mainContentTitle}
-                                      </span>
-                                    )}
-                                  </div>
+                                  <span>{allCardChaptersExpanded ? 'Collapse All' : 'Expand All'}</span>
                                 </button>
+                              )}
+                              {course.modules.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleAllCourseCheckpoints(course, hasAnyChecks)}
+                                  className="text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
+                                  title={
+                                    hasAnyChecks
+                                      ? 'Remove all Interactive Retention Checks in this course'
+                                      : 'Restore Interactive Retention Checks across this course'
+                                  }
+                                >
+                                  <XCircle className="w-3 h-3" />
+                                  <span>{hasAnyChecks ? 'Clear All Checks' : 'Restore Checks'}</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setBuilderCourseId(course.id)}
+                                className="text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
+                              >
+                                <Layers className="w-3 h-3" />
+                                <span>Edit Sections &amp; Outline</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openAddModuleModal(course.id, 'quiz')}
+                                className="text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
+                              >
+                                <CheckSquare className="w-3 h-3" />
+                                <span>Add Quiz</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openAddModuleModal(course.id, 'theory')}
+                                className="text-blue-600 dark:text-cyan-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
+                              >
+                                <Plus className="w-3 h-3" />
+                                <span>Add Module</span>
+                              </button>
+                            </div>
+                          </div>
 
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <span className="text-[10px] font-mono tabular-nums text-slate-400 mr-1">
-                                    {mod.type} · {mod.durationMin}m
-                                    {mod.type === 'quiz' && mod.quiz ? ` · ${mod.quiz.questions.length} Qs` : ''}
-                                  </span>
+                          <div className="divide-y divide-slate-200/80 dark:divide-slate-800">
+                            {cardHierarchy.map((ch) => {
+                              const chKey = `${course.id}::${ch.id}`;
+                              const isChapterOpen = Boolean(expandedCardChapters[chKey]);
 
-                                  <button
-                                    type="button"
-                                    disabled={idx === 0}
-                                    onClick={() => reorderModuleInCourse(course.id, mod.id, 'up')}
-                                    className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30"
-                                    title="Move Up"
-                                  >
-                                    <ChevronUp className="w-3.5 h-3.5" />
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    disabled={idx === course.modules.length - 1}
-                                    onClick={() => reorderModuleInCourse(course.id, mod.id, 'down')}
-                                    className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30"
-                                    title="Move Down"
-                                  >
-                                    <ChevronDown className="w-3.5 h-3.5" />
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => openEditModuleModal(course.id, mod)}
-                                    className="p-1 rounded text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-700"
-                                    title="Edit Module & Content"
-                                  >
-                                    <Edit3 className="w-3.5 h-3.5" />
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    disabled={course.modules.length <= 1}
-                                    onClick={() => {
-                                      deleteModuleFromCourse(course.id, mod.id);
-                                      showToast(`Removed module "${mod.title}"`);
-                                    }}
-                                    className="p-1 rounded text-red-400 hover:text-red-600 disabled:opacity-30"
-                                    title={course.modules.length <= 1 ? 'Course requires at least 1 module' : 'Delete Module'}
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </div>
-
-                              {/* Between-Module Interactive Retention Check Authoring Trigger */}
-                              {betweenQuiz && nextMod && (
-                                <div className="pl-4 relative">
-                                  <span
-                                    aria-hidden="true"
-                                    className="absolute left-2 top-0 bottom-0 w-px bg-slate-200 dark:bg-slate-700"
-                                  />
-                                  <div className="w-full px-2.5 py-1.5 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 hover:border-blue-400 dark:hover:border-cyan-500 flex items-center justify-between gap-2 text-[11px] transition-colors">
+                              return (
+                                <div key={ch.id} className="py-2 first:pt-1 last:pb-1">
+                                  {/* Level 1: Chapter Header (Collapsed by default) */}
+                                  <div className="flex items-center justify-between gap-2 py-1">
                                     <button
                                       type="button"
-                                      onClick={() => openCheckpointModal(course, mod, nextMod)}
-                                      className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 truncate flex-1 text-left"
+                                      onClick={() =>
+                                        setExpandedCardChapters(prev => ({
+                                          ...prev,
+                                          [chKey]: !prev[chKey]
+                                        }))
+                                      }
+                                      aria-expanded={isChapterOpen}
+                                      className="flex-1 min-w-0 text-left flex items-center gap-2 text-[13px] font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-cyan-400 transition-colors"
                                     >
-                                      <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400 shrink-0" />
-                                      <span className="truncate">
-                                        Interactive Retention Check · {betweenQuiz.questions.length} Qs
-                                      </span>
+                                      <span className="tabular-nums shrink-0">{ch.chapterNumber}</span>
+                                      <span className="truncate">{ch.title}</span>
                                     </button>
                                     <div className="flex items-center gap-2 shrink-0">
+                                      <span className="text-[11px] font-mono tabular-nums text-slate-400">
+                                        {ch.totalModules} items
+                                      </span>
                                       <button
                                         type="button"
-                                        onClick={() => openCheckpointModal(course, mod, nextMod)}
-                                        className="font-mono text-[10px] text-blue-600 dark:text-cyan-400 font-semibold hover:underline whitespace-nowrap"
+                                        onClick={() =>
+                                          setExpandedCardChapters(prev => ({
+                                            ...prev,
+                                            [chKey]: !prev[chKey]
+                                          }))
+                                        }
+                                        className="p-1 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                        aria-label={isChapterOpen ? 'Collapse chapter' : 'Expand chapter'}
                                       >
-                                        {hasCustomCheckpoint ? 'Custom · Edit' : 'Customize'}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRemoveModuleCheckpoint(course.id, mod.id, mod.title)}
-                                        className="font-mono text-[10px] text-slate-400 hover:text-red-500 dark:hover:text-red-400 inline-flex items-center gap-0.5 whitespace-nowrap"
-                                        title={`Remove Interactive Retention Check after "${mod.title}"`}
-                                      >
-                                        <X className="w-3 h-3" />
-                                        <span>Remove</span>
+                                        {isChapterOpen ? (
+                                          <ChevronUp className="w-4 h-4" />
+                                        ) : (
+                                          <ChevronDown className="w-4 h-4" />
+                                        )}
                                       </button>
                                     </div>
                                   </div>
+
+                                  {/* Level 2: Main Content Sections (Indented under Level 1) */}
+                                  {isChapterOpen && (
+                                    <div className="mt-1.5 space-y-2 pl-3">
+                                      {ch.mainContents.map((mc) => {
+                                        const secKey = `${course.id}::${mc.id}`;
+                                        const isSectionOpen = !collapsedCardSections[secKey];
+                                        const sectionHasChecks = mc.items.some(item => {
+                                          const nextM = course.modules[item.flatIndex + 1];
+                                          return Boolean(nextM && getBetweenModuleQuiz(course, item.module, nextM));
+                                        });
+
+                                        return (
+                                          <div key={mc.id} className="space-y-1">
+                                            <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-slate-100/80 dark:bg-slate-800/70">
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setCollapsedCardSections(prev => ({
+                                                    ...prev,
+                                                    [secKey]: !prev[secKey]
+                                                  }))
+                                                }
+                                                className="flex items-center gap-2 min-w-0 flex-1 text-left"
+                                              >
+                                                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 tabular-nums shrink-0">
+                                                  {mc.sectionNumber}
+                                                </span>
+                                                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                                                  {mc.title}
+                                                </span>
+                                              </button>
+
+                                              <div className="flex items-center gap-2 shrink-0">
+                                                {sectionHasChecks && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const idSet = new Set(mc.items.map(i => i.module.id));
+                                                      updateCourse(course.id, {
+                                                        modules: course.modules.map(m =>
+                                                          idSet.has(m.id) ? { ...m, disableCheckpoint: true } : m
+                                                        )
+                                                      });
+                                                      showToast(`Removed retention checks in "${mc.title}"`);
+                                                    }}
+                                                    className="text-[10px] font-medium text-slate-400 hover:text-red-500 whitespace-nowrap"
+                                                    title="Remove retention checks in this section"
+                                                  >
+                                                    Clear Checks
+                                                  </button>
+                                                )}
+                                                <span className="text-[10px] font-mono tabular-nums text-slate-400">
+                                                  {mc.items.length}
+                                                </span>
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setCollapsedCardSections(prev => ({
+                                                      ...prev,
+                                                      [secKey]: !prev[secKey]
+                                                    }))
+                                                  }
+                                                  className="p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                                                >
+                                                  {isSectionOpen ? (
+                                                    <ChevronUp className="w-3.5 h-3.5" />
+                                                  ) : (
+                                                    <ChevronDown className="w-3.5 h-3.5" />
+                                                  )}
+                                                </button>
+                                              </div>
+                                            </div>
+
+                                            {/* Level 3: Course Content Items (Indented under Level 2) */}
+                                            {isSectionOpen && (
+                                              <div className="pl-6 space-y-1">
+                                                {mc.items.length === 0 ? (
+                                                  <p className="px-2 py-1 text-[11px] text-slate-400">
+                                                    No modules assigned to this section yet.
+                                                  </p>
+                                                ) : (
+                                                  mc.items.map(({ module: mod, flatIndex: idx, itemNumber }) => {
+                                                    const nextMod =
+                                                      idx < course.modules.length - 1
+                                                        ? course.modules[idx + 1]
+                                                        : undefined;
+                                                    const betweenQuiz = nextMod
+                                                      ? getBetweenModuleQuiz(course, mod, nextMod)
+                                                      : null;
+                                                    const hasCustomCheckpoint = Boolean(
+                                                      mod.checkpointQuiz?.questions?.length
+                                                    );
+                                                    const isBeingDragged =
+                                                      cardDragMod?.courseId === course.id &&
+                                                      cardDragMod.fromIndex === idx;
+                                                    const isDropTarget =
+                                                      cardDragOverMod?.courseId === course.id &&
+                                                      cardDragOverMod.overIndex === idx &&
+                                                      cardDragMod?.fromIndex !== idx;
+
+                                                    const ItemIcon =
+                                                      mod.type === 'lab'
+                                                        ? Mouse
+                                                        : mod.type === 'video'
+                                                        ? Clapperboard
+                                                        : mod.type === 'quiz'
+                                                        ? SquarePen
+                                                        : mod.type === 'pcap'
+                                                        ? Activity
+                                                        : FileText;
+
+                                                    return (
+                                                      <React.Fragment key={mod.id}>
+                                                        <div
+                                                          draggable
+                                                          onDragStart={(e) => {
+                                                            e.dataTransfer.effectAllowed = 'move';
+                                                            e.dataTransfer.setData('text/plain', mod.id);
+                                                            setCardDragMod({
+                                                              courseId: course.id,
+                                                              fromIndex: idx
+                                                            });
+                                                          }}
+                                                          onDragOver={(e) => {
+                                                            if (cardDragMod?.courseId !== course.id) return;
+                                                            e.preventDefault();
+                                                            setCardDragOverMod({
+                                                              courseId: course.id,
+                                                              overIndex: idx
+                                                            });
+                                                          }}
+                                                          onDrop={(e) => {
+                                                            e.preventDefault();
+                                                            if (
+                                                              cardDragMod &&
+                                                              cardDragMod.courseId === course.id &&
+                                                              cardDragMod.fromIndex !== idx
+                                                            ) {
+                                                              const reordered = [...course.modules];
+                                                              const [moved] = reordered.splice(
+                                                                cardDragMod.fromIndex,
+                                                                1
+                                                              );
+                                                              reordered.splice(idx, 0, moved);
+                                                              setCourseModulesOrder(course.id, reordered);
+                                                              showToast(`Reordered "${moved.title}"`);
+                                                            }
+                                                            setCardDragMod(null);
+                                                            setCardDragOverMod(null);
+                                                          }}
+                                                          onDragEnd={() => {
+                                                            setCardDragMod(null);
+                                                            setCardDragOverMod(null);
+                                                          }}
+                                                          className={`px-2.5 py-2 rounded-lg border flex items-center justify-between gap-2 text-xs group transition-colors ${
+                                                            isBeingDragged
+                                                              ? 'opacity-45 border-blue-400 bg-blue-50/40 dark:bg-blue-950/30'
+                                                              : isDropTarget
+                                                              ? 'border-blue-500 dark:border-cyan-400 bg-blue-50/70 dark:bg-blue-950/50'
+                                                              : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                                                          }`}
+                                                        >
+                                                          <span
+                                                            className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 shrink-0"
+                                                            title="Drag to reorder module"
+                                                          >
+                                                            <GripVertical className="w-3.5 h-3.5" />
+                                                          </span>
+                                                          <button
+                                                            type="button"
+                                                            onClick={() => openEditModuleModal(course.id, mod)}
+                                                            className="flex items-center gap-2 truncate flex-1 text-left hover:text-blue-600 dark:hover:text-cyan-400 transition-colors"
+                                                            title="Click to edit module content"
+                                                          >
+                                                            <ItemIcon className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0" />
+                                                            <span className="truncate text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-cyan-300">
+                                                              <span className="tabular-nums font-medium text-slate-500 dark:text-slate-400 mr-1.5">
+                                                                {itemNumber}
+                                                              </span>
+                                                              {mod.title}
+                                                            </span>
+                                                          </button>
+
+                                                          <div className="flex items-center gap-1 shrink-0">
+                                                            <span className="text-[10px] font-mono tabular-nums text-slate-400 mr-1 hidden sm:inline">
+                                                              {mod.durationMin}m
+                                                              {mod.type === 'quiz' && mod.quiz
+                                                                ? ` · ${mod.quiz.questions.length} Qs`
+                                                                : ''}
+                                                            </span>
+                                                            <button
+                                                              type="button"
+                                                              disabled={idx === 0}
+                                                              onClick={() =>
+                                                                reorderModuleInCourse(course.id, mod.id, 'up')
+                                                              }
+                                                              className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30"
+                                                              title="Move Up"
+                                                            >
+                                                              <ChevronUp className="w-3.5 h-3.5" />
+                                                            </button>
+                                                            <button
+                                                              type="button"
+                                                              disabled={idx === course.modules.length - 1}
+                                                              onClick={() =>
+                                                                reorderModuleInCourse(course.id, mod.id, 'down')
+                                                              }
+                                                              className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white disabled:opacity-30"
+                                                              title="Move Down"
+                                                            >
+                                                              <ChevronDown className="w-3.5 h-3.5" />
+                                                            </button>
+                                                            <button
+                                                              type="button"
+                                                              onClick={() => openEditModuleModal(course.id, mod)}
+                                                              className="p-1 rounded text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+                                                              title="Edit Module & Content"
+                                                            >
+                                                              <Edit3 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                            <button
+                                                              type="button"
+                                                              disabled={course.modules.length <= 1}
+                                                              onClick={() => {
+                                                                deleteModuleFromCourse(course.id, mod.id);
+                                                                showToast(`Removed module "${mod.title}"`);
+                                                              }}
+                                                              className="p-1 rounded text-red-400 hover:text-red-600 disabled:opacity-30"
+                                                              title={
+                                                                course.modules.length <= 1
+                                                                  ? 'Course requires at least 1 module'
+                                                                  : 'Delete Module'
+                                                              }
+                                                            >
+                                                              <Trash2 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                          </div>
+                                                        </div>
+
+                                                        {betweenQuiz && nextMod && (
+                                                          <div className="ml-4 px-2.5 py-1.5 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 hover:border-blue-400 dark:hover:border-cyan-500 flex items-center justify-between gap-2 text-[11px] transition-colors">
+                                                            <button
+                                                              type="button"
+                                                              onClick={() =>
+                                                                openCheckpointModal(course, mod, nextMod)
+                                                              }
+                                                              className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 truncate flex-1 text-left"
+                                                            >
+                                                              <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400 shrink-0" />
+                                                              <span className="truncate">
+                                                                Interactive Retention Check ·{' '}
+                                                                {betweenQuiz.questions.length} Qs
+                                                              </span>
+                                                            </button>
+                                                            <div className="flex items-center gap-2 shrink-0">
+                                                              <button
+                                                                type="button"
+                                                                onClick={() =>
+                                                                  openCheckpointModal(course, mod, nextMod)
+                                                                }
+                                                                className="font-mono text-[10px] text-blue-600 dark:text-cyan-400 font-semibold hover:underline whitespace-nowrap"
+                                                              >
+                                                                {hasCustomCheckpoint
+                                                                  ? 'Custom · Edit'
+                                                                  : 'Customize'}
+                                                              </button>
+                                                              <button
+                                                                type="button"
+                                                                onClick={() =>
+                                                                  handleRemoveModuleCheckpoint(
+                                                                    course.id,
+                                                                    mod.id,
+                                                                    mod.title
+                                                                  )
+                                                                }
+                                                                className="font-mono text-[10px] text-slate-400 hover:text-red-500 dark:hover:text-red-400 inline-flex items-center gap-0.5 whitespace-nowrap"
+                                                                title={`Remove Interactive Retention Check after "${mod.title}"`}
+                                                              >
+                                                                <X className="w-3 h-3" />
+                                                                <span>Remove</span>
+                                                              </button>
+                                                            </div>
+                                                          </div>
+                                                        )}
+                                                      </React.Fragment>
+                                                    );
+                                                  })
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </React.Fragment>
-                          );
-                        })}
-                      </div>
-                    </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
