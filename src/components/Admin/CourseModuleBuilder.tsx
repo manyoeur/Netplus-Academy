@@ -31,7 +31,9 @@ import { useAcademy } from '../../context/AcademyContext';
 import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
 import {
   resolveCourseHierarchy,
-  getModuleSectionBreadcrumb
+  getModuleSectionBreadcrumb,
+  createStarterModule,
+  toChapterConfigFromHierarchy
 } from '../../utils/courseHierarchy';
 import {
   Course,
@@ -132,90 +134,6 @@ const PALETTE_ITEMS: {
   }
 ];
 
-function createStarterModule(kind: ModuleType, course: Course, defaultQuizPass: number): CourseModule {
-  const stamp = Date.now();
-  const nextNum = course.modules.length + 1;
-
-  if (kind === 'quiz') {
-    return {
-      id: `mod-${stamp}`,
-      title: `Module ${nextNum}: Knowledge Verification Quiz`,
-      type: 'quiz',
-      durationMin: 20,
-      summary: 'Interactive graded assessment with immediate explanations and automated scoring.',
-      quiz: {
-        passingScore: defaultQuizPass,
-        questions: [
-          {
-            id: `q-${stamp}-1`,
-            question: `Key concept verification for ${course.code}:`,
-            options: ['Primary Best Practice', 'Deprecated Legacy Option', 'Unencrypted Fallback', 'None of the above'],
-            correctAnswerIndex: 0,
-            explanation: 'Immediate feedback explanation shown as soon as a learner selects an answer.'
-          }
-        ]
-      }
-    };
-  }
-
-  if (kind === 'lab') {
-    return {
-      id: `mod-${stamp}`,
-      title: `Module ${nextNum}: Hands-On CLI Configuration Lab`,
-      type: 'lab',
-      durationMin: 40,
-      summary: 'Interactive Cisco IOS CLI lab with automated command verification.',
-      lab: {
-        objective: 'Configure interface addressing and verify routing reachability.',
-        nodes: course.modules.find(m => m.lab?.nodes?.length)?.lab?.nodes || [
-          { id: 'R1', name: 'R1-Core', type: 'router', ip: '10.0.0.1', subnet: '/30', status: 'online', x: 140, y: 150 },
-          { id: 'R2', name: 'R2-Edge', type: 'router', ip: '10.0.0.2', subnet: '/30', status: 'online', x: 360, y: 150 }
-        ],
-        links: course.modules.find(m => m.lab?.links?.length)?.lab?.links || [
-          { from: 'R1', to: 'R2', interfaceFrom: 'Gig0/0/0', interfaceTo: 'Gig0/0/0', status: 'up' }
-        ],
-        initialConfigPrompt: 'R1-Core#',
-        expectedCommands: ['configure terminal', 'interface GigabitEthernet0/0/0', 'no shutdown', 'end'],
-        terminalHints: ['Enter global config mode with "configure terminal".'],
-        verificationCheck: 'show ip interface brief'
-      }
-    };
-  }
-
-  if (kind === 'video') {
-    return {
-      id: `mod-${stamp}`,
-      title: `Module ${nextNum}: Architecture Walkthrough Video`,
-      type: 'video',
-      durationMin: 25,
-      summary: 'Guided instructor walkthrough covering key protocol design trade-offs.',
-      videoUrl: 'https://stream.netplus.academy/walkthrough',
-      videoDuration: '18:30',
-      contentMarkdown: '### Companion Notes\n\nReview the CLI configuration sequences demonstrated in this session.'
-    };
-  }
-
-  if (kind === 'pcap') {
-    return {
-      id: `mod-${stamp}`,
-      title: `Module ${nextNum}: Packet Capture Inspection`,
-      type: 'pcap',
-      durationMin: 30,
-      summary: 'Analyze captured control-plane and data-plane headers in Wireshark.',
-      contentMarkdown: '### Packet Analysis Objectives\n\nInspect protocol flags, timers, and handshake state transitions.'
-    };
-  }
-
-  return {
-    id: `mod-${stamp}`,
-    title: `Module ${nextNum}: Core Concepts & Design Notes`,
-    type: 'theory',
-    durationMin: 30,
-    summary: 'Structured reading module covering protocol mechanics and deployment patterns.',
-    contentMarkdown: `# Module ${nextNum}: Core Concepts\n\nOutline key protocol rules, timer defaults, and verification steps here.`
-  };
-}
-
 export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
   course,
   onClose,
@@ -286,12 +204,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
   }, [hierarchyTree, selectedSection]);
 
   const toChapterConfig = (): CourseChapterSection[] =>
-    hierarchyTree.map(ch => ({
-      id: ch.id,
-      title: ch.title,
-      summary: ch.summary,
-      mainContents: ch.mainContents.map(mc => ({ id: mc.id, title: mc.title, summary: mc.summary }))
-    }));
+    toChapterConfigFromHierarchy(hierarchyTree);
 
   const handleAddLevel1Chapter = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1549,7 +1462,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                           </div>
 
                                           {betweenCheck && nextSequentialMod && (
-                                            <div className="ml-6 mr-2 my-0.5 px-2.5 py-1 rounded-md border border-dashed border-slate-200 dark:border-slate-700/80 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                                            <div className="group/cp ml-6 px-2.5 py-1 rounded-md border border-dashed border-slate-200 dark:border-slate-700/80 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
                                               <button
                                                 type="button"
                                                 onClick={() =>
@@ -1566,7 +1479,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                                   Retention Check · {betweenCheck.questions.length} Qs
                                                 </span>
                                               </button>
-                                              <div className="flex items-center gap-2 shrink-0">
+                                              <div className="flex items-center gap-0.5 shrink-0 opacity-70 group-hover/cp:opacity-100 transition-opacity">
                                                 <button
                                                   type="button"
                                                   onClick={() =>
@@ -1576,18 +1489,20 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                                       toModuleId: nextSequentialMod.id
                                                     })
                                                   }
-                                                  className="text-[10px] font-semibold text-blue-600 dark:text-cyan-400 hover:underline"
+                                                  className="p-1 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400"
+                                                  title={`Edit retention check after "${mod.title}"`}
+                                                  aria-label={`Edit retention check after ${mod.title}`}
                                                 >
-                                                  Edit
+                                                  <Edit3 className="w-3.5 h-3.5" />
                                                 </button>
                                                 <button
                                                   type="button"
                                                   onClick={() => handleRemoveModuleCheckpoint(mod.id, mod.title)}
-                                                  className="text-[10px] text-slate-400 hover:text-red-500 inline-flex items-center gap-0.5"
+                                                  className="p-1 rounded text-slate-400 hover:text-red-500"
                                                   title={`Remove retention check after "${mod.title}"`}
+                                                  aria-label={`Remove retention check after ${mod.title}`}
                                                 >
-                                                  <X className="w-3 h-3" />
-                                                  <span>Remove</span>
+                                                  <Trash2 className="w-3.5 h-3.5" />
                                                 </button>
                                               </div>
                                             </div>
@@ -1825,34 +1740,42 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                   : 'No Retention Check · Click or drop check here to add'}
                               </span>
                             </button>
-                            <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex items-center gap-0.5 shrink-0">
                               {betweenQuiz ? (
                                 <>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setInspectorTarget({
-                                        kind: 'checkpoint',
-                                        fromModuleId: mod.id,
-                                        toModuleId: nextMod.id
-                                      })
-                                    }
-                                    className="font-mono text-[10px] text-blue-600 dark:text-cyan-400 font-semibold hover:underline whitespace-nowrap"
-                                  >
-                                    {isCheckpointHovered
-                                      ? 'Drop to Inject'
-                                      : hasCustom
-                                      ? 'Custom · Edit'
-                                      : 'Configure'}
-                                  </button>
+                                  {isCheckpointHovered ? (
+                                    <span className="font-mono text-[10px] text-blue-600 dark:text-cyan-400 font-semibold whitespace-nowrap px-1">
+                                      Drop to Inject
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setInspectorTarget({
+                                          kind: 'checkpoint',
+                                          fromModuleId: mod.id,
+                                          toModuleId: nextMod.id
+                                        })
+                                      }
+                                      className="p-1 rounded text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-cyan-400"
+                                      title={
+                                        hasCustom
+                                          ? `Edit custom retention check after "${mod.title}"`
+                                          : `Edit retention check after "${mod.title}"`
+                                      }
+                                      aria-label={`Edit retention check after ${mod.title}`}
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={() => handleRemoveModuleCheckpoint(mod.id, mod.title)}
-                                    className="font-mono text-[10px] text-slate-400 hover:text-red-500 inline-flex items-center gap-0.5 whitespace-nowrap"
+                                    className="p-1 rounded text-red-400 hover:text-red-600"
                                     title={`Remove retention check after "${mod.title}"`}
+                                    aria-label={`Remove retention check after ${mod.title}`}
                                   >
-                                    <X className="w-3 h-3" />
-                                    <span>Remove</span>
+                                    <Trash2 className="w-3.5 h-3.5" />
                                   </button>
                                 </>
                               ) : (

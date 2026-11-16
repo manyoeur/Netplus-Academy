@@ -35,7 +35,9 @@ import {
   Sliders,
   Mouse,
   Clapperboard,
-  SquarePen
+  SquarePen,
+  FolderPlus,
+  Check
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
@@ -43,10 +45,14 @@ import { CourseModuleBuilder } from './CourseModuleBuilder';
 import { CourseThumbnail } from '../Courses/CourseThumbnail';
 import {
   resolveCourseHierarchy,
-  getModuleSectionBreadcrumb
+  getModuleSectionBreadcrumb,
+  createStarterModule,
+  toChapterConfigFromHierarchy,
+  ResolvedChapterSection
 } from '../../utils/courseHierarchy';
 import {
   Course,
+  CourseChapterSection,
   CourseEnrollment,
   CourseModule,
   Invitation,
@@ -456,10 +462,20 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     outcomesText: 'Configure VXLAN Tunnel Endpoints (VTEPs)\nDeploy BGP EVPN Type-2 and Type-5 routes\nTroubleshoot asymmetrical routing'
   });
 
-  // Drag-and-Drop Module Builder Studio & Card Drag State
+  // Drag-and-Drop Module Builder Studio & Card Outline State
   const [builderCourseId, setBuilderCourseId] = useState<string | null>(null);
   const [expandedCardChapters, setExpandedCardChapters] = useState<Record<string, boolean>>({});
   const [collapsedCardSections, setCollapsedCardSections] = useState<Record<string, boolean>>({});
+  const [cardNewChapterTitles, setCardNewChapterTitles] = useState<Record<string, string>>({});
+  const [cardAddingSubToChapterKey, setCardAddingSubToChapterKey] = useState<string | null>(null);
+  const [cardInlineSubTitle, setCardInlineSubTitle] = useState('');
+  const [cardAddingItemToSectionKey, setCardAddingItemToSectionKey] = useState<string | null>(null);
+  const [cardInlineItemTitle, setCardInlineItemTitle] = useState('');
+  const [cardInlineItemType, setCardInlineItemType] = useState<ModuleType>('theory');
+  const [cardEditingChapterKey, setCardEditingChapterKey] = useState<string | null>(null);
+  const [cardEditingChapterDraft, setCardEditingChapterDraft] = useState('');
+  const [cardEditingMainKey, setCardEditingMainKey] = useState<string | null>(null);
+  const [cardEditingMainDraft, setCardEditingMainDraft] = useState('');
   const [cardDragMod, setCardDragMod] = useState<{
     courseId: string;
     fromIndex: number;
@@ -646,7 +662,12 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     setEditingCourseId(null);
   };
 
-  const openAddModuleModal = (courseId: string, initialType: ModuleType = 'theory') => {
+  const openAddModuleModal = (
+    courseId: string,
+    initialType: ModuleType = 'theory',
+    presetChapterTitle?: string,
+    presetMainContentTitle?: string
+  ) => {
     const targetCourse = courses.find(c => c.id === courseId);
     const hierarchy = targetCourse ? resolveCourseHierarchy(targetCourse) : [];
     const lastChapter = hierarchy[hierarchy.length - 1];
@@ -659,8 +680,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       title: isQuiz
         ? 'Quiz: Knowledge Assessment & Verification'
         : 'Module: VXLAN Network Identifier (VNI) Mapping',
-      chapterTitle: lastChapter?.title || 'Core Foundations & Architecture',
-      mainContentTitle: lastMain?.title || 'Core Topics & Practice',
+      chapterTitle: presetChapterTitle || lastChapter?.title || 'Core Foundations & Architecture',
+      mainContentTitle: presetMainContentTitle || lastMain?.title || 'Core Topics & Practice',
       type: initialType,
       durationMin: isQuiz ? 20 : 30,
       summary: isQuiz
@@ -849,6 +870,187 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
         ? `Removed all Interactive Retention Checks for ${course.code}`
         : `Restored Interactive Retention Checks for ${course.code}`
     );
+  };
+
+  // Inline Level 1 / Level 2 / Level 3 Authoring Helpers for Course Manager Cards
+  const handleCardAddChapter = (
+    e: React.FormEvent,
+    course: Course,
+    cardHierarchy: ResolvedChapterSection[]
+  ) => {
+    e.preventDefault();
+    const clean = (cardNewChapterTitles[course.id] || '').trim();
+    if (!clean) return;
+    const baseChapters: CourseChapterSection[] = toChapterConfigFromHierarchy(cardHierarchy);
+    if (baseChapters.some(ch => ch.title.toLowerCase() === clean.toLowerCase())) {
+      showToast(`Chapter "${clean}" already exists.`);
+      return;
+    }
+    const newChapId = `chap-${Date.now()}`;
+    baseChapters.push({
+      id: newChapId,
+      title: clean,
+      mainContents: [{ id: `sec-${Date.now()}`, title: 'Overview & Core Concepts' }]
+    });
+    updateCourse(course.id, { chapters: baseChapters });
+    setCardNewChapterTitles(prev => ({ ...prev, [course.id]: '' }));
+    setExpandedCardChapters(prev => ({ ...prev, [`${course.id}::${newChapId}`]: true }));
+    showToast(`Added ${baseChapters.length}.0 ${clean}`);
+  };
+
+  const handleCardAddSubSection = (
+    e: React.FormEvent,
+    course: Course,
+    cardHierarchy: ResolvedChapterSection[],
+    chapterId: string,
+    chapterTitle: string
+  ) => {
+    e.preventDefault();
+    const clean = cardInlineSubTitle.trim();
+    if (!clean) return;
+    const baseChapters = toChapterConfigFromHierarchy(cardHierarchy);
+    const chap = baseChapters.find(
+      ch => ch.id === chapterId || ch.title.toLowerCase() === chapterTitle.toLowerCase()
+    );
+    if (!chap) return;
+    if (chap.mainContents.some(mc => mc.title.toLowerCase() === clean.toLowerCase())) {
+      showToast(`Section "${clean}" already exists.`);
+      return;
+    }
+    const newSecId = `sec-${Date.now()}`;
+    chap.mainContents.push({ id: newSecId, title: clean });
+    updateCourse(course.id, { chapters: baseChapters });
+    setCardInlineSubTitle('');
+    setCardAddingSubToChapterKey(null);
+    setExpandedCardChapters(prev => ({ ...prev, [`${course.id}::${chapterId}`]: true }));
+    showToast(`Added section "${clean}" under ${chap.title}`);
+  };
+
+  const handleCardRenameChapter = (
+    course: Course,
+    cardHierarchy: ResolvedChapterSection[],
+    oldTitle: string
+  ) => {
+    const clean = cardEditingChapterDraft.trim();
+    if (!clean || clean === oldTitle) {
+      setCardEditingChapterKey(null);
+      return;
+    }
+    const baseChapters = toChapterConfigFromHierarchy(cardHierarchy).map(ch =>
+      ch.title.toLowerCase() === oldTitle.toLowerCase() ? { ...ch, title: clean } : ch
+    );
+    const updatedModules = course.modules.map(m =>
+      (m.chapterTitle || '').trim().toLowerCase() === oldTitle.toLowerCase()
+        ? { ...m, chapterTitle: clean }
+        : m
+    );
+    updateCourse(course.id, { chapters: baseChapters, modules: updatedModules });
+    setCardEditingChapterKey(null);
+    showToast(`Renamed chapter to "${clean}"`);
+  };
+
+  const handleCardDeleteChapter = (
+    course: Course,
+    cardHierarchy: ResolvedChapterSection[],
+    chapterTitle: string
+  ) => {
+    if (cardHierarchy.length <= 1) {
+      showToast('A course must have at least one chapter.');
+      return;
+    }
+    const baseChapters = toChapterConfigFromHierarchy(cardHierarchy).filter(
+      ch => ch.title.toLowerCase() !== chapterTitle.toLowerCase()
+    );
+    const fallbackCh = baseChapters[0];
+    const fallbackMc = fallbackCh?.mainContents[0]?.title || 'Core Concepts';
+    const updatedModules = course.modules.map(m =>
+      (m.chapterTitle || '').trim().toLowerCase() === chapterTitle.toLowerCase()
+        ? { ...m, chapterTitle: fallbackCh.title, mainContentTitle: fallbackMc }
+        : m
+    );
+    updateCourse(course.id, { chapters: baseChapters, modules: updatedModules });
+    showToast(`Removed chapter "${chapterTitle}"`);
+  };
+
+  const handleCardRenameMainContent = (
+    course: Course,
+    cardHierarchy: ResolvedChapterSection[],
+    chapterTitle: string,
+    oldMainTitle: string
+  ) => {
+    const clean = cardEditingMainDraft.trim();
+    if (!clean || clean === oldMainTitle) {
+      setCardEditingMainKey(null);
+      return;
+    }
+    const baseChapters = toChapterConfigFromHierarchy(cardHierarchy).map(ch =>
+      ch.title.toLowerCase() === chapterTitle.toLowerCase()
+        ? {
+            ...ch,
+            mainContents: ch.mainContents.map(mc =>
+              mc.title.toLowerCase() === oldMainTitle.toLowerCase()
+                ? { ...mc, title: clean }
+                : mc
+            )
+          }
+        : ch
+    );
+    const updatedModules = course.modules.map(m =>
+      (m.chapterTitle || '').trim().toLowerCase() === chapterTitle.toLowerCase() &&
+      (m.mainContentTitle || '').trim().toLowerCase() === oldMainTitle.toLowerCase()
+        ? { ...m, mainContentTitle: clean }
+        : m
+    );
+    updateCourse(course.id, { chapters: baseChapters, modules: updatedModules });
+    setCardEditingMainKey(null);
+    showToast(`Renamed section to "${clean}"`);
+  };
+
+  const handleCardDeleteMainContent = (
+    course: Course,
+    cardHierarchy: ResolvedChapterSection[],
+    chapterTitle: string,
+    mainTitle: string
+  ) => {
+    const baseChapters = toChapterConfigFromHierarchy(cardHierarchy);
+    const chap = baseChapters.find(ch => ch.title.toLowerCase() === chapterTitle.toLowerCase());
+    if (!chap || chap.mainContents.length <= 1) {
+      showToast('Each chapter needs at least one section.');
+      return;
+    }
+    chap.mainContents = chap.mainContents.filter(
+      mc => mc.title.toLowerCase() !== mainTitle.toLowerCase()
+    );
+    const fallbackMain = chap.mainContents[0].title;
+    const updatedModules = course.modules.map(m =>
+      (m.chapterTitle || '').trim().toLowerCase() === chapterTitle.toLowerCase() &&
+      (m.mainContentTitle || '').trim().toLowerCase() === mainTitle.toLowerCase()
+        ? { ...m, mainContentTitle: fallbackMain }
+        : m
+    );
+    updateCourse(course.id, { chapters: baseChapters, modules: updatedModules });
+    showToast(`Removed section "${mainTitle}"`);
+  };
+
+  const handleCardQuickAddItemInSection = (
+    e: React.FormEvent,
+    course: Course,
+    chapterTitle: string,
+    mainContentTitle: string
+  ) => {
+    e.preventDefault();
+    const starter = createStarterModule(cardInlineItemType, course);
+    const cleanTitle = cardInlineItemTitle.trim();
+    const newMod: CourseModule = {
+      ...starter,
+      title: cleanTitle || starter.title.replace(/^Module \d+:\s*/, ''),
+      chapterTitle,
+      mainContentTitle
+    };
+    addModuleToCourse(course.id, newMod);
+    setCardInlineItemTitle('');
+    setCardAddingItemToSectionKey(null);
+    showToast(`Added "${newMod.title}" to ${mainContentTitle}`);
   };
 
   const handleSaveModule = (e: React.FormEvent) => {
@@ -2386,7 +2588,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
 
                       return (
                         <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2.5">
                             <span>
                               Curriculum Outline ({cardHierarchy.length} Chapters · {course.modules.length} Items)
                             </span>
@@ -2432,60 +2634,93 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                   <span>{hasAnyChecks ? 'Clear All Checks' : 'Restore Checks'}</span>
                                 </button>
                               )}
-                              <button
-                                type="button"
-                                onClick={() => setBuilderCourseId(course.id)}
-                                className="text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
-                              >
-                                <Layers className="w-3 h-3" />
-                                <span>Edit Sections &amp; Outline</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => openAddModuleModal(course.id, 'quiz')}
-                                className="text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
-                              >
-                                <CheckSquare className="w-3 h-3" />
-                                <span>Add Quiz</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => openAddModuleModal(course.id, 'theory')}
-                                className="text-blue-600 dark:text-cyan-400 hover:underline flex items-center gap-1 text-[11px] whitespace-nowrap shrink-0"
-                              >
-                                <Plus className="w-3 h-3" />
-                                <span>Add Module</span>
-                              </button>
                             </div>
                           </div>
+
+                          {/* Consistent Add Chapter Bar (Matching Module Builder) */}
+                          <form
+                            onSubmit={(e) => handleCardAddChapter(e, course, cardHierarchy)}
+                            className="flex items-center gap-2 mb-3"
+                          >
+                            <input
+                              type="text"
+                              value={cardNewChapterTitles[course.id] || ''}
+                              onChange={(e) =>
+                                setCardNewChapterTitles(prev => ({
+                                  ...prev,
+                                  [course.id]: e.target.value
+                                }))
+                              }
+                              placeholder={`New chapter ${cardHierarchy.length + 1}.0 title...`}
+                              className="flex-1 min-w-0 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                            />
+                            <button
+                              type="submit"
+                              className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+                            >
+                              <FolderPlus className="w-3.5 h-3.5" />
+                              <span>Add Chapter</span>
+                            </button>
+                          </form>
 
                           <div className="divide-y divide-slate-200/80 dark:divide-slate-800">
                             {cardHierarchy.map((ch) => {
                               const chKey = `${course.id}::${ch.id}`;
                               const isChapterOpen = Boolean(expandedCardChapters[chKey]);
+                              const isEditingThisChapter = cardEditingChapterKey === chKey;
+                              const isAddingSubHere = cardAddingSubToChapterKey === chKey;
+                              const chapterModIds = ch.mainContents.flatMap(sec =>
+                                sec.items.map(item => item.module.id)
+                              );
+                              const hasChapterChecks = ch.mainContents.some(sec =>
+                                sec.items.some(item => {
+                                  const nextM = course.modules[item.flatIndex + 1];
+                                  return Boolean(nextM && getBetweenModuleQuiz(course, item.module, nextM));
+                                })
+                              );
 
                               return (
                                 <div key={ch.id} className="py-2 first:pt-1 last:pb-1">
                                   {/* Level 1: Chapter Header (Collapsed by default) */}
-                                  <div className="flex items-center justify-between gap-2 py-1">
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setExpandedCardChapters(prev => ({
-                                          ...prev,
-                                          [chKey]: !prev[chKey]
-                                        }))
-                                      }
-                                      aria-expanded={isChapterOpen}
-                                      className="flex-1 min-w-0 text-left flex items-center gap-2 text-[13px] font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-cyan-400 transition-colors"
-                                    >
-                                      <span className="tabular-nums shrink-0">{ch.chapterNumber}</span>
-                                      <span className="truncate">{ch.title}</span>
-                                    </button>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                      <span className="text-[11px] font-mono tabular-nums text-slate-400">
-                                        {ch.totalModules} items
+                                  {isEditingThisChapter ? (
+                                    <div className="flex items-center gap-1.5 py-1">
+                                      <span className="text-xs font-bold text-slate-500 tabular-nums shrink-0">
+                                        {ch.chapterNumber}
                                       </span>
+                                      <input
+                                        type="text"
+                                        autoFocus
+                                        value={cardEditingChapterDraft}
+                                        onChange={(e) => setCardEditingChapterDraft(e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleCardRenameChapter(course, cardHierarchy, ch.title);
+                                          } else if (e.key === 'Escape') {
+                                            setCardEditingChapterKey(null);
+                                          }
+                                        }}
+                                        className="flex-1 min-w-0 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 border border-blue-400 text-xs font-semibold text-slate-900 dark:text-white"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCardRenameChapter(course, cardHierarchy, ch.title)}
+                                        className="p-1.5 rounded-lg bg-blue-600 text-white"
+                                        title="Save chapter name"
+                                      >
+                                        <Check className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setCardEditingChapterKey(null)}
+                                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700"
+                                        title="Cancel"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="group flex items-center justify-between gap-2 py-1">
                                       <button
                                         type="button"
                                         onClick={() =>
@@ -2494,24 +2729,139 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                             [chKey]: !prev[chKey]
                                           }))
                                         }
-                                        className="p-1 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                        aria-label={isChapterOpen ? 'Collapse chapter' : 'Expand chapter'}
+                                        aria-expanded={isChapterOpen}
+                                        className="flex-1 min-w-0 text-left flex items-center gap-2 text-[13px] font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-cyan-400 transition-colors"
                                       >
-                                        {isChapterOpen ? (
-                                          <ChevronUp className="w-4 h-4" />
-                                        ) : (
-                                          <ChevronDown className="w-4 h-4" />
-                                        )}
+                                        <span className="tabular-nums shrink-0">{ch.chapterNumber}</span>
+                                        <span className="truncate">{ch.title}</span>
                                       </button>
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        {hasChapterChecks && (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const idSet = new Set(chapterModIds);
+                                              updateCourse(course.id, {
+                                                modules: course.modules.map(m =>
+                                                  idSet.has(m.id) ? { ...m, disableCheckpoint: true } : m
+                                                )
+                                              });
+                                              showToast(`Removed retention checks in "${ch.title}"`);
+                                            }}
+                                            className="px-1.5 py-0.5 rounded-md text-[10px] font-medium text-slate-400 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+                                            title="Remove all Interactive Retention Checks in this chapter"
+                                          >
+                                            Clear Checks
+                                          </button>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setExpandedCardChapters(prev => ({ ...prev, [chKey]: true }));
+                                            setCardAddingSubToChapterKey(isAddingSubHere ? null : chKey);
+                                            setCardInlineSubTitle('');
+                                          }}
+                                          className="px-2 py-0.5 rounded-md text-[11px] font-semibold text-blue-600 dark:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+                                          title="Add Level-2 section"
+                                        >
+                                          + Section
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setCardEditingChapterKey(chKey);
+                                            setCardEditingChapterDraft(ch.title);
+                                          }}
+                                          className="p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 opacity-70 group-hover:opacity-100"
+                                          title="Rename chapter"
+                                        >
+                                          <Edit3 className="w-3.5 h-3.5" />
+                                        </button>
+                                        {cardHierarchy.length > 1 && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleCardDeleteChapter(course, cardHierarchy, ch.title)
+                                            }
+                                            className="p-1 rounded-md text-slate-400 hover:text-red-500 opacity-70 group-hover:opacity-100"
+                                            title="Delete chapter"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        )}
+                                        <span className="text-[11px] font-mono tabular-nums text-slate-400 hidden sm:inline">
+                                          {ch.totalModules}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setExpandedCardChapters(prev => ({
+                                              ...prev,
+                                              [chKey]: !prev[chKey]
+                                            }))
+                                          }
+                                          className="p-1 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                          aria-label={isChapterOpen ? 'Collapse chapter' : 'Expand chapter'}
+                                        >
+                                          {isChapterOpen ? (
+                                            <ChevronUp className="w-4 h-4" />
+                                          ) : (
+                                            <ChevronDown className="w-4 h-4" />
+                                          )}
+                                        </button>
+                                      </div>
                                     </div>
-                                  </div>
+                                  )}
 
                                   {/* Level 2: Main Content Sections (Indented under Level 1) */}
                                   {isChapterOpen && (
                                     <div className="mt-1.5 space-y-2 pl-3">
+                                      {/* Inline Add Level-2 Section Bar */}
+                                      {isAddingSubHere && (
+                                        <form
+                                          onSubmit={(e) =>
+                                            handleCardAddSubSection(
+                                              e,
+                                              course,
+                                              cardHierarchy,
+                                              ch.id,
+                                              ch.title
+                                            )
+                                          }
+                                          className="flex items-center gap-2 py-1"
+                                        >
+                                          <span className="text-xs font-semibold text-slate-400 tabular-nums shrink-0">
+                                            {ch.chapterIndex}.{ch.mainContents.length + 1}
+                                          </span>
+                                          <input
+                                            type="text"
+                                            autoFocus
+                                            value={cardInlineSubTitle}
+                                            onChange={(e) => setCardInlineSubTitle(e.target.value)}
+                                            placeholder="Section title (e.g. Profile Data)..."
+                                            className="flex-1 min-w-0 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                                          />
+                                          <button
+                                            type="submit"
+                                            className="px-2.5 py-1 rounded-lg bg-blue-600 text-white text-[11px] font-semibold whitespace-nowrap"
+                                          >
+                                            Add
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setCardAddingSubToChapterKey(null)}
+                                            className="p-1 text-slate-400 hover:text-slate-700"
+                                          >
+                                            <X className="w-3.5 h-3.5" />
+                                          </button>
+                                        </form>
+                                      )}
+
                                       {ch.mainContents.map((mc) => {
                                         const secKey = `${course.id}::${mc.id}`;
                                         const isSectionOpen = !collapsedCardSections[secKey];
+                                        const isEditingThisMain = cardEditingMainKey === secKey;
+                                        const isAddingItemHere = cardAddingItemToSectionKey === secKey;
                                         const sectionHasChecks = mc.items.some(item => {
                                           const nextM = course.modules[item.flatIndex + 1];
                                           return Boolean(nextM && getBetweenModuleQuiz(course, item.module, nextM));
@@ -2519,47 +2869,57 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
 
                                         return (
                                           <div key={mc.id} className="space-y-1">
-                                            <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-slate-100/80 dark:bg-slate-800/70">
-                                              <button
-                                                type="button"
-                                                onClick={() =>
-                                                  setCollapsedCardSections(prev => ({
-                                                    ...prev,
-                                                    [secKey]: !prev[secKey]
-                                                  }))
-                                                }
-                                                className="flex items-center gap-2 min-w-0 flex-1 text-left"
-                                              >
-                                                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 tabular-nums shrink-0">
+                                            {isEditingThisMain ? (
+                                              <div className="flex items-center gap-1.5 py-1">
+                                                <span className="text-xs font-semibold text-slate-500 tabular-nums shrink-0">
                                                   {mc.sectionNumber}
                                                 </span>
-                                                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
-                                                  {mc.title}
-                                                </span>
-                                              </button>
-
-                                              <div className="flex items-center gap-2 shrink-0">
-                                                {sectionHasChecks && (
-                                                  <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                      const idSet = new Set(mc.items.map(i => i.module.id));
-                                                      updateCourse(course.id, {
-                                                        modules: course.modules.map(m =>
-                                                          idSet.has(m.id) ? { ...m, disableCheckpoint: true } : m
-                                                        )
-                                                      });
-                                                      showToast(`Removed retention checks in "${mc.title}"`);
-                                                    }}
-                                                    className="text-[10px] font-medium text-slate-400 hover:text-red-500 whitespace-nowrap"
-                                                    title="Remove retention checks in this section"
-                                                  >
-                                                    Clear Checks
-                                                  </button>
-                                                )}
-                                                <span className="text-[10px] font-mono tabular-nums text-slate-400">
-                                                  {mc.items.length}
-                                                </span>
+                                                <input
+                                                  type="text"
+                                                  autoFocus
+                                                  value={cardEditingMainDraft}
+                                                  onChange={(e) => setCardEditingMainDraft(e.target.value)}
+                                                  onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                      e.preventDefault();
+                                                      handleCardRenameMainContent(
+                                                        course,
+                                                        cardHierarchy,
+                                                        ch.title,
+                                                        mc.title
+                                                      );
+                                                    } else if (e.key === 'Escape') {
+                                                      setCardEditingMainKey(null);
+                                                    }
+                                                  }}
+                                                  className="flex-1 min-w-0 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 border border-blue-400 text-xs font-semibold text-slate-900 dark:text-white"
+                                                />
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    handleCardRenameMainContent(
+                                                      course,
+                                                      cardHierarchy,
+                                                      ch.title,
+                                                      mc.title
+                                                    )
+                                                  }
+                                                  className="p-1 rounded-md bg-blue-600 text-white"
+                                                  title="Save section name"
+                                                >
+                                                  <Check className="w-3.5 h-3.5" />
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setCardEditingMainKey(null)}
+                                                  className="p-1 text-slate-400 hover:text-slate-700"
+                                                  title="Cancel"
+                                                >
+                                                  <X className="w-3.5 h-3.5" />
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <div className="group/sec flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-slate-100/80 dark:bg-slate-800/70">
                                                 <button
                                                   type="button"
                                                   onClick={() =>
@@ -2568,23 +2928,173 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                                       [secKey]: !prev[secKey]
                                                     }))
                                                   }
-                                                  className="p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                                                  className="flex items-center gap-2 min-w-0 flex-1 text-left"
                                                 >
-                                                  {isSectionOpen ? (
-                                                    <ChevronUp className="w-3.5 h-3.5" />
-                                                  ) : (
-                                                    <ChevronDown className="w-3.5 h-3.5" />
-                                                  )}
+                                                  <span className="text-xs font-bold text-slate-900 dark:text-slate-100 tabular-nums shrink-0">
+                                                    {mc.sectionNumber}
+                                                  </span>
+                                                  <span className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                                                    {mc.title}
+                                                  </span>
                                                 </button>
+
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                  {sectionHasChecks && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => {
+                                                        const idSet = new Set(mc.items.map(i => i.module.id));
+                                                        updateCourse(course.id, {
+                                                          modules: course.modules.map(m =>
+                                                            idSet.has(m.id) ? { ...m, disableCheckpoint: true } : m
+                                                          )
+                                                        });
+                                                        showToast(`Removed retention checks in "${mc.title}"`);
+                                                      }}
+                                                      className="px-1.5 py-0.5 rounded-md text-[10px] font-medium text-slate-400 hover:text-red-500 whitespace-nowrap"
+                                                      title="Remove retention checks in this section"
+                                                    >
+                                                      Clear Checks
+                                                    </button>
+                                                  )}
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setCollapsedCardSections(prev => ({
+                                                        ...prev,
+                                                        [secKey]: false
+                                                      }));
+                                                      setCardAddingItemToSectionKey(isAddingItemHere ? null : secKey);
+                                                      setCardInlineItemTitle('');
+                                                    }}
+                                                    className="px-2 py-0.5 rounded-md text-[11px] font-semibold text-blue-600 dark:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 whitespace-nowrap"
+                                                    title="Add course content item to this section"
+                                                  >
+                                                    + Item
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setCardEditingMainKey(secKey);
+                                                      setCardEditingMainDraft(mc.title);
+                                                    }}
+                                                    className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 opacity-60 group-hover/sec:opacity-100"
+                                                    title="Rename section"
+                                                  >
+                                                    <Edit3 className="w-3 h-3" />
+                                                  </button>
+                                                  {ch.mainContents.length > 1 && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        handleCardDeleteMainContent(
+                                                          course,
+                                                          cardHierarchy,
+                                                          ch.title,
+                                                          mc.title
+                                                        )
+                                                      }
+                                                      className="p-1 rounded text-slate-400 hover:text-red-500 opacity-60 group-hover/sec:opacity-100"
+                                                      title="Delete section"
+                                                    >
+                                                      <Trash2 className="w-3 h-3" />
+                                                    </button>
+                                                  )}
+                                                  <span className="text-[10px] font-mono tabular-nums text-slate-400">
+                                                    {mc.items.length}
+                                                  </span>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                      setCollapsedCardSections(prev => ({
+                                                        ...prev,
+                                                        [secKey]: !prev[secKey]
+                                                      }))
+                                                    }
+                                                    className="p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                                                  >
+                                                    {isSectionOpen ? (
+                                                      <ChevronUp className="w-3.5 h-3.5" />
+                                                    ) : (
+                                                      <ChevronDown className="w-3.5 h-3.5" />
+                                                    )}
+                                                  </button>
+                                                </div>
                                               </div>
-                                            </div>
+                                            )}
+
+                                            {/* Quick Inline + Item Creator inside Level-2 Section */}
+                                            {isAddingItemHere && (
+                                              <form
+                                                onSubmit={(e) =>
+                                                  handleCardQuickAddItemInSection(
+                                                    e,
+                                                    course,
+                                                    ch.title,
+                                                    mc.title
+                                                  )
+                                                }
+                                                className="ml-6 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-wrap sm:flex-nowrap items-center gap-1.5"
+                                              >
+                                                <select
+                                                  value={cardInlineItemType}
+                                                  onChange={(e) =>
+                                                    setCardInlineItemType(e.target.value as ModuleType)
+                                                  }
+                                                  className="px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-200"
+                                                >
+                                                  <option value="theory">Reading</option>
+                                                  <option value="lab">Live Lab</option>
+                                                  <option value="video">Video</option>
+                                                  <option value="quiz">Quiz Review</option>
+                                                  <option value="pcap">PCAP Lab</option>
+                                                </select>
+                                                <input
+                                                  type="text"
+                                                  autoFocus
+                                                  value={cardInlineItemTitle}
+                                                  onChange={(e) => setCardInlineItemTitle(e.target.value)}
+                                                  placeholder={`${mc.sectionNumber}.${mc.items.length + 1} Lesson or Lab title...`}
+                                                  className="flex-1 min-w-0 px-2.5 py-1 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                                                />
+                                                <button
+                                                  type="submit"
+                                                  className="px-2.5 py-1 rounded-md bg-blue-600 text-white text-[11px] font-semibold whitespace-nowrap"
+                                                >
+                                                  Add
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setCardAddingItemToSectionKey(null);
+                                                    openAddModuleModal(
+                                                      course.id,
+                                                      cardInlineItemType,
+                                                      ch.title,
+                                                      mc.title
+                                                    );
+                                                  }}
+                                                  className="px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 hover:border-blue-400 whitespace-nowrap"
+                                                  title="Open detailed module editor"
+                                                >
+                                                  Full Form
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setCardAddingItemToSectionKey(null)}
+                                                  className="p-1 text-slate-400 hover:text-slate-700"
+                                                >
+                                                  <X className="w-3.5 h-3.5" />
+                                                </button>
+                                              </form>
+                                            )}
 
                                             {/* Level 3: Course Content Items (Indented under Level 2) */}
                                             {isSectionOpen && (
                                               <div className="pl-6 space-y-1">
                                                 {mc.items.length === 0 ? (
                                                   <p className="px-2 py-1 text-[11px] text-slate-400">
-                                                    No modules assigned to this section yet.
+                                                    No items yet — click <span className="font-semibold">+ Item</span> above.
                                                   </p>
                                                 ) : (
                                                   mc.items.map(({ module: mod, flatIndex: idx, itemNumber }) => {
@@ -2758,19 +3268,24 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                                               <span className="truncate">
                                                                 Interactive Retention Check ·{' '}
                                                                 {betweenQuiz.questions.length} Qs
+                                                                {hasCustomCheckpoint ? ' · Custom' : ''}
                                                               </span>
                                                             </button>
-                                                            <div className="flex items-center gap-2 shrink-0">
+                                                            <div className="flex items-center gap-1 shrink-0">
                                                               <button
                                                                 type="button"
                                                                 onClick={() =>
                                                                   openCheckpointModal(course, mod, nextMod)
                                                                 }
-                                                                className="font-mono text-[10px] text-blue-600 dark:text-cyan-400 font-semibold hover:underline whitespace-nowrap"
+                                                                className="p-1 rounded text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+                                                                title={
+                                                                  hasCustomCheckpoint
+                                                                    ? 'Edit Custom Interactive Retention Check'
+                                                                    : 'Edit Interactive Retention Check'
+                                                                }
+                                                                aria-label={`Edit retention check after ${mod.title}`}
                                                               >
-                                                                {hasCustomCheckpoint
-                                                                  ? 'Custom · Edit'
-                                                                  : 'Customize'}
+                                                                <Edit3 className="w-3.5 h-3.5" />
                                                               </button>
                                                               <button
                                                                 type="button"
@@ -2781,11 +3296,11 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                                                     mod.title
                                                                   )
                                                                 }
-                                                                className="font-mono text-[10px] text-slate-400 hover:text-red-500 dark:hover:text-red-400 inline-flex items-center gap-0.5 whitespace-nowrap"
+                                                                className="p-1 rounded text-red-400 hover:text-red-600"
                                                                 title={`Remove Interactive Retention Check after "${mod.title}"`}
+                                                                aria-label={`Remove retention check after ${mod.title}`}
                                                               >
-                                                                <X className="w-3 h-3" />
-                                                                <span>Remove</span>
+                                                                <Trash2 className="w-3.5 h-3.5" />
                                                               </button>
                                                             </div>
                                                           </div>

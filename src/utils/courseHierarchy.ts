@@ -2,7 +2,8 @@ import {
   Course,
   CourseChapterSection,
   CourseMainContentSection,
-  CourseModule
+  CourseModule,
+  ModuleType
 } from '../types';
 
 export interface ResolvedCourseContentItem {
@@ -258,3 +259,144 @@ export function mergeModuleHierarchyIntoChapters(
 
   return next;
 }
+
+export function toChapterConfigFromHierarchy(
+  hierarchy: ResolvedChapterSection[]
+): CourseChapterSection[] {
+  return hierarchy.map(ch => ({
+    id: ch.id,
+    title: ch.title,
+    summary: ch.summary,
+    mainContents: ch.mainContents.map(mc => ({
+      id: mc.id,
+      title: mc.title,
+      summary: mc.summary
+    }))
+  }));
+}
+
+export function createStarterModule(
+  kind: ModuleType,
+  course: Course,
+  defaultQuizPass: number = course.gradingCriteria?.quizPassingScore ?? 75
+): CourseModule {
+  const stamp = Date.now();
+  const nextNum = course.modules.length + 1;
+
+  if (kind === 'quiz') {
+    return {
+      id: `mod-${stamp}`,
+      title: `Module ${nextNum}: Knowledge Verification Quiz`,
+      type: 'quiz',
+      durationMin: 20,
+      summary: 'Interactive graded assessment with immediate explanations and automated scoring.',
+      quiz: {
+        passingScore: defaultQuizPass,
+        questions: [
+          {
+            id: `q-${stamp}-1`,
+            question: `Key concept verification for ${course.code}:`,
+            options: [
+              'Primary Best Practice',
+              'Deprecated Legacy Option',
+              'Unencrypted Fallback',
+              'None of the above'
+            ],
+            correctAnswerIndex: 0,
+            explanation:
+              'Immediate feedback explanation shown as soon as a learner selects an answer.'
+          }
+        ]
+      }
+    };
+  }
+
+  if (kind === 'lab') {
+    return {
+      id: `mod-${stamp}`,
+      title: `Module ${nextNum}: Hands-On CLI Configuration Lab`,
+      type: 'lab',
+      durationMin: 40,
+      summary: 'Interactive Cisco IOS CLI lab with automated command verification.',
+      lab: {
+        objective: 'Configure interface addressing and verify routing reachability.',
+        nodes: course.modules.find(m => m.lab?.nodes?.length)?.lab?.nodes || [
+          {
+            id: 'R1',
+            name: 'R1-Core',
+            type: 'router',
+            ip: '10.0.0.1',
+            subnet: '/30',
+            status: 'online',
+            x: 140,
+            y: 150
+          },
+          {
+            id: 'R2',
+            name: 'R2-Edge',
+            type: 'router',
+            ip: '10.0.0.2',
+            subnet: '/30',
+            status: 'online',
+            x: 360,
+            y: 150
+          }
+        ],
+        links: course.modules.find(m => m.lab?.links?.length)?.lab?.links || [
+          {
+            from: 'R1',
+            to: 'R2',
+            interfaceFrom: 'Gig0/0/0',
+            interfaceTo: 'Gig0/0/0',
+            status: 'up'
+          }
+        ],
+        initialConfigPrompt: 'R1-Core#',
+        expectedCommands: [
+          'configure terminal',
+          'interface GigabitEthernet0/0/0',
+          'no shutdown',
+          'end'
+        ],
+        terminalHints: ['Enter global config mode with "configure terminal".'],
+        verificationCheck: 'show ip interface brief'
+      }
+    };
+  }
+
+  if (kind === 'video') {
+    return {
+      id: `mod-${stamp}`,
+      title: `Module ${nextNum}: Architecture Walkthrough Video`,
+      type: 'video',
+      durationMin: 25,
+      summary: 'Guided instructor walkthrough covering key protocol design trade-offs.',
+      videoUrl: 'https://stream.netplus.academy/walkthrough',
+      videoDuration: '18:30',
+      contentMarkdown:
+        '### Companion Notes\n\nReview the CLI configuration sequences demonstrated in this session.'
+    };
+  }
+
+  if (kind === 'pcap') {
+    return {
+      id: `mod-${stamp}`,
+      title: `Module ${nextNum}: Packet Capture Inspection`,
+      type: 'pcap',
+      durationMin: 30,
+      summary: 'Analyze captured control-plane and data-plane headers in Wireshark.',
+      contentMarkdown:
+        '### Packet Analysis Objectives\n\nInspect protocol flags, timers, and handshake state transitions.'
+    };
+  }
+
+  return {
+    id: `mod-${stamp}`,
+    title: `Module ${nextNum}: Core Concepts & Design Notes`,
+    type: 'theory',
+    durationMin: 30,
+    summary: 'Structured reading module covering protocol mechanics and deployment patterns.',
+    contentMarkdown: `# Module ${nextNum}: Core Concepts\n\nOutline key protocol rules, timer defaults, and verification steps here.`
+  };
+}
+
