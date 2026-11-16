@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   ArrowLeft,
   CheckCircle,
   Play,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   Award,
   BookmarkCheck,
   ArrowUp,
@@ -15,7 +16,13 @@ import {
   Clock,
   CheckSquare,
   Lock,
-  CreditCard
+  CreditCard,
+  Layers,
+  FileText,
+  Terminal,
+  Video,
+  HelpCircle,
+  Activity
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course } from '../../types';
@@ -23,6 +30,10 @@ import { InteractiveCliTerminal } from '../Lab/InteractiveCliTerminal';
 import { CourseThumbnail } from './CourseThumbnail';
 import { InteractiveQuiz, QuizResult } from './InteractiveQuiz';
 import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
+import {
+  resolveCourseHierarchy,
+  getModuleSectionBreadcrumb
+} from '../../utils/courseHierarchy';
 import {
   resolveCourseEnrollment,
   formatEnrollmentDate,
@@ -128,6 +139,65 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   });
 
   const activeModule = course.modules[activeModuleIndex] || course.modules[0];
+
+  // Multi-Level Curriculum Hierarchy (Level 1 Chapter -> Level 2 Main Contents -> Level 3 Course Contents)
+  const hierarchyTree = useMemo(() => resolveCourseHierarchy(course), [course]);
+  const activeBreadcrumb = useMemo(
+    () => (activeModule ? getModuleSectionBreadcrumb(course, activeModule.id) : null),
+    [course, activeModule]
+  );
+
+  // Accordion expand/collapse state for Level 1 chapters and Level 2 main contents
+  const [expandedChapters, setExpandedChapters] = useState<Record<string, boolean>>({});
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!activeBreadcrumb) return;
+    setExpandedChapters(prev =>
+      prev[activeBreadcrumb.chapterId] === false
+        ? { ...prev, [activeBreadcrumb.chapterId]: true }
+        : prev
+    );
+    setExpandedSections(prev =>
+      prev[activeBreadcrumb.mainContentId] === false
+        ? { ...prev, [activeBreadcrumb.mainContentId]: true }
+        : prev
+    );
+  }, [activeBreadcrumb?.chapterId, activeBreadcrumb?.mainContentId]);
+
+  const toggleChapterAccordion = (chapterId: string) => {
+    setExpandedChapters(prev => ({
+      ...prev,
+      [chapterId]: prev[chapterId] === false
+    }));
+  };
+
+  const toggleSectionAccordion = (sectionId: string) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [sectionId]: prev[sectionId] === false
+    }));
+  };
+
+  const allExpanded = hierarchyTree.every(
+    ch =>
+      expandedChapters[ch.id] !== false &&
+      ch.mainContents.every(mc => expandedSections[mc.id] !== false)
+  );
+
+  const handleToggleAllHierarchy = () => {
+    const nextState = !allExpanded;
+    const nextCh: Record<string, boolean> = {};
+    const nextSec: Record<string, boolean> = {};
+    hierarchyTree.forEach(ch => {
+      nextCh[ch.id] = nextState;
+      ch.mainContents.forEach(mc => {
+        nextSec[mc.id] = nextState;
+      });
+    });
+    setExpandedChapters(nextCh);
+    setExpandedSections(nextSec);
+  };
 
   // Between-module checkpoint state (null = viewing module, number = checkpoint after module index)
   const [activeCheckpointAfterIndex, setActiveCheckpointAfterIndex] = useState<number | null>(null);
@@ -531,6 +601,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
               {activeCheckpointAfterIndex !== null && activeCheckpointQuiz
                 ? `Knowledge Retention Check · Between Module ${activeCheckpointAfterIndex + 1} & Module ${activeCheckpointAfterIndex + 2}`
+                : activeBreadcrumb
+                ? `${activeBreadcrumb.chapterLabel}: ${activeBreadcrumb.chapterTitle} › ${activeBreadcrumb.sectionNumber} ${activeBreadcrumb.mainContentTitle} › ${activeBreadcrumb.itemNumber} ${activeModule.title} · Scroll ${currentReadingPercent}%`
                 : `Module ${activeModuleIndex + 1} of ${course.modules.length}: ${activeModule.title} · Scroll ${currentReadingPercent}%`}
             </p>
           </div>
@@ -579,113 +651,266 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             </div>
           </CourseThumbnail>
 
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Course Modules</span>
-            <span className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-              {completedCount}/{course.modules.length} Done
-            </span>
+          <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Layers className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400 shrink-0" />
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                Course Outline
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                {completedCount}/{course.modules.length}
+              </span>
+              <button
+                type="button"
+                onClick={handleToggleAllHierarchy}
+                className="text-[10px] font-semibold text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
+              >
+                {allExpanded ? 'Collapse' : 'Expand'}
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-1.5">
-            {course.modules.map((m, idx) => {
-              const isActive = activeCheckpointAfterIndex === null && idx === activeModuleIndex;
-              const isDone = isModuleCompleted(m.id);
-              const savedModPercent = isActive
-                ? currentReadingPercent
-                : readingStore[course.id]?.modules?.[m.id]?.percent ?? 0;
-
-              const nextMod = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
-              const betweenQuiz = nextMod ? getBetweenModuleQuiz(course, m, nextMod) : null;
-              const checkpointResult = betweenQuiz
-                ? checkpointStore[course.id]?.[betweenQuiz.id]
-                : undefined;
-              const isCheckpointActive = activeCheckpointAfterIndex === idx;
+          {/* 3-Level Nested Course Outline: Level 1 Chapter -> Level 2 Main Contents -> Level 3 Course Contents */}
+          <div className="space-y-2.5">
+            {hierarchyTree.map((chapter) => {
+              const isChapterOpen = expandedChapters[chapter.id] !== false;
+              const chapterModules = chapter.mainContents.flatMap(mc => mc.items);
+              const chapterDoneCount = chapterModules.filter(item =>
+                isModuleCompleted(item.module.id)
+              ).length;
+              const hasActiveInChapter = chapterModules.some(
+                item => item.flatIndex === activeModuleIndex
+              );
 
               return (
-                <React.Fragment key={m.id}>
+                <div
+                  key={chapter.id}
+                  className={`rounded-xl border transition-colors overflow-hidden ${
+                    hasActiveInChapter
+                      ? 'border-blue-200 dark:border-cyan-900/70 bg-white dark:bg-slate-900'
+                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
+                  }`}
+                >
+                  {/* Level 1: Chapter Section Header */}
                   <button
-                    onClick={() => handleSelectModule(idx)}
-                    className={`w-full p-2.5 rounded-xl text-left transition-all flex items-start gap-2.5 ${
-                      isActive
-                        ? 'bg-blue-600 text-white shadow-sm font-semibold'
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
-                    }`}
+                    type="button"
+                    onClick={() => toggleChapterAccordion(chapter.id)}
+                    aria-expanded={isChapterOpen}
+                    className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-800/70 hover:bg-slate-100/80 dark:hover:bg-slate-800 text-left flex items-start justify-between gap-2 transition-colors"
                   >
-                    <div className="mt-0.5 shrink-0">
-                      {isDone ? (
-                        <CheckCircle className={`w-4 h-4 ${isActive ? 'text-white' : 'text-emerald-500'}`} />
-                      ) : (
-                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center text-[9px] font-mono tabular-nums ${
-                          isActive ? 'border-white text-white' : 'border-slate-400 text-slate-400'
-                        }`}>
-                          {idx + 1}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs line-clamp-1">{m.title}</p>
-                      <span className={`text-[10px] font-mono tabular-nums capitalize ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>
-                        {m.type} · {m.durationMin}m
-                        {!isDone && savedModPercent > 0 ? ` · ${savedModPercent}% read` : ''}
+                    <div className="flex items-start gap-2 min-w-0">
+                      <span className="mt-0.5 text-slate-500 dark:text-slate-400 shrink-0">
+                        {isChapterOpen ? (
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        )}
                       </span>
+                      <div className="min-w-0">
+                        <span className="block text-[10px] font-mono font-bold uppercase tracking-wider text-blue-600 dark:text-cyan-400">
+                          {chapter.chapterLabel}
+                        </span>
+                        <p className="text-xs font-bold text-slate-900 dark:text-slate-100 leading-snug line-clamp-2">
+                          {chapter.title}
+                        </p>
+                      </div>
                     </div>
-
-                    {isStudentPaymentRequired && idx > 0 && (
-                      <Lock
-                        className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${
-                          isActive ? 'text-blue-100' : 'text-slate-400 dark:text-slate-500'
-                        }`}
-                        aria-label="Payment required"
-                      />
-                    )}
+                    <span className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400 shrink-0 pt-0.5">
+                      {chapterDoneCount}/{chapterModules.length}
+                    </span>
                   </button>
 
-                  {/* Injected Between-Module Retention Checkpoint Trigger */}
-                  {betweenQuiz && (
-                    <div className="pl-4 relative">
-                      <span
-                        aria-hidden="true"
-                        className="absolute left-2 top-0 bottom-0 w-px bg-slate-200 dark:bg-slate-800"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleOpenCheckpoint(idx)}
-                        className={`w-full px-2.5 py-2 rounded-lg border text-left transition-colors duration-150 motion-reduce:transition-none flex items-center justify-between gap-2 ${
-                          isCheckpointActive
-                            ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-500 dark:border-cyan-500 text-blue-900 dark:text-cyan-200 font-semibold'
-                            : 'bg-slate-50/70 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-blue-400 dark:hover:border-cyan-500'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <CheckSquare
-                            className={`w-3.5 h-3.5 shrink-0 ${
-                              checkpointResult?.passed
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : isCheckpointActive
-                                ? 'text-blue-600 dark:text-cyan-400'
-                                : 'text-slate-400 dark:text-slate-500'
-                            }`}
-                          />
-                          <span className="text-[11px] truncate">
-                            Retention Check · {betweenQuiz.questions.length} Qs
-                          </span>
-                        </div>
-                        {checkpointResult && (
-                          <span
-                            className={`text-[10px] font-mono tabular-nums font-bold shrink-0 ${
-                              checkpointResult.passed
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : 'text-amber-600 dark:text-amber-400'
-                            }`}
-                          >
-                            {checkpointResult.score}%
-                          </span>
-                        )}
-                      </button>
+                  {/* Level 2: Main Contents List */}
+                  {isChapterOpen && (
+                    <div className="p-2 space-y-1.5 bg-white dark:bg-slate-900">
+                      {chapter.mainContents.map((section) => {
+                        const isSectionOpen = expandedSections[section.id] !== false;
+                        const sectionDoneCount = section.items.filter(item =>
+                          isModuleCompleted(item.module.id)
+                        ).length;
+
+                        return (
+                          <div key={section.id} className="space-y-1">
+                            {/* Level 2 Main Content Sub-header */}
+                            <button
+                              type="button"
+                              onClick={() => toggleSectionAccordion(section.id)}
+                              aria-expanded={isSectionOpen}
+                              className="w-full px-2 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 text-left flex items-center justify-between gap-2 transition-colors"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                {isSectionOpen ? (
+                                  <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+                                ) : (
+                                  <ChevronRight className="w-3 h-3 text-slate-400 shrink-0" />
+                                )}
+                                <span className="font-mono text-[10px] font-bold text-slate-500 dark:text-slate-400 shrink-0">
+                                  {section.sectionNumber}
+                                </span>
+                                <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-200 truncate">
+                                  {section.title}
+                                </span>
+                              </div>
+                              <span className="font-mono text-[10px] tabular-nums text-slate-400 shrink-0">
+                                {sectionDoneCount}/{section.items.length}
+                              </span>
+                            </button>
+
+                            {/* Level 3: Course Contents Items */}
+                            {isSectionOpen && (
+                              <div className="pl-2.5 ml-2 border-l border-slate-200 dark:border-slate-800 space-y-1">
+                                {section.items.length === 0 ? (
+                                  <p className="px-2 py-1 text-[10px] italic text-slate-400">
+                                    No course contents assigned yet.
+                                  </p>
+                                ) : (
+                                  section.items.map(({ module: m, flatIndex: idx, itemNumber }) => {
+                                    const isActive =
+                                      activeCheckpointAfterIndex === null && idx === activeModuleIndex;
+                                    const isDone = isModuleCompleted(m.id);
+                                    const savedModPercent = isActive
+                                      ? currentReadingPercent
+                                      : readingStore[course.id]?.modules?.[m.id]?.percent ?? 0;
+
+                                    const nextMod =
+                                      idx < course.modules.length - 1
+                                        ? course.modules[idx + 1]
+                                        : undefined;
+                                    const betweenQuiz = nextMod
+                                      ? getBetweenModuleQuiz(course, m, nextMod)
+                                      : null;
+                                    const checkpointResult = betweenQuiz
+                                      ? checkpointStore[course.id]?.[betweenQuiz.id]
+                                      : undefined;
+                                    const isCheckpointActive = activeCheckpointAfterIndex === idx;
+
+                                    const ModTypeIcon =
+                                      m.type === 'lab'
+                                        ? Terminal
+                                        : m.type === 'video'
+                                        ? Video
+                                        : m.type === 'quiz'
+                                        ? HelpCircle
+                                        : m.type === 'pcap'
+                                        ? Activity
+                                        : FileText;
+
+                                    return (
+                                      <React.Fragment key={m.id}>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleSelectModule(idx)}
+                                          className={`w-full p-2 rounded-lg text-left transition-all flex items-start gap-2 ${
+                                            isActive
+                                              ? 'bg-blue-600 text-white shadow-sm font-semibold'
+                                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
+                                          }`}
+                                        >
+                                          <div className="mt-0.5 shrink-0">
+                                            {isDone ? (
+                                              <CheckCircle
+                                                className={`w-3.5 h-3.5 ${
+                                                  isActive ? 'text-white' : 'text-emerald-500'
+                                                }`}
+                                              />
+                                            ) : (
+                                              <ModTypeIcon
+                                                className={`w-3.5 h-3.5 ${
+                                                  isActive
+                                                    ? 'text-blue-100'
+                                                    : 'text-slate-400 dark:text-slate-500'
+                                                }`}
+                                              />
+                                            )}
+                                          </div>
+
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-[11px] leading-snug line-clamp-2">
+                                              <span
+                                                className={`font-mono mr-1 ${
+                                                  isActive ? 'text-blue-100' : 'text-slate-400'
+                                                }`}
+                                              >
+                                                {itemNumber}
+                                              </span>
+                                              {m.title}
+                                            </p>
+                                            <span
+                                              className={`text-[10px] font-mono tabular-nums capitalize block mt-0.5 ${
+                                                isActive ? 'text-blue-100' : 'text-slate-400'
+                                              }`}
+                                            >
+                                              {m.type} · {m.durationMin}m
+                                              {!isDone && savedModPercent > 0
+                                                ? ` · ${savedModPercent}% read`
+                                                : ''}
+                                            </span>
+                                          </div>
+
+                                          {isStudentPaymentRequired && idx > 0 && (
+                                            <Lock
+                                              className={`w-3 h-3 mt-0.5 shrink-0 ${
+                                                isActive
+                                                  ? 'text-blue-100'
+                                                  : 'text-slate-400 dark:text-slate-500'
+                                              }`}
+                                              aria-label="Payment required"
+                                            />
+                                          )}
+                                        </button>
+
+                                        {/* Injected Between-Module Retention Checkpoint Trigger */}
+                                        {betweenQuiz && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleOpenCheckpoint(idx)}
+                                            className={`w-full px-2 py-1.5 rounded-lg border text-left transition-colors duration-150 motion-reduce:transition-none flex items-center justify-between gap-2 ${
+                                              isCheckpointActive
+                                                ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-500 dark:border-cyan-500 text-blue-900 dark:text-cyan-200 font-semibold'
+                                                : 'bg-slate-50/70 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-blue-400 dark:hover:border-cyan-500'
+                                            }`}
+                                          >
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                              <CheckSquare
+                                                className={`w-3 h-3 shrink-0 ${
+                                                  checkpointResult?.passed
+                                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                                    : isCheckpointActive
+                                                    ? 'text-blue-600 dark:text-cyan-400'
+                                                    : 'text-slate-400 dark:text-slate-500'
+                                                }`}
+                                              />
+                                              <span className="text-[10px] truncate">
+                                                Retention Check · {betweenQuiz.questions.length} Qs
+                                              </span>
+                                            </div>
+                                            {checkpointResult && (
+                                              <span
+                                                className={`text-[10px] font-mono tabular-nums font-bold shrink-0 ${
+                                                  checkpointResult.passed
+                                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                                    : 'text-amber-600 dark:text-amber-400'
+                                                }`}
+                                              >
+                                                {checkpointResult.score}%
+                                              </span>
+                                            )}
+                                          </button>
+                                        )}
+                                      </React.Fragment>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
-                </React.Fragment>
+                </div>
               );
             })}
           </div>

@@ -17,12 +17,20 @@ import {
   AlertTriangle,
   Save,
   Edit3,
-  Award
+  Award,
+  Layers,
+  FolderPlus,
+  ChevronRight
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
 import {
+  resolveCourseHierarchy,
+  getModuleSectionBreadcrumb
+} from '../../utils/courseHierarchy';
+import {
   Course,
+  CourseChapterSection,
   CourseGradingCriteria,
   CourseModule,
   ModuleType,
@@ -221,6 +229,75 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
   const [activeDropIndex, setActiveDropIndex] = useState<number | null>(null);
   const [activeCheckpointDropId, setActiveCheckpointDropId] = useState<string | null>(null);
+
+  // Canvas mode: flat drag-and-drop sequence OR 3-level multi-section organizer (L1 Chapter -> L2 Main Contents -> L3 Course Contents)
+  const [canvasViewMode, setCanvasViewMode] = useState<'sequence' | 'hierarchy'>('hierarchy');
+  const [newChapterTitle, setNewChapterTitle] = useState('');
+  const [newMainContentTitle, setNewMainContentTitle] = useState('');
+  const [targetChapterForNewMain, setTargetChapterForNewMain] = useState('');
+
+  const hierarchyTree = useMemo(() => resolveCourseHierarchy(course), [course]);
+
+  const handleAddLevel1Chapter = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = newChapterTitle.trim();
+    if (!clean) return;
+    const baseChapters: CourseChapterSection[] = hierarchyTree.map(ch => ({
+      id: ch.id,
+      title: ch.title,
+      summary: ch.summary,
+      mainContents: ch.mainContents.map(mc => ({ id: mc.id, title: mc.title, summary: mc.summary }))
+    }));
+    if (baseChapters.some(ch => ch.title.toLowerCase() === clean.toLowerCase())) {
+      onToast(`Chapter "${clean}" already exists.`);
+      return;
+    }
+    const newChapId = `chap-${Date.now()}`;
+    baseChapters.push({
+      id: newChapId,
+      title: clean,
+      mainContents: [{ id: `sec-${Date.now()}`, title: 'Core Topics & Lessons' }]
+    });
+    updateCourse(course.id, { chapters: baseChapters });
+    setNewChapterTitle('');
+    setTargetChapterForNewMain(clean);
+    onToast(`Added Level-1 Chapter: "${clean}"`);
+  };
+
+  const handleAddLevel2MainContent = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = newMainContentTitle.trim();
+    const targetChapTitle = (targetChapterForNewMain || hierarchyTree[0]?.title || '').trim();
+    if (!clean || !targetChapTitle) return;
+    const baseChapters: CourseChapterSection[] = hierarchyTree.map(ch => ({
+      id: ch.id,
+      title: ch.title,
+      summary: ch.summary,
+      mainContents: ch.mainContents.map(mc => ({ id: mc.id, title: mc.title, summary: mc.summary }))
+    }));
+    const chap = baseChapters.find(ch => ch.title.toLowerCase() === targetChapTitle.toLowerCase());
+    if (!chap) return;
+    if (chap.mainContents.some(mc => mc.title.toLowerCase() === clean.toLowerCase())) {
+      onToast(`Main content "${clean}" already exists in "${chap.title}".`);
+      return;
+    }
+    chap.mainContents.push({ id: `sec-${Date.now()}`, title: clean });
+    updateCourse(course.id, { chapters: baseChapters });
+    setNewMainContentTitle('');
+    onToast(`Added Level-2 Section "${clean}" inside "${chap.title}"`);
+  };
+
+  const handleAssignModuleSection = (
+    moduleId: string,
+    chapterTitle: string,
+    mainContentTitle: string
+  ) => {
+    updateModuleInCourse(course.id, moduleId, {
+      chapterTitle,
+      mainContentTitle
+    });
+    onToast(`Assigned module to "${chapterTitle} › ${mainContentTitle}"`);
+  };
 
   const [inspectorTarget, setInspectorTarget] = useState<SelectedInspectorTarget>({
     kind: 'grading'
@@ -651,27 +728,220 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
           </div>
         </aside>
 
-        {/* Zone 2: Drag-and-Drop Curriculum Canvas */}
+        {/* Zone 2: Drag-and-Drop & Multi-Level Curriculum Canvas */}
         <section
           aria-label="Curriculum drop canvas"
-          className="xl:col-span-5 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2.5"
+          className="xl:col-span-5 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3"
         >
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider font-mono text-slate-700 dark:text-slate-200">
-                Curriculum Sequence Canvas
+                Curriculum Canvas
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                Drag handles to reorder modules or drop Quizzes &amp; Retention Checks into slots.
+                Organize Level-1 Chapters, Level-2 Main Contents, and Level-3 Course Contents.
               </p>
             </div>
-            <span className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-              {course.modules.length} Items
-            </span>
+            <div className="inline-flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => setCanvasViewMode('hierarchy')}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                  canvasViewMode === 'hierarchy'
+                    ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-cyan-400 shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                3-Level Sections
+              </button>
+              <button
+                type="button"
+                onClick={() => setCanvasViewMode('sequence')}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                  canvasViewMode === 'sequence'
+                    ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-cyan-400 shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                Drag &amp; Drop ({course.modules.length})
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-1.5">
-            {course.modules.map((mod, idx) => {
+          {canvasViewMode === 'hierarchy' ? (
+            <div className="space-y-3">
+              {/* Quick Section Creators (Level 1 Chapter & Level 2 Main Content) */}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 space-y-2.5">
+                <form onSubmit={handleAddLevel1Chapter} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newChapterTitle}
+                    onChange={(e) => setNewChapterTitle(e.target.value)}
+                    placeholder="New Level-1 Chapter Title..."
+                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                  />
+                  <button
+                    type="submit"
+                    className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap shrink-0"
+                  >
+                    <FolderPlus className="w-3.5 h-3.5" />
+                    <span>Add L1 Chapter</span>
+                  </button>
+                </form>
+
+                <form onSubmit={handleAddLevel2MainContent} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                  <select
+                    value={targetChapterForNewMain || hierarchyTree[0]?.title || ''}
+                    onChange={(e) => setTargetChapterForNewMain(e.target.value)}
+                    aria-label="Target Level 1 chapter"
+                    className="w-full sm:w-40 px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-200"
+                  >
+                    {hierarchyTree.map(ch => (
+                      <option key={ch.id} value={ch.title}>
+                        {ch.chapterLabel}: {ch.title}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={newMainContentTitle}
+                    onChange={(e) => setNewMainContentTitle(e.target.value)}
+                    placeholder="New Level-2 Main Content..."
+                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                  />
+                  <button
+                    type="submit"
+                    className="px-2.5 py-1.5 rounded-lg border border-blue-200 dark:border-cyan-800 bg-blue-50 dark:bg-cyan-950/40 text-blue-700 dark:text-cyan-300 hover:bg-blue-100 dark:hover:bg-cyan-950/70 text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add L2 Section</span>
+                  </button>
+                </form>
+              </div>
+
+              {/* 3-Level Nested Preview & Assignment Tree */}
+              <div className="space-y-2.5">
+                {hierarchyTree.map((ch) => (
+                  <div
+                    key={ch.id}
+                    className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-900"
+                  >
+                    {/* Level 1 */}
+                    <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Layers className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400 shrink-0" />
+                        <span className="font-mono text-[10px] font-bold uppercase text-blue-600 dark:text-cyan-400 shrink-0">
+                          L1 · {ch.chapterLabel}
+                        </span>
+                        <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                          {ch.title}
+                        </span>
+                      </div>
+                      <span className="font-mono text-[10px] tabular-nums text-slate-500 shrink-0">
+                        {ch.totalModules} items
+                      </span>
+                    </div>
+
+                    {/* Level 2 */}
+                    <div className="p-2.5 space-y-2">
+                      {ch.mainContents.map((mc) => (
+                        <div
+                          key={mc.id}
+                          className="pl-2.5 border-l border-slate-200 dark:border-slate-800 space-y-1.5"
+                        >
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <ChevronRight className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span className="font-mono text-[10px] font-bold text-slate-500 dark:text-slate-400 shrink-0">
+                                L2 · {mc.sectionNumber}
+                              </span>
+                              <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                {mc.title}
+                              </span>
+                            </div>
+                            <span className="font-mono text-[10px] tabular-nums text-slate-400 shrink-0">
+                              {mc.items.length} L3
+                            </span>
+                          </div>
+
+                          {/* Level 3 items */}
+                          <div className="pl-3 space-y-1.5">
+                            {mc.items.length === 0 ? (
+                              <p className="text-[10px] italic text-slate-400 py-1">
+                                Assign any module below or switch to Drag &amp; Drop to reorder.
+                              </p>
+                            ) : (
+                              mc.items.map(({ module: mod, itemNumber }) => (
+                                <div
+                                  key={mod.id}
+                                  className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (mod.type === 'quiz') {
+                                        setInspectorTarget({ kind: 'quiz-module', moduleId: mod.id });
+                                      } else {
+                                        onEditFullModule(course.id, mod);
+                                      }
+                                    }}
+                                    className="flex items-center gap-2 min-w-0 flex-1 text-left"
+                                  >
+                                    <span className="font-mono text-[10px] font-bold text-slate-400 shrink-0">
+                                      {itemNumber}
+                                    </span>
+                                    <span className="font-semibold text-slate-900 dark:text-slate-100 truncate hover:text-blue-600 dark:hover:text-cyan-400">
+                                      {mod.title}
+                                    </span>
+                                  </button>
+
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <select
+                                      aria-label={`Move ${mod.title} to another section`}
+                                      value={`${ch.title}:::${mc.title}`}
+                                      onChange={(e) => {
+                                        const [nextCh, nextMc] = e.target.value.split(':::');
+                                        if (nextCh && nextMc) {
+                                          handleAssignModuleSection(mod.id, nextCh, nextMc);
+                                        }
+                                      }}
+                                      className="max-w-[170px] px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[10px] text-slate-600 dark:text-slate-300"
+                                    >
+                                      {hierarchyTree.map(optCh =>
+                                        optCh.mainContents.map(optMc => (
+                                          <option
+                                            key={`${optCh.id}-${optMc.id}`}
+                                            value={`${optCh.title}:::${optMc.title}`}
+                                          >
+                                            {optCh.chapterLabel} › {optMc.sectionNumber} {optMc.title}
+                                          </option>
+                                        ))
+                                      )}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      onClick={() => onEditFullModule(course.id, mod)}
+                                      className="p-1 rounded text-slate-500 hover:text-blue-600 dark:hover:text-cyan-400"
+                                      title="Edit Course Content"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {course.modules.map((mod, idx) => {
+                const crumb = getModuleSectionBreadcrumb(course, mod.id);
               const nextMod = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
               const betweenQuiz = nextMod ? getBetweenModuleQuiz(course, mod, nextMod) : null;
               const isSelectedQuiz =
@@ -763,8 +1033,9 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                         <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate hover:text-blue-600 dark:hover:text-cyan-400">
                           {mod.title}
                         </p>
-                        <p className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400 capitalize">
-                          {mod.type} · {mod.durationMin}m
+                        <p className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400 truncate">
+                          {crumb ? `${crumb.chapterLabel} › ${crumb.sectionNumber} ${crumb.itemNumber} · ` : ''}
+                          <span className="capitalize">{mod.type}</span> · {mod.durationMin}m
                           {mod.type === 'quiz' && mod.quiz
                             ? ` · Pass ${mod.quiz.passingScore}% · ${mod.quiz.questions.length} Qs`
                             : ''}
@@ -907,6 +1178,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
               Drop component here to append at end of course
             </div>
           </div>
+          )}
         </section>
 
         {/* Zone 3: Automated Grading Criteria & Inline Assessment Inspector */}

@@ -39,6 +39,10 @@ import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
 import { CourseModuleBuilder } from './CourseModuleBuilder';
 import { CourseThumbnail } from '../Courses/CourseThumbnail';
 import {
+  resolveCourseHierarchy,
+  getModuleSectionBreadcrumb
+} from '../../utils/courseHierarchy';
+import {
   Course,
   CourseEnrollment,
   CourseModule,
@@ -466,6 +470,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
 
   const [moduleForm, setModuleForm] = useState<{
     title: string;
+    chapterTitle: string;
+    mainContentTitle: string;
     type: ModuleType;
     durationMin: number;
     summary: string;
@@ -481,6 +487,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     quizQuestions: QuizQuestion[];
   }>({
     title: '',
+    chapterTitle: '',
+    mainContentTitle: '',
     type: 'theory',
     durationMin: 30,
     summary: '',
@@ -632,6 +640,11 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
   };
 
   const openAddModuleModal = (courseId: string, initialType: ModuleType = 'theory') => {
+    const targetCourse = courses.find(c => c.id === courseId);
+    const hierarchy = targetCourse ? resolveCourseHierarchy(targetCourse) : [];
+    const lastChapter = hierarchy[hierarchy.length - 1];
+    const lastMain = lastChapter?.mainContents?.[lastChapter.mainContents.length - 1];
+
     setModuleModalCourseId(courseId);
     setEditingModuleId(null);
     const isQuiz = initialType === 'quiz';
@@ -639,6 +652,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       title: isQuiz
         ? 'Quiz: Knowledge Assessment & Verification'
         : 'Module: VXLAN Network Identifier (VNI) Mapping',
+      chapterTitle: lastChapter?.title || 'Core Foundations & Architecture',
+      mainContentTitle: lastMain?.title || 'Core Topics & Practice',
       type: initialType,
       durationMin: isQuiz ? 20 : 30,
       summary: isQuiz
@@ -668,10 +683,14 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
   };
 
   const openEditModuleModal = (courseId: string, mod: CourseModule) => {
+    const targetCourse = courses.find(c => c.id === courseId);
+    const breadcrumb = targetCourse ? getModuleSectionBreadcrumb(targetCourse, mod.id) : null;
     setModuleModalCourseId(courseId);
     setEditingModuleId(mod.id);
     setModuleForm({
       title: mod.title,
+      chapterTitle: mod.chapterTitle || breadcrumb?.chapterTitle || 'Core Foundations & Architecture',
+      mainContentTitle: mod.mainContentTitle || breadcrumb?.mainContentTitle || 'Core Topics & Practice',
       type: mod.type,
       durationMin: mod.durationMin,
       summary: mod.summary,
@@ -814,6 +833,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     const modulePayload: CourseModule = {
       id: editingModuleId || `mod-${Date.now()}`,
       title: moduleForm.title.trim(),
+      chapterTitle: moduleForm.chapterTitle.trim() || undefined,
+      mainContentTitle: moduleForm.mainContentTitle.trim() || undefined,
       type: moduleForm.type,
       durationMin: Number(moduleForm.durationMin) || 30,
       summary: moduleForm.summary.trim(),
@@ -2427,9 +2448,16 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                   ) : (
                                     <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                                   )}
-                                  <span className="truncate text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-cyan-300">
-                                    {mod.title}
-                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    <span className="block truncate text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-cyan-300">
+                                      {mod.title}
+                                    </span>
+                                    {(mod.chapterTitle || mod.mainContentTitle) && (
+                                      <span className="block truncate text-[10px] text-slate-400 dark:text-slate-500 font-mono">
+                                        L1: {mod.chapterTitle || 'Core Chapter'} › L2: {mod.mainContentTitle || 'Main Contents'}
+                                      </span>
+                                    )}
+                                  </div>
                                 </button>
 
                                 <div className="flex items-center gap-1 shrink-0">
@@ -2756,8 +2784,65 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
             </div>
 
             <form onSubmit={handleSaveModule} className="space-y-3.5 text-xs">
+              {(() => {
+                const modalCourse = courses.find(c => c.id === moduleModalCourseId);
+                const modalHierarchy = modalCourse ? resolveCourseHierarchy(modalCourse) : [];
+                const chapterOptions = modalHierarchy.map(ch => ch.title);
+                const selectedChapterObj = modalHierarchy.find(
+                  ch => ch.title.toLowerCase() === moduleForm.chapterTitle.trim().toLowerCase()
+                );
+                const mainContentOptions = (
+                  selectedChapterObj
+                    ? selectedChapterObj.mainContents
+                    : modalHierarchy.flatMap(ch => ch.mainContents)
+                ).map(mc => mc.title);
+
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800">
+                    <div>
+                      <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        Level 1 · Chapter Section
+                      </label>
+                      <input
+                        type="text"
+                        list="l1-chapter-options"
+                        value={moduleForm.chapterTitle}
+                        onChange={(e) => setModuleForm({ ...moduleForm, chapterTitle: e.target.value })}
+                        placeholder="e.g. IP Addressing & Cisco IOS Foundations"
+                        className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                      />
+                      <datalist id="l1-chapter-options">
+                        {chapterOptions.map(chTitle => (
+                          <option key={chTitle} value={chTitle} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        Level 2 · Main Contents
+                      </label>
+                      <input
+                        type="text"
+                        list="l2-main-content-options"
+                        value={moduleForm.mainContentTitle}
+                        onChange={(e) => setModuleForm({ ...moduleForm, mainContentTitle: e.target.value })}
+                        placeholder="e.g. IPv4 Subnetting & Prefix Mechanics"
+                        className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                      />
+                      <datalist id="l2-main-content-options">
+                        {Array.from(new Set(mainContentOptions)).map(mcTitle => (
+                          <option key={mcTitle} value={mcTitle} />
+                        ))}
+                      </datalist>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Module Title</label>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Level 3 · Course Content Title
+                </label>
                 <input
                   type="text"
                   required

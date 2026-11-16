@@ -20,6 +20,7 @@ import {
   CoursePaymentRecord
 } from '../types';
 import { createDefaultCourseEnrollment } from '../utils/enrollmentDates';
+import { mergeModuleHierarchyIntoChapters } from '../utils/courseHierarchy';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -591,7 +592,43 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [courses, setCourses] = useState<Course[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_PREFIX}courses`);
-    return saved ? JSON.parse(saved) : INITIAL_COURSES;
+    if (!saved) return INITIAL_COURSES;
+    try {
+      const parsed: Course[] = JSON.parse(saved);
+      const seededCcnpFlag = localStorage.getItem(`${STORAGE_PREFIX}multilevel_seed_v1`);
+      const hydrated = parsed.map(c => {
+        const seed = INITIAL_COURSES.find(ic => ic.id === c.id);
+        if (!seed) return c;
+        return {
+          ...c,
+          chapters: c.chapters && c.chapters.length > 0 ? c.chapters : seed.chapters,
+          modules: (c.modules || []).map(mod => {
+            const seedMod = seed.modules.find(sm => sm.id === mod.id);
+            return {
+              ...mod,
+              chapterTitle: mod.chapterTitle || seedMod?.chapterTitle,
+              mainContentTitle: mod.mainContentTitle || seedMod?.mainContentTitle
+            };
+          })
+        };
+      });
+
+      if (!seededCcnpFlag) {
+        const ccnpSeed = INITIAL_COURSES.find(ic => ic.id === 'course-ccnp-1');
+        if (ccnpSeed && !hydrated.some(c => c.id === 'course-ccnp-1')) {
+          hydrated.splice(1, 0, ccnpSeed);
+        }
+        try {
+          localStorage.setItem(`${STORAGE_PREFIX}multilevel_seed_v1`, 'true');
+        } catch {
+          // ignore storage write errors
+        }
+      }
+
+      return hydrated;
+    } catch {
+      return INITIAL_COURSES;
+    }
   });
 
   const [forumPosts, setForumPosts] = useState<ForumPost[]>(() => {
@@ -1493,6 +1530,11 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
           return {
             ...c,
+            chapters: mergeModuleHierarchyIntoChapters(
+              c.chapters,
+              newModule.chapterTitle,
+              newModule.mainContentTitle
+            ),
             modules,
             modulesCount: modules.length,
             updatedAt: today
@@ -1509,8 +1551,16 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       prev.map(c => {
         if (c.id === courseId) {
           const modules = c.modules.map(m => (m.id === moduleId ? { ...m, ...updated } : m));
+          const updatedMod = modules.find(m => m.id === moduleId);
           return {
             ...c,
+            chapters: updatedMod
+              ? mergeModuleHierarchyIntoChapters(
+                  c.chapters,
+                  updatedMod.chapterTitle,
+                  updatedMod.mainContentTitle
+                )
+              : c.chapters,
             modules,
             updatedAt: today
           };

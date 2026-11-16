@@ -80,12 +80,27 @@ export interface LabTopologyLink {
   status: 'up' | 'down';
 }
 
+export interface CourseMainContentSection {
+  id: string;
+  title: string; // Level 2: Main Contents
+  summary?: string;
+}
+
+export interface CourseChapterSection {
+  id: string;
+  title: string; // Level 1: Chapter Section
+  summary?: string;
+  mainContents: CourseMainContentSection[];
+}
+
 export interface CourseModule {
   id: string;
-  title: string;
+  title: string; // Level 3: Course Content
   type: ModuleType;
   durationMin: number;
   summary: string;
+  chapterTitle?: string;      // Level 1: Chapter Section assignment
+  mainContentTitle?: string;  // Level 2: Main Contents assignment
   contentMarkdown?: string;
   videoUrl?: string;
   videoDuration?: string;
@@ -147,6 +162,7 @@ export interface Course {
   description: string;
   prerequisites: string[];
   learningOutcomes: string[];
+  chapters?: CourseChapterSection[];
   modules: CourseModule[];
   gradingCriteria?: CourseGradingCriteria;
   createdById?: string;

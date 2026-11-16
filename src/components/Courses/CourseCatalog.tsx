@@ -63,32 +63,88 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
   }, [viewMode]);
 
   const categories = useMemo(() => {
-    const base = [
+    const presetTracks = [
       'All',
+      'CCNA',
+      'CCNP',
+      'Security',
+      'Cloud & SD-WAN',
+      'Packet Analysis'
+    ];
+    const coveredCategories = new Set([
       'Enterprise Routing & Switching',
       'Network Security & Firewalls',
       'Cloud & SD-WAN',
       'Packet Analysis & Forensics'
-    ];
-    const extras = courses
+    ]);
+    const customCategories = courses
       .map(c => c.category)
-      .filter(cat => !base.includes(cat));
-    return Array.from(new Set([...base, ...extras]));
+      .filter(cat => !coveredCategories.has(cat));
+    return Array.from(new Set([...presetTracks, ...customCategories]));
   }, [courses]);
 
   const levels = ['All', 'Beginner', 'Intermediate', 'Advanced', 'Expert'];
 
+  const matchesSelectedCategory = (course: Course, category: string): boolean => {
+    if (category === 'All') return true;
+    const codeUpper = course.code.toUpperCase();
+    const titleUpper = course.title.toUpperCase();
+    const catLower = course.category.toLowerCase();
+
+    if (category === 'CCNA') {
+      return (
+        codeUpper.includes('CCNA') ||
+        titleUpper.includes('CCNA') ||
+        (course.category === 'Enterprise Routing & Switching' && !codeUpper.includes('CCNP'))
+      );
+    }
+    if (category === 'CCNP') {
+      return (
+        codeUpper.includes('CCNP') ||
+        titleUpper.includes('CCNP') ||
+        course.description.toUpperCase().includes('CCNP')
+      );
+    }
+    if (category === 'Security') {
+      return (
+        catLower.includes('security') ||
+        codeUpper.includes('SEC') ||
+        titleUpper.includes('FIREWALL') ||
+        titleUpper.includes('SECURITY')
+      );
+    }
+    if (category === 'Cloud & SD-WAN') {
+      return catLower.includes('cloud') || catLower.includes('sd-wan') || codeUpper.includes('CLOUD');
+    }
+    if (category === 'Packet Analysis') {
+      return (
+        catLower.includes('packet') ||
+        codeUpper.includes('WIRESHARK') ||
+        titleUpper.includes('PACKET')
+      );
+    }
+    return course.category === category;
+  };
+
   const filteredCourses = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = courses.filter(c => {
-      const matchesCat = selectedCategory === 'All' || c.category === selectedCategory;
+      const matchesCat = matchesSelectedCategory(c, selectedCategory);
       const matchesLevel = selectedLevel === 'All' || c.level === selectedLevel;
       const matchesSearch =
         !q ||
         c.title.toLowerCase().includes(q) ||
         c.code.toLowerCase().includes(q) ||
         c.subtitle.toLowerCase().includes(q) ||
-        c.instructor.name.toLowerCase().includes(q);
+        c.category.toLowerCase().includes(q) ||
+        c.description.toLowerCase().includes(q) ||
+        c.instructor.name.toLowerCase().includes(q) ||
+        c.modules.some(
+          m =>
+            m.title.toLowerCase().includes(q) ||
+            (m.chapterTitle || '').toLowerCase().includes(q) ||
+            (m.mainContentTitle || '').toLowerCase().includes(q)
+        );
       return matchesCat && matchesLevel && matchesSearch;
     });
 

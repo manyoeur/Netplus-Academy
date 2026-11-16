@@ -134,12 +134,34 @@ export const INITIAL_COURSES: Course[] = [
     createdByEmail: 'marcus.vance@netplus.academy',
     updatedAt: '2026-10-18',
     defaultAccessDays: 180,
+    chapters: [
+      {
+        id: 'chap-ccna-1',
+        title: 'IP Addressing & Cisco IOS Foundations',
+        summary: 'Core Layer 3 addressing math and Cisco CLI operational hierarchy.',
+        mainContents: [
+          { id: 'sec-ccna-1-1', title: 'IPv4 Subnetting & Prefix Mechanics' },
+          { id: 'sec-ccna-1-2', title: 'Cisco IOS Command-Line Operations' }
+        ]
+      },
+      {
+        id: 'chap-ccna-2',
+        title: 'Dynamic OSPF Routing & Verification',
+        summary: 'Multi-area OSPFv2 configuration, packet dissection, and certification review.',
+        mainContents: [
+          { id: 'sec-ccna-2-1', title: 'OSPF Adjacency Labs & Wire Analysis' },
+          { id: 'sec-ccna-2-2', title: 'Certification Benchmark Assessment' }
+        ]
+      }
+    ],
     modules: [
       {
         id: 'mod-ccna-1',
         title: 'Module 1: IPv4 Addressing, Subnetting & CIDR Mastery',
         type: 'theory',
         durationMin: 35,
+        chapterTitle: 'IP Addressing & Cisco IOS Foundations',
+        mainContentTitle: 'IPv4 Subnetting & Prefix Mechanics',
         summary: 'Deep dive into IPv4 classes, binary math, subnet masks, slash notation, and calculating network/broadcast addresses.',
         contentMarkdown: `# Module 1: IPv4 Addressing & Subnetting Mechanics
 
@@ -171,8 +193,10 @@ To quickly find subnets:
         title: 'Module 2: Cisco IOS Command-Line Architecture & Initial Router Setup',
         type: 'video',
         durationMin: 45,
+        chapterTitle: 'IP Addressing & Cisco IOS Foundations',
+        mainContentTitle: 'Cisco IOS Command-Line Operations',
         summary: 'Hands-on breakdown of User EXEC, Privileged EXEC, and Global Configuration modes with Cisco Best Practices.',
-        videoUrl: 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', // Placeholder or standard educational embed
+        videoUrl: 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
         videoDuration: '18:40',
         contentMarkdown: `### Cisco IOS Command Hierarchy
 - **User EXEC Mode** (\`Router>\`): Basic monitoring commands (\`ping\`, \`traceroute\`, limited \`show\`).
@@ -185,6 +209,8 @@ To quickly find subnets:
         title: 'Module 3: Hands-On Lab - Multi-Area OSPFv2 Adjacency & Area 0 Transit',
         type: 'lab',
         durationMin: 50,
+        chapterTitle: 'Dynamic OSPF Routing & Verification',
+        mainContentTitle: 'OSPF Adjacency Labs & Wire Analysis',
         summary: 'Establish full OSPF neighbor adjacency between Core Router R1 and Branch Router R2 across a /30 WAN link.',
         lab: {
           objective: 'Configure OSPF Process 1 on R1 and R2, advertise interfaces into Area 0, and verify Full Neighbor Adjacency.',
@@ -221,6 +247,8 @@ To quickly find subnets:
         title: 'Module 4: Wireshark Deep-Dive - Dissecting OSPF Hello & DBD Packets',
         type: 'pcap',
         durationMin: 30,
+        chapterTitle: 'Dynamic OSPF Routing & Verification',
+        mainContentTitle: 'OSPF Adjacency Labs & Wire Analysis',
         summary: 'Examine packet bytes, multicast destination 224.0.0.5, Dead Interval negotiations, and MTU fields in PCAP frames.',
         contentMarkdown: `### OSPF Packet Header Analysis
 In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89:
@@ -235,6 +263,8 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
         title: 'Module 5: Certification Benchmark Quiz - CCNA Knowledge Assessment',
         type: 'quiz',
         durationMin: 25,
+        chapterTitle: 'Dynamic OSPF Routing & Verification',
+        mainContentTitle: 'Certification Benchmark Assessment',
         summary: 'Test your grasp of subnetting, switching loops, OSPF neighbor states, and ACL filtering.',
         quiz: {
           passingScore: 80,
@@ -309,20 +339,197 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
     isPublished: true,
     updatedAt: '2026-10-14',
     defaultAccessDays: 180,
+    chapters: [
+      {
+        id: 'chap-sec-1',
+        title: 'Zero Trust Perimeter & Stateful Firewalls',
+        mainContents: [
+          { id: 'sec-sec-1-1', title: 'Microsegmentation & Defense-in-Depth' }
+        ]
+      },
+      {
+        id: 'chap-sec-2',
+        title: 'Cryptographic VPN Tunnels & Lab Verification',
+        mainContents: [
+          { id: 'sec-sec-2-1', title: 'IPsec IKEv2 Tunnel Engineering' },
+          { id: 'sec-sec-2-2', title: 'Security Policy Assessment' }
+        ]
+      }
+    ],
     modules: [
       {
         id: 'mod-sec-1',
         title: 'Module 1: Zero Trust Architecture & Defense-in-Depth',
         type: 'theory',
         durationMin: 40,
-        summary: 'Core principles of "Never Trust, Always Verify", microsegmentation, and identity-driven network access control.'
+        chapterTitle: 'Zero Trust Perimeter & Stateful Firewalls',
+        mainContentTitle: 'Microsegmentation & Defense-in-Depth',
+        summary: 'Core principles of "Never Trust, Always Verify", microsegmentation, and identity-driven network access control.',
+        contentMarkdown: `# Zero Trust Network Architecture\n\nModern enterprise perimeters dissolve across cloud workloads and remote campuses.\n\n### Core Pillars\n- **Explicit Verification**: Authenticate and authorize every flow by user identity, device posture, and application signature.\n- **Least Privilege Microsegmentation**: Isolate east-west VLANs with zone-based firewall policies.\n- **Encrypted Transit**: Enforce TLS 1.3 and IPsec IKEv2 across untrusted WAN links.`
       },
       {
         id: 'mod-sec-2',
         title: 'Module 2: Cisco ASA / Firepower Site-to-Site IPsec VPN Lab',
         type: 'lab',
         durationMin: 60,
+        chapterTitle: 'Cryptographic VPN Tunnels & Lab Verification',
+        mainContentTitle: 'IPsec IKEv2 Tunnel Engineering',
         summary: 'Build an encrypted IKEv2 Phase 1 and Phase 2 IPsec tunnel between HQ Firewall and Remote DC.'
+      },
+      {
+        id: 'mod-sec-3',
+        title: 'Module 3: Stateful Zone-Based Firewall & Threat Inspection Quiz',
+        type: 'quiz',
+        durationMin: 20,
+        chapterTitle: 'Cryptographic VPN Tunnels & Lab Verification',
+        mainContentTitle: 'Security Policy Assessment',
+        summary: 'Verify comprehension of IKEv2 SA negotiation, ACL implicit deny rules, and DDoS mitigation.',
+        quiz: {
+          passingScore: 75,
+          questions: [
+            {
+              id: 'sec-q1',
+              question: 'Which IPsec protocol provides encryption and payload integrity across an untrusted WAN?',
+              options: ['AH (Protocol 51)', 'ESP (Protocol 50)', 'GRE (Protocol 47)', 'OSPF (Protocol 89)'],
+              correctAnswerIndex: 1,
+              explanation: 'Encapsulating Security Payload (ESP, IP protocol 50) provides confidentiality via encryption as well as integrity and authentication.'
+            },
+            {
+              id: 'sec-q2',
+              question: 'What happens to traffic matching no explicit permit entries at the end of a Cisco ACL?',
+              options: ['Forwarded with low QoS', 'Logged and permitted', 'Silently dropped by implicit deny any', 'Routed to Null0 via BGP'],
+              correctAnswerIndex: 2,
+              explanation: 'Every Cisco Access Control List ends with an implicit deny all rule.'
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    id: 'course-ccnp-1',
+    code: 'CCNP-350-401',
+    title: 'CCNP Enterprise Core (ENCOR): BGP, EVPN & Dual-Stack Design',
+    subtitle: 'Master eBGP/iBGP path selection, route reflectors, VRF-Lite, and Enterprise Dual-Stack Core Architecture.',
+    category: 'Enterprise Routing & Switching',
+    level: 'Advanced',
+    instructor: {
+      name: 'Dr. Marcus Vance',
+      title: 'CCIE Enterprise Infrastructure #49281',
+      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=256&q=80',
+    },
+    rating: 4.94,
+    reviewsCount: 510,
+    durationHours: 48,
+    modulesCount: 4,
+    enrolledCount: 1540,
+    price: 229,
+    bannerColor: 'from-indigo-700 via-blue-800 to-slate-950',
+    thumbnail: thumbRouting,
+    badge: 'CCNP Track',
+    description: 'Deep enterprise engineering curriculum preparing network engineers for Cisco CCNP ENCOR 350-401: BGP Best Path Selection, Policy-Based Routing, VRF segmentation, and resilient LISP/VXLAN overlays.',
+    prerequisites: ['CCNA 200-301 or equivalent production routing experience'],
+    learningOutcomes: [
+      'Tune BGP Weight, Local Preference, AS-Path, and MED attributes for deterministic traffic engineering',
+      'Implement VRF-Lite virtualization across multi-tenant campus distribution switches',
+      'Automate Cisco IOS-XE telemetry using RESTCONF and NETCONF YANG models'
+    ],
+    isPublished: true,
+    createdById: 'user-instructor-1',
+    createdByEmail: 'marcus.vance@netplus.academy',
+    updatedAt: '2026-10-20',
+    defaultAccessDays: 180,
+    chapters: [
+      {
+        id: 'chap-ccnp-1',
+        title: 'Enterprise BGP & Multi-Tenant Routing',
+        mainContents: [
+          { id: 'sec-ccnp-1-1', title: 'BGP Path Attributes & Route Reflectors' },
+          { id: 'sec-ccnp-1-2', title: 'VRF-Lite Campus Virtualization' }
+        ]
+      },
+      {
+        id: 'chap-ccnp-2',
+        title: 'Overlay Fabrics & ENCOR Verification',
+        mainContents: [
+          { id: 'sec-ccnp-2-1', title: 'BGP Route Manipulation Lab' },
+          { id: 'sec-ccnp-2-2', title: 'ENCOR Mastery Check' }
+        ]
+      }
+    ],
+    modules: [
+      {
+        id: 'mod-ccnp-1',
+        title: 'Module 1: BGP Best Path Algorithm & Policy Tuning',
+        type: 'theory',
+        durationMin: 45,
+        chapterTitle: 'Enterprise BGP & Multi-Tenant Routing',
+        mainContentTitle: 'BGP Path Attributes & Route Reflectors',
+        summary: 'Step-by-step walk through Weight, Local Preference, Originate, AS-Path, Origin, and MED tie-breakers.',
+        contentMarkdown: `# BGP Path Selection Tie-Breakers\n\nCisco IOS evaluates candidate paths in strict order:\n1. Highest **Weight** (Cisco proprietary, local to router)\n2. Highest **Local Preference** (AS-wide outbound preference, default 100)\n3. Locally originated prefixes (\`network\` or \`redistribute\`)\n4. Shortest **AS_PATH**`
+      },
+      {
+        id: 'mod-ccnp-2',
+        title: 'Module 2: VRF-Lite Segmentation & Route Distinguisher Design',
+        type: 'video',
+        durationMin: 35,
+        chapterTitle: 'Enterprise BGP & Multi-Tenant Routing',
+        mainContentTitle: 'VRF-Lite Campus Virtualization',
+        summary: 'Isolate overlapping customer/departmental RIB and FIB instances across shared physical routers.',
+        videoUrl: 'https://stream.netplus.academy/ccnp-vrflite',
+        videoDuration: '24:10',
+        contentMarkdown: '### VRF-Lite Verification\nUse `show ip route vrf CORP-FINANCE` to verify separate routing tables.'
+      },
+      {
+        id: 'mod-ccnp-3',
+        title: 'Module 3: eBGP Peering & Local Preference Manipulation Lab',
+        type: 'lab',
+        durationMin: 55,
+        chapterTitle: 'Overlay Fabrics & ENCOR Verification',
+        mainContentTitle: 'BGP Route Manipulation Lab',
+        summary: 'Establish eBGP peering across dual ISP uplinks and steer outbound traffic using route-maps.',
+        lab: {
+          objective: 'Configure BGP AS 65001 and apply Local Preference policy toward primary transit neighbor.',
+          nodes: [
+            { id: 'R1', name: 'CORP-EDGE-1', type: 'router', ip: '198.51.100.1', subnet: '/30', status: 'online', x: 130, y: 150 },
+            { id: 'ISP1', name: 'ISP-PRIMARY', type: 'router', ip: '198.51.100.2', subnet: '/30', status: 'online', x: 370, y: 150 }
+          ],
+          links: [
+            { from: 'R1', to: 'ISP1', interfaceFrom: 'Gig0/0/0', interfaceTo: 'Gig0/0/0', status: 'up' }
+          ],
+          initialConfigPrompt: 'CORP-EDGE-1#',
+          expectedCommands: ['configure terminal', 'router bgp 65001', 'neighbor 198.51.100.2 remote-as 65100', 'end'],
+          terminalHints: ['Start BGP process 65001 in global config mode.'],
+          verificationCheck: 'show ip bgp summary'
+        }
+      },
+      {
+        id: 'mod-ccnp-4',
+        title: 'Module 4: CCNP ENCOR Routing & BGP Assessment',
+        type: 'quiz',
+        durationMin: 25,
+        chapterTitle: 'Overlay Fabrics & ENCOR Verification',
+        mainContentTitle: 'ENCOR Mastery Check',
+        summary: 'Validate CCNP-level troubleshooting across BGP attributes and VRF isolation.',
+        quiz: {
+          passingScore: 80,
+          questions: [
+            {
+              id: 'ccnp-q1',
+              question: 'Which BGP attribute influences outbound path selection across all iBGP routers inside an Autonomous System?',
+              options: ['MED', 'Weight', 'Local Preference', 'Next-Hop'],
+              correctAnswerIndex: 2,
+              explanation: 'Local Preference is transitive within the local AS (iBGP) and defaults to 100; higher values are preferred.'
+            },
+            {
+              id: 'ccnp-q2',
+              question: 'Which TCP port does BGP use to establish neighbor sessions?',
+              options: ['UDP 161', 'TCP 179', 'TCP 443', 'UDP 520'],
+              correctAnswerIndex: 1,
+              explanation: 'BGP uses TCP port 179 for reliable session state and routing updates.'
+            }
+          ]
+        }
       }
     ]
   },
@@ -341,7 +548,7 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
     rating: 4.88,
     reviewsCount: 650,
     durationHours: 32,
-    modulesCount: 4,
+    modulesCount: 3,
     enrolledCount: 1670,
     price: 199,
     bannerColor: 'from-purple-700 via-violet-800 to-slate-900',
@@ -357,13 +564,63 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
     isPublished: true,
     updatedAt: '2026-10-10',
     defaultAccessDays: 180,
+    chapters: [
+      {
+        id: 'chap-sdwan-1',
+        title: 'SD-WAN Fabric Planes & Controllers',
+        mainContents: [
+          { id: 'sec-sdwan-1-1', title: 'Control, Data & Orchestration Planes' }
+        ]
+      },
+      {
+        id: 'chap-sdwan-2',
+        title: 'Multi-Cloud On-Ramps & SLA Steering',
+        mainContents: [
+          { id: 'sec-sdwan-2-1', title: 'OMP Policies & Cloud Interconnects' }
+        ]
+      }
+    ],
     modules: [
       {
         id: 'mod-sdwan-1',
         title: 'Module 1: SD-WAN Control Plane, Data Plane & Orchestration Planes',
         type: 'theory',
         durationMin: 45,
+        chapterTitle: 'SD-WAN Fabric Planes & Controllers',
+        mainContentTitle: 'Control, Data & Orchestration Planes',
         summary: 'Deconstructing vManage (management), vBond (orchestration), vSmart (control), and vEdge (forwarding).'
+      },
+      {
+        id: 'mod-sdwan-2',
+        title: 'Module 2: Overlay Management Protocol (OMP) & TLOC Routes',
+        type: 'video',
+        durationMin: 35,
+        chapterTitle: 'Multi-Cloud On-Ramps & SLA Steering',
+        mainContentTitle: 'OMP Policies & Cloud Interconnects',
+        summary: 'Walkthrough of OMP route advertisements, TLOC colors, and BFD liveness probing.',
+        videoUrl: 'https://stream.netplus.academy/sdwan-omp',
+        videoDuration: '21:15'
+      },
+      {
+        id: 'mod-sdwan-3',
+        title: 'Module 3: Application-Aware SLA Steering Assessment',
+        type: 'quiz',
+        durationMin: 20,
+        chapterTitle: 'Multi-Cloud On-Ramps & SLA Steering',
+        mainContentTitle: 'OMP Policies & Cloud Interconnects',
+        summary: 'Assess SLA thresholds, jitter failover triggers, and cloud on-ramp automation.',
+        quiz: {
+          passingScore: 75,
+          questions: [
+            {
+              id: 'sdwan-q1',
+              question: 'Which SD-WAN controller distributes OMP routing and security policies across the overlay fabric?',
+              options: ['vBond', 'vSmart', 'vManage', 'cEdge'],
+              correctAnswerIndex: 1,
+              explanation: 'vSmart acts as the centralized control plane distributing OMP routes, keys, and policies.'
+            }
+          ]
+        }
       }
     ]
   },
@@ -382,7 +639,7 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
     rating: 4.96,
     reviewsCount: 1890,
     durationHours: 24,
-    modulesCount: 3,
+    modulesCount: 2,
     enrolledCount: 4210,
     price: 99,
     bannerColor: 'from-amber-600 via-orange-700 to-slate-900',
@@ -400,13 +657,35 @@ In this capture, observe the OSPF Header encapsulated directly in IP Protocol 89
     createdByEmail: 'marcus.vance@netplus.academy',
     updatedAt: '2026-10-08',
     defaultAccessDays: 120,
+    chapters: [
+      {
+        id: 'chap-ws-1',
+        title: 'TCP Stream & Handshake Forensics',
+        mainContents: [
+          { id: 'sec-ws-1-1', title: 'TCP State Machine & Sequence Dissection' },
+          { id: 'sec-ws-1-2', title: 'Retransmissions & Latency Diagnosis' }
+        ]
+      }
+    ],
     modules: [
       {
         id: 'mod-ws-1',
         title: 'Module 1: The Three-Way Handshake & TCP Sequence Mechanics',
         type: 'pcap',
         durationMin: 35,
+        chapterTitle: 'TCP Stream & Handshake Forensics',
+        mainContentTitle: 'TCP State Machine & Sequence Dissection',
         summary: 'SYN, SYN-ACK, ACK relative vs raw sequence number dissection and TCP window scaling.'
+      },
+      {
+        id: 'mod-ws-2',
+        title: 'Module 2: Display Filter Mastery & Bottleneck Triage',
+        type: 'theory',
+        durationMin: 30,
+        chapterTitle: 'TCP Stream & Handshake Forensics',
+        mainContentTitle: 'Retransmissions & Latency Diagnosis',
+        summary: 'Combine `tcp.analysis.retransmission`, RTT deltas, and TLS SNI filters for rapid root cause triage.',
+        contentMarkdown: `# Essential Forensic Filters\n\n- \`tcp.analysis.flags\`: Isolate retransmissions, duplicate ACKs, and zero-window stalls.\n- \`dns.flags.rcode != 0\`: Catch NXDOMAIN and SERVFAIL anomalies fast.`
       }
     ]
   }
