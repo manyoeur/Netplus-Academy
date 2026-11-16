@@ -24,6 +24,8 @@ import {
   Users,
   UserCog,
   GraduationCap,
+  Binary,
+  Gamepad2,
   LucideIcon
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
@@ -322,6 +324,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
           accentText: 'text-sky-600 dark:text-sky-400',
           accentBg: 'bg-sky-50 dark:bg-sky-950/60',
           accentBar: 'bg-sky-500'
+        },
+        {
+          id: 'base-converter',
+          label: 'Base Converter',
+          icon: Binary,
+          accentText: 'text-indigo-600 dark:text-indigo-400',
+          accentBg: 'bg-indigo-50 dark:bg-indigo-950/60',
+          accentBar: 'bg-indigo-500'
+        },
+        {
+          id: 'binary-game',
+          label: 'Binary Game',
+          icon: Gamepad2,
+          accentText: 'text-emerald-600 dark:text-emerald-400',
+          accentBg: 'bg-emerald-50 dark:bg-emerald-950/60',
+          accentBar: 'bg-emerald-500'
         }
       ]
     },
@@ -424,6 +442,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'dashboard', label: 'My Enrolled Courses & Progress', category: 'Learning', icon: UserCheck },
     { id: 'lab-sandbox', label: 'Cisco IOS CLI Terminal Simulator', category: 'Hands-on Labs', icon: Terminal },
     { id: 'subnet-calc', label: 'Subnetting & VLSM Architecture Calculator', category: 'Hands-on Labs', icon: Calculator },
+    { id: 'base-converter', label: 'Binary, Decimal & Hexadecimal Converter', category: 'Hands-on Labs', icon: Binary },
+    { id: 'binary-game', label: 'Binary Conversion Practice Game', category: 'Hands-on Labs', icon: Gamepad2 },
     { id: 'certificates', label: 'Verifiable Digital Credentials & Registry', category: 'Certificates', icon: Award },
     { id: 'forum', label: 'Network Engineers Discussion Forum', category: 'Community', icon: MessageSquare },
     { id: 'pricing', label: 'Subscription Tiers & Pro Checkout', category: 'Account', icon: CreditCard },

@@ -8,6 +8,8 @@ import { MyClassManager } from './components/Courses/MyClassManager';
 import { StudentDashboard } from './components/Dashboard/StudentDashboard';
 import { InteractiveCliTerminal } from './components/Lab/InteractiveCliTerminal';
 import { SubnettingCalculator } from './components/Lab/SubnettingCalculator';
+import { NumberBaseConverter } from './components/Lab/NumberBaseConverter';
+import { BinaryGame } from './components/Lab/BinaryGame';
 import { CertificateViewer } from './components/Certificates/CertificateViewer';
 import { ManagementPanel } from './components/Admin/ManagementPanel';
 import { AnalyticsDashboard } from './components/Admin/AnalyticsDashboard';
@@ -217,6 +219,16 @@ const AcademyApp: React.FC = () => {
         {/* Subnetting & VLSM Calculator */}
         {currentTab === 'subnet-calc' && (
           <SubnettingCalculator />
+        )}
+
+        {/* Binary, Decimal & Hexadecimal Base Converter */}
+        {currentTab === 'base-converter' && (
+          <NumberBaseConverter />
+        )}
+
+        {/* Binary Conversion Practice Game */}
+        {currentTab === 'binary-game' && (
+          <BinaryGame />
         )}
 
         {/* Discussion Forum */}
