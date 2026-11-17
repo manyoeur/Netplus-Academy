@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Award, 
   Download, 
@@ -6,14 +6,15 @@ import {
   CheckCircle2, 
   ShieldCheck, 
   Copy, 
-  QrCode, 
   Search, 
   Sparkles,
-  ExternalLink
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useAcademy } from '../../context/AcademyContext';
 import { Certificate } from '../../types';
+import { exportCertificateToPdf } from '../../utils/certificatePdf';
 
 interface CertificateViewerProps {
   certificate?: Certificate;
@@ -31,7 +32,17 @@ export const CertificateViewer: React.FC<CertificateViewerProps> = ({
   const [verifyQuery, setVerifyQuery] = useState('');
   const [verifyResult, setVerifyResult] = useState<Certificate | null | 'not_found'>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [pdfFeedback, setPdfFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const certRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (propCert) {
+      setSelectedCert(propCert);
+    } else if (!selectedCert && currentUser.certificates.length > 0) {
+      setSelectedCert(currentUser.certificates[0]);
+    }
+  }, [propCert, currentUser.certificates, selectedCert]);
 
   const triggerConfetti = () => {
     confetti({
@@ -43,6 +54,29 @@ export const CertificateViewer: React.FC<CertificateViewerProps> = ({
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleDownloadPdf = async (cert: Certificate) => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+    setPdfFeedback(null);
+    try {
+      const filename = await exportCertificateToPdf(cert);
+      setPdfFeedback({
+        type: 'success',
+        text: `Downloaded ${filename}`
+      });
+      window.setTimeout(() => {
+        setPdfFeedback((prev) => (prev?.type === 'success' ? null : prev));
+      }, 4000);
+    } catch (error) {
+      setPdfFeedback({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to export certificate PDF.'
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   const handleCopyVerification = (cert: Certificate) => {
@@ -112,30 +146,64 @@ export const CertificateViewer: React.FC<CertificateViewerProps> = ({
       {/* Certificate Display Area */}
       {selectedCert ? (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
-              <ShieldCheck className="w-4 h-4 text-emerald-500" />
+              <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
               <span>Cryptographically Secured • Serial: <code className="font-mono">{selectedCert.certificateNumber}</code></span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
+                type="button"
                 onClick={() => handleCopyVerification(selectedCert)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0"
               >
                 {copiedLink ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                 <span>{copiedLink ? 'Link Copied' : 'Share / Verify URL'}</span>
               </button>
 
               <button
+                type="button"
                 onClick={handlePrint}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-sm transition-all"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0"
               >
                 <Printer className="w-3.5 h-3.5" />
-                <span>Print / PDF Export</span>
+                <span>Print</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleDownloadPdf(selectedCert)}
+                disabled={isExportingPdf}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white shadow-sm transition-all whitespace-nowrap shrink-0"
+              >
+                {isExportingPdf ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                <span>{isExportingPdf ? 'Generating PDF...' : 'Download PDF'}</span>
               </button>
             </div>
           </div>
+
+          {pdfFeedback && (
+            <div
+              role="status"
+              className={`px-3.5 py-2 rounded-xl border text-xs font-medium flex items-center gap-2 ${
+                pdfFeedback.type === 'success'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                  : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+              }`}
+            >
+              {pdfFeedback.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+              )}
+              <span>{pdfFeedback.text}</span>
+            </div>
+          )}
 
           {/* The High-Fidelity Certificate Canvas / Card */}
           <div
