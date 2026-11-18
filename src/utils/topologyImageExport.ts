@@ -165,7 +165,7 @@ export function buildTopologySvgString(
     .join('\n');
 
   const deviceElements = devices
-    .map(dev => {
+    .map((dev, idx) => {
       const cx = dev.x;
       const cy = dev.y + headerH;
 
@@ -192,7 +192,7 @@ export function buildTopologySvgString(
       return `
         <g transform="translate(${cx.toFixed(1)}, ${cy.toFixed(1)})">
           <g transform="${rotation ? `rotate(${rotation.toFixed(1)}) ` : ''}translate(${(-32 * iconScale).toFixed(1)}, ${(-28 * iconScale).toFixed(1)}) scale(${iconScale})">
-            ${getCiscoDeviceInnerSvg(dev.type)}
+            ${getCiscoDeviceInnerSvg(dev.type, `exp_${idx}`)}
           </g>
           <g transform="translate(${labelOffsetX.toFixed(1)}, ${labelOffsetY.toFixed(1)})">
             <rect

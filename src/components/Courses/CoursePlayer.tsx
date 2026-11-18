@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   ArrowLeft,
   CheckCircle,
-  Play,
   ChevronRight,
   ChevronLeft,
   ChevronDown,
@@ -25,14 +24,23 @@ import {
   Activity,
   ChevronUp,
   BookOpen,
-  CheckCircle2
+  CheckCircle2,
+  Plus,
+  SquareStack
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course } from '../../types';
 import { InteractiveCliTerminal } from '../Lab/InteractiveCliTerminal';
 import { CourseThumbnail } from './CourseThumbnail';
 import { InteractiveQuiz, QuizResult } from './InteractiveQuiz';
-import { getBetweenModuleQuiz, getModuleQuiz } from '../../data/checkpointQuizzes';
+import { VideoLecturePlayer } from './VideoLecturePlayer';
+import { PostModuleQuiz } from './PostModuleQuiz';
+import { PersonalFlashcardModal } from '../Flashcards/PersonalFlashcardModal';
+import {
+  getBetweenModuleQuiz,
+  getModuleQuiz,
+  getPostVideoModuleQuiz
+} from '../../data/checkpointQuizzes';
 import {
   resolveCourseHierarchy,
   getModuleSectionBreadcrumb
@@ -118,6 +126,33 @@ function writeCheckpointStore(userId: string, store: CheckpointStore): void {
   }
 }
 
+type WatchedVideosStore = Record<string, Record<string, boolean>>;
+
+const WATCHED_VIDEOS_STORAGE_PREFIX = 'netpulse_academy_watched_videos_v1';
+
+function getWatchedVideosStorageKey(userId: string): string {
+  return `${WATCHED_VIDEOS_STORAGE_PREFIX}:${userId}`;
+}
+
+function readWatchedVideosStore(userId: string): WatchedVideosStore {
+  try {
+    const raw = localStorage.getItem(getWatchedVideosStorageKey(userId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeWatchedVideosStore(userId: string, store: WatchedVideosStore): void {
+  try {
+    localStorage.setItem(getWatchedVideosStorageKey(userId), JSON.stringify(store));
+  } catch {
+    // Ignore localStorage quota or private-mode errors
+  }
+}
+
 export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   courseId,
   onBack,
@@ -125,7 +160,16 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   onOpenPricing,
   onOpenCourseCheckout
 }) => {
-  const { courses, currentUser, completeModule, updateStudentQuizAverage, enrollInCourse } = useAcademy();
+  const {
+    courses,
+    currentUser,
+    completeModule,
+    updateStudentQuizAverage,
+    enrollInCourse,
+    recordStudyTime,
+    personalFlashcards,
+    savePersonalFlashcard
+  } = useAcademy();
   const course = courses.find(c => c.id === courseId) || courses[0];
 
   const [readingStore, setReadingStore] = useState<ReadingStore>(() =>
@@ -202,6 +246,13 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const [checkpointStore, setCheckpointStore] = useState<CheckpointStore>(() =>
     readCheckpointStore(currentUser.id)
   );
+  const [watchedVideosStore, setWatchedVideosStore] = useState<WatchedVideosStore>(() =>
+    readWatchedVideosStore(currentUser.id)
+  );
+  const [postQuizModalModuleIndex, setPostQuizModalModuleIndex] = useState<number | null>(null);
+  const [instructorMasteryBypass, setInstructorMasteryBypass] = useState<boolean>(false);
+  const [isFlashcardModalOpen, setIsFlashcardModalOpen] = useState<boolean>(false);
+  const [flashcardSavedToast, setFlashcardSavedToast] = useState<string | null>(null);
   const [liveQuizProgress, setLiveQuizProgress] = useState<{
     quizKey: string;
     answeredCount: number;
@@ -227,6 +278,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     const freshStore = readReadingStore(currentUser.id);
     setReadingStore(freshStore);
     setCheckpointStore(readCheckpointStore(currentUser.id));
+    setWatchedVideosStore(readWatchedVideosStore(currentUser.id));
+    setPostQuizModalModuleIndex(null);
+    setInstructorMasteryBypass(false);
     setPlayerMode('study');
     setQuizOrigin('manual');
     setLiveQuizProgress(null);
@@ -482,6 +536,63 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     [course]
   );
 
+  const postVideoQuizzes = useMemo(
+    () =>
+      course.modules.map((mod, idx) =>
+        mod.type === 'video' ? getPostVideoModuleQuiz(course, mod, idx) : null
+      ),
+    [course]
+  );
+
+  // Determine whether any earlier video lecture in this course has an unpassed mastery quiz
+  const getBlockingVideoForModule = useCallback(
+    (targetIdx: number) => {
+      const courseCheckpoints = checkpointStore[course.id] || {};
+      for (let i = 0; i < targetIdx; i++) {
+        const mod = course.modules[i];
+        if (!mod || mod.type !== 'video') continue;
+        const vQuiz = postVideoQuizzes[i] || moduleQuizzes[i];
+        if (vQuiz && !courseCheckpoints[vQuiz.id]?.passed) {
+          return {
+            moduleIndex: i,
+            module: mod,
+            quiz: vQuiz
+          };
+        }
+      }
+      return null;
+    },
+    [checkpointStore, course.id, course.modules, moduleQuizzes, postVideoQuizzes]
+  );
+
+  const activeBlockingVideo = useMemo(
+    () => getBlockingVideoForModule(activeModuleIndex),
+    [activeModuleIndex, getBlockingVideoForModule]
+  );
+
+  const isViewingMasteryLocked =
+    !isViewingLockedContent &&
+    Boolean(activeBlockingVideo) &&
+    !(currentUser.role !== 'student' && instructorMasteryBypass);
+
+  const markVideoWatched = useCallback(
+    (targetCourseId: string, targetModuleId: string) => {
+      setWatchedVideosStore(prev => {
+        if (prev[targetCourseId]?.[targetModuleId]) return prev;
+        const next: WatchedVideosStore = {
+          ...prev,
+          [targetCourseId]: {
+            ...(prev[targetCourseId] || {}),
+            [targetModuleId]: true
+          }
+        };
+        writeWatchedVideosStore(currentUser.id, next);
+        return next;
+      });
+    },
+    [currentUser.id]
+  );
+
   const activeModuleQuiz = moduleQuizzes[activeModuleIndex] || null;
   const activeQuizKey =
     activeModule && activeModuleQuiz
@@ -612,7 +723,20 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       return;
     }
 
+    if (isViewingMasteryLocked && activeBlockingVideo) {
+      setPostQuizModalModuleIndex(activeBlockingVideo.moduleIndex);
+      return;
+    }
+
     if (playerMode === 'quiz') {
+      if (activeModule.type === 'video' && activeModuleQuiz) {
+        const videoPassed = Boolean(checkpointStore[course.id]?.[activeModuleQuiz.id]?.passed);
+        if (!videoPassed && !(currentUser.role !== 'student' && instructorMasteryBypass)) {
+          setPostQuizModalModuleIndex(activeModuleIndex);
+          return;
+        }
+      }
+
       const nextIdx = activeModuleIndex + 1;
       if (nextIdx < course.modules.length) {
         setActiveModuleIndex(nextIdx);
@@ -632,6 +756,28 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     }
 
     flushCurrentModuleProgress();
+
+    // Video lecture mastery gate: require passing the post-module quiz before marking complete or advancing
+    if (activeModule.type === 'video') {
+      const videoQuiz = postVideoQuizzes[activeModuleIndex] || activeModuleQuiz;
+      const isVideoMastered = videoQuiz
+        ? Boolean(checkpointStore[course.id]?.[videoQuiz.id]?.passed)
+        : false;
+
+      if (!isVideoMastered && !(currentUser.role !== 'student' && instructorMasteryBypass)) {
+        setPostQuizModalModuleIndex(activeModuleIndex);
+        return;
+      }
+
+      completeModule(course.id, activeModule.id);
+      if (activeModuleIndex < course.modules.length - 1) {
+        setActiveModuleIndex(prev => prev + 1);
+      } else if (progressPercent === 100) {
+        onViewCertificates();
+      }
+      return;
+    }
+
     completeModule(course.id, activeModule.id);
 
     if (activeModuleIndex < course.modules.length - 1) {
@@ -741,6 +887,23 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               </span>
             </button>
           </div>
+
+          {!isViewingLockedContent && (
+            <button
+              type="button"
+              onClick={() => setIsFlashcardModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-blue-400 dark:hover:border-cyan-500 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              title="Create a personal flashcard tagged to this course and module"
+            >
+              <Plus className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+              <span>Flashcard</span>
+              {personalFlashcards.filter(c => c.courseId === course.id).length > 0 && (
+                <span className="font-mono text-[10px] tabular-nums text-blue-600 dark:text-cyan-400">
+                  ({personalFlashcards.filter(c => c.courseId === course.id).length})
+                </span>
+              )}
+            </button>
+          )}
 
           <div className="w-36 hidden sm:block text-right">
             <div className="flex justify-between text-[11px] font-mono tabular-nums font-bold text-slate-500 mb-1">
@@ -886,6 +1049,11 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                       : undefined;
                                     const isQuizActive =
                                       playerMode === 'quiz' && idx === activeModuleIndex;
+                                    const modBlockingVideo = getBlockingVideoForModule(idx);
+                                    const isModMasteryLocked =
+                                      Boolean(modBlockingVideo) &&
+                                      !(isStudentPaymentRequired && idx > 0) &&
+                                      !(currentUser.role !== 'student' && instructorMasteryBypass);
 
                                     const ModTypeIcon =
                                       m.type === 'lab'
@@ -906,12 +1074,16 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                           className={`w-full px-2.5 py-2 rounded-lg text-left transition-colors flex items-start gap-2.5 ${
                                             isActive
                                               ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold'
+                                              : isModMasteryLocked
+                                              ? 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/40'
                                               : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
                                           }`}
                                         >
                                           <div className="mt-0.5 shrink-0">
                                             {isDone ? (
                                               <CheckCircle className="w-4 h-4 text-emerald-500" />
+                                            ) : isModMasteryLocked ? (
+                                              <Lock className="w-4 h-4 text-amber-500" />
                                             ) : (
                                               <ModTypeIcon
                                                 className={`w-4 h-4 ${
@@ -930,26 +1102,41 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                               </span>
                                               {m.title}
                                             </p>
-                                            {!isDone && savedModPercent > 0 && (
+                                            {isModMasteryLocked && modBlockingVideo ? (
+                                              <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 block mt-0.5">
+                                                Pass M{modBlockingVideo.moduleIndex + 1} quiz to unlock
+                                              </span>
+                                            ) : !isDone && savedModPercent > 0 ? (
                                               <span className="text-[10px] font-mono tabular-nums text-blue-600 dark:text-cyan-400 block mt-0.5">
                                                 {savedModPercent}% read
                                               </span>
-                                            )}
+                                            ) : null}
                                           </div>
 
-                                          {isStudentPaymentRequired && idx > 0 && (
+                                          {isStudentPaymentRequired && idx > 0 ? (
                                             <Lock
                                               className="w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-400 dark:text-slate-500"
                                               aria-label="Payment required"
                                             />
-                                          )}
+                                          ) : isModMasteryLocked ? (
+                                            <Lock
+                                              className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-500"
+                                              aria-label="Mastery check required"
+                                            />
+                                          ) : null}
                                         </button>
 
                                         {/* Per-Module Quiz Mode Trigger */}
                                         {modQuiz && m.type !== 'quiz' && (
                                           <button
                                             type="button"
-                                            onClick={() => handleOpenModuleQuiz(idx, 'manual')}
+                                            onClick={() => {
+                                              if (m.type === 'video' && !isModMasteryLocked) {
+                                                setPostQuizModalModuleIndex(idx);
+                                              } else {
+                                                handleOpenModuleQuiz(idx, 'manual');
+                                              }
+                                            }}
                                             className={`w-full px-2.5 py-1.5 rounded-lg text-left transition-colors flex items-center justify-between gap-2 ${
                                               isQuizActive
                                                 ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-900 dark:text-cyan-200 font-semibold'
@@ -1149,7 +1336,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           )}
 
           {/* Reading Progress & Resume Banner (shown in Study Mode for unlocked modules) */}
-          {playerMode === 'study' && !isViewingLockedContent && (
+          {playerMode === 'study' && !isViewingLockedContent && !isViewingMasteryLocked && (
             <div className="px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 min-w-0">
@@ -1277,6 +1464,64 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 </button>
               </div>
             </div>
+          ) : isViewingMasteryLocked && activeBlockingVideo ? (
+            /* Post-Video Lecture Mastery Gate */
+            <div className="p-6 sm:p-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm text-center space-y-5">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                <Lock className="w-6 h-6" />
+              </div>
+
+              <div className="max-w-lg mx-auto space-y-2">
+                <p className="text-[11px] font-mono font-bold text-amber-700 dark:text-amber-300">
+                  Module {activeBlockingVideo.moduleIndex + 1} Mastery Gate · Required Score{' '}
+                  {activeBlockingVideo.quiz?.passingScore ?? 75}%+
+                </p>
+                <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white">
+                  Complete the Post-Lecture Quiz to Unlock Module {activeModuleIndex + 1}
+                </h2>
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Before advancing to <strong>{activeModule.title}</strong>, verify your understanding of{' '}
+                  <strong>{activeBlockingVideo.module.title}</strong> by passing its post-module mastery check.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveModuleIndex(activeBlockingVideo.moduleIndex);
+                    setPlayerMode('study');
+                    setPostQuizModalModuleIndex(activeBlockingVideo.moduleIndex);
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-sm flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <CheckSquare className="w-4 h-4" />
+                  <span>Take Module {activeBlockingVideo.moduleIndex + 1} Mastery Quiz</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlayerMode('study');
+                    setQuizOrigin('manual');
+                    setActiveModuleIndex(activeBlockingVideo.moduleIndex);
+                  }}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
+                >
+                  Rewatch Video Lecture
+                </button>
+
+                {currentUser.role !== 'student' && (
+                  <button
+                    type="button"
+                    onClick={() => setInstructorMasteryBypass(true)}
+                    className="px-3.5 py-2.5 rounded-xl text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+                  >
+                    Instructor Preview Bypass
+                  </button>
+                )}
+              </div>
+            </div>
           ) : playerMode === 'quiz' && activeModuleQuiz ? (
             <div className="space-y-4">
               {/* Quiz Mode Mastery Header & Per-Module Selector Strip */}
@@ -1354,7 +1599,10 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                     const qConfig = moduleQuizzes[idx];
                     const res = qConfig ? checkpointStore[course.id]?.[qConfig.id] : undefined;
                     const isSelected = idx === activeModuleIndex;
-                    const isLocked = isStudentPaymentRequired && idx > 0;
+                    const modBlocked =
+                      Boolean(getBlockingVideoForModule(idx)) &&
+                      !(currentUser.role !== 'student' && instructorMasteryBypass);
+                    const isLocked = (isStudentPaymentRequired && idx > 0) || modBlocked;
 
                     return (
                       <button
@@ -1401,6 +1649,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 passingScore={activeModuleQuiz.passingScore}
                 mode="quiz-mode"
                 allowModeToggle={true}
+                requirePassToContinue={activeModule.type === 'video'}
                 previousModuleTitle={activeModule.title}
                 onProgressChange={handleActiveQuizProgressChange}
                 nextModuleTitle={
@@ -1421,13 +1670,16 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
                 onComplete={(result) => {
                   saveQuizResult(activeModuleQuiz.id, result);
+                  recordStudyTime(30, 'course', activeModule.id);
                   if (result.passed && !isStudentPaymentRequired) {
                     completeModule(course.id, activeModule.id);
                   }
                 }}
                 onContinue={handleNextModule}
                 onSkip={
-                  quizOrigin === 'next-step' && activeModuleIndex < course.modules.length - 1
+                  quizOrigin === 'next-step' &&
+                  activeModule.type !== 'video' &&
+                  activeModuleIndex < course.modules.length - 1
                     ? () => {
                         setPlayerMode('study');
                         setQuizOrigin('manual');
@@ -1456,34 +1708,34 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             </div>
           )}
 
-          {/* Video Module */}
+          {/* Video Module with Interactive Player & Automatic Post-Module Mastery Quiz */}
           {activeModule.type === 'video' && (
-            <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-              <h1 className="text-xl font-extrabold text-slate-900 dark:text-white">
-                {activeModule.title}
-              </h1>
-
-              {/* Video Player Frame */}
-              <div className="relative aspect-video w-full rounded-2xl bg-slate-950 border border-slate-800 overflow-hidden flex items-center justify-center">
-                <div className="text-center p-6 space-y-3">
-                  <div className="w-16 h-16 mx-auto rounded-full bg-blue-600/80 hover:bg-blue-600 text-white flex items-center justify-center cursor-pointer shadow-lg shadow-blue-500/30 transition-transform hover:scale-105">
-                    <Play className="w-8 h-8 ml-1" />
-                  </div>
-                  <p className="text-xs text-slate-300 font-medium">
-                    Video Walkthrough • Duration: {activeModule.videoDuration || '22:15'}
-                  </p>
-                  <p className="text-[11px] text-slate-500 font-mono">
-                    High-Definition 1080p60 • Stream Encrypted
-                  </p>
-                </div>
-              </div>
-
-              {activeModule.contentMarkdown && (
-                <div className="text-xs text-slate-600 dark:text-slate-300 pt-3 border-t border-slate-100 dark:border-slate-800 whitespace-pre-wrap">
-                  {activeModule.contentMarkdown}
-                </div>
+            <VideoLecturePlayer
+              courseId={course.id}
+              module={activeModule}
+              moduleIndex={activeModuleIndex}
+              passingScore={
+                (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)?.passingScore ?? 75
+              }
+              isQuizPassed={Boolean(
+                (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) &&
+                  checkpointStore[course.id]?.[
+                    (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)!.id
+                  ]?.passed
               )}
-            </div>
+              hasWatchedVideo={Boolean(watchedVideosStore[course.id]?.[activeModule.id])}
+              nextModuleTitle={
+                activeModuleIndex < course.modules.length - 1
+                  ? course.modules[activeModuleIndex + 1]?.title
+                  : undefined
+              }
+              onLectureCompleted={() => {
+                markVideoWatched(course.id, activeModule.id);
+                setPostQuizModalModuleIndex(activeModuleIndex);
+              }}
+              onOpenPostQuiz={() => setPostQuizModalModuleIndex(activeModuleIndex)}
+              onStudyTimeTick={(seconds, modId) => recordStudyTime(seconds, 'course', modId)}
+            />
           )}
 
           {/* Lab Module (Cisco IOS Terminal + Topology) */}
@@ -1635,13 +1887,21 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => handleOpenModuleQuiz(activeModuleIndex, 'manual')}
+                    onClick={() => {
+                      if (activeModule.type === 'video') {
+                        setPostQuizModalModuleIndex(activeModuleIndex);
+                      } else {
+                        handleOpenModuleQuiz(activeModuleIndex, 'manual');
+                      }
+                    }}
                     className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200 dark:border-cyan-800 bg-white dark:bg-slate-800 text-xs font-semibold text-blue-700 dark:text-cyan-300 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   >
                     <CheckSquare className="w-3.5 h-3.5" />
                     <span>
                       {checkpointStore[course.id]?.[activeModuleQuiz.id]
-                        ? 'Retake in Quiz Mode'
+                        ? 'Retake Post-Module Quiz'
+                        : activeModule.type === 'video'
+                        ? 'Start Post-Lecture Quiz'
                         : 'Test in Quiz Mode'}
                     </span>
                   </button>
@@ -1651,7 +1911,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           )}
 
           {/* Bottom Next/Previous Step Bar */}
-          {!isViewingLockedContent && (
+          {!isViewingLockedContent && !isViewingMasteryLocked && (
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
@@ -1671,11 +1931,17 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 {playerMode === 'study' && activeModule.type !== 'quiz' && activeModuleQuiz && (
                   <button
                     type="button"
-                    onClick={() => handleOpenModuleQuiz(activeModuleIndex, 'manual')}
+                    onClick={() => {
+                      if (activeModule.type === 'video') {
+                        setPostQuizModalModuleIndex(activeModuleIndex);
+                      } else {
+                        handleOpenModuleQuiz(activeModuleIndex, 'manual');
+                      }
+                    }}
                     className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   >
                     <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-                    <span>Module Quiz</span>
+                    <span>{activeModule.type === 'video' ? 'Mastery Quiz' : 'Module Quiz'}</span>
                   </button>
                 )}
 
@@ -1693,6 +1959,14 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                         : progressPercent === 100
                         ? 'Finish & View Certificate'
                         : 'Return to Study Mode'
+                      : activeModule.type === 'video' &&
+                        !(
+                          (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) &&
+                          checkpointStore[course.id]?.[
+                            (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)!.id
+                          ]?.passed
+                        )
+                      ? 'Take Quiz to Unlock Next'
                       : activeModuleIndex === course.modules.length - 1
                       ? 'Finish & Generate Certificate'
                       : 'Complete & Next Module'}
@@ -1705,6 +1979,78 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
         </div>
 
       </div>
+
+      {/* Automatic Post-Module Mastery Quiz Overlay */}
+      {postQuizModalModuleIndex !== null &&
+        course.modules[postQuizModalModuleIndex] &&
+        course.modules[postQuizModalModuleIndex].type === 'video' &&
+        (postVideoQuizzes[postQuizModalModuleIndex] || moduleQuizzes[postQuizModalModuleIndex]) && (
+          <PostModuleQuiz
+            courseId={course.id}
+            videoModule={course.modules[postQuizModalModuleIndex]}
+            moduleIndex={postQuizModalModuleIndex}
+            totalModules={course.modules.length}
+            quiz={(postVideoQuizzes[postQuizModalModuleIndex] || moduleQuizzes[postQuizModalModuleIndex])!}
+            nextModule={
+              postQuizModalModuleIndex < course.modules.length - 1
+                ? course.modules[postQuizModalModuleIndex + 1]
+                : undefined
+            }
+            previousResult={
+              checkpointStore[course.id]?.[
+                (postVideoQuizzes[postQuizModalModuleIndex] || moduleQuizzes[postQuizModalModuleIndex])!.id
+              ] || null
+            }
+            allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
+            onComplete={(result) => {
+              const targetModule = course.modules[postQuizModalModuleIndex];
+              const targetQuiz =
+                postVideoQuizzes[postQuizModalModuleIndex] || moduleQuizzes[postQuizModalModuleIndex];
+              if (targetQuiz) {
+                saveQuizResult(targetQuiz.id, result);
+              }
+              recordStudyTime(30, 'course', targetModule.id);
+              if (result.passed && !isStudentPaymentRequired) {
+                completeModule(course.id, targetModule.id);
+              }
+            }}
+            onUnlockAndContinue={() => {
+              const completedIdx = postQuizModalModuleIndex;
+              setPostQuizModalModuleIndex(null);
+              if (completedIdx < course.modules.length - 1) {
+                setPlayerMode('study');
+                setQuizOrigin('manual');
+                setActiveModuleIndex(completedIdx + 1);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              } else if (progressPercent === 100) {
+                onViewCertificates();
+              }
+            }}
+            onClose={() => setPostQuizModalModuleIndex(null)}
+          />
+        )}
+
+      {/* Quick Course-Tagged Flashcard Toast */}
+      {flashcardSavedToast && (
+        <div className="fixed bottom-5 right-5 z-40 px-4 py-2.5 rounded-xl bg-slate-900 dark:bg-slate-800 text-white border border-slate-700 shadow-xl flex items-center gap-2 text-xs font-semibold">
+          <SquareStack className="w-4 h-4 text-cyan-400 shrink-0" />
+          <span>{flashcardSavedToast}</span>
+        </div>
+      )}
+
+      {/* Quick Personal Flashcard Creation Modal (Pre-tagged to Active Course & Module) */}
+      <PersonalFlashcardModal
+        isOpen={isFlashcardModalOpen}
+        courses={courses}
+        defaultCourseId={course.id}
+        defaultModuleId={activeModule?.id}
+        onSave={(input) => {
+          const saved = savePersonalFlashcard(input);
+          setFlashcardSavedToast(`Saved "${saved.term}" to ${course.code} flashcards`);
+          window.setTimeout(() => setFlashcardSavedToast(null), 3200);
+        }}
+        onClose={() => setIsFlashcardModalOpen(false)}
+      />
     </div>
   );
 };

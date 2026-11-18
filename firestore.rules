@@ -293,5 +293,173 @@ service cloud.firestore {
         && isVerified()
         && isOwner(existing().ownerUid);
     }
+
+    function isValidLearningStreak(data) {
+      return data.keys().hasAll([
+          'uid', 'activeDates', 'currentStreak', 'longestStreak',
+          'lastActiveDate', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'activeDates', 'currentStreak', 'longestStreak',
+          'lastActiveDate', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.activeDates is list
+        && data.activeDates.size() <= 365
+        && (data.activeDates.size() == 0 || (data.activeDates[0] is string && data.activeDates[0].size() == 10))
+        && data.currentStreak is int && data.currentStreak >= 0 && data.currentStreak <= 3650
+        && data.longestStreak is int && data.longestStreak >= 0 && data.longestStreak <= 3650
+        && data.lastActiveDate is string && data.lastActiveDate.size() <= 16
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /learningStreaks/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+
+      allow create: if isValidId(userId)
+        && isVerified()
+        && isOwner(userId)
+        && isValidLearningStreak(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isVerified()
+        && isOwner(userId)
+        && isValidLearningStreak(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'activeDates', 'currentStreak', 'longestStreak', 'lastActiveDate', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    function isValidStudyGoal(data) {
+      return data.keys().hasAll([
+          'uid', 'dailyGoalMinutes', 'dateKey', 'courseSeconds',
+          'labSeconds', 'practiceSeconds', 'creditedModuleIds',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'dailyGoalMinutes', 'dateKey', 'courseSeconds',
+          'labSeconds', 'practiceSeconds', 'creditedModuleIds',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.dailyGoalMinutes is int && data.dailyGoalMinutes >= 5 && data.dailyGoalMinutes <= 300
+        && data.dateKey is string && data.dateKey.size() == 10
+        && data.courseSeconds is int && data.courseSeconds >= 0 && data.courseSeconds <= 86400
+        && data.labSeconds is int && data.labSeconds >= 0 && data.labSeconds <= 86400
+        && data.practiceSeconds is int && data.practiceSeconds >= 0 && data.practiceSeconds <= 86400
+        && data.creditedModuleIds is list
+        && data.creditedModuleIds.size() <= 100
+        && (data.creditedModuleIds.size() == 0 || (data.creditedModuleIds[0] is string && data.creditedModuleIds[0].size() <= 128))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /studyGoals/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+
+      allow create: if isValidId(userId)
+        && isVerified()
+        && isOwner(userId)
+        && isValidStudyGoal(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isVerified()
+        && isOwner(userId)
+        && isValidStudyGoal(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'dailyGoalMinutes', 'dateKey', 'courseSeconds', 'labSeconds',
+          'practiceSeconds', 'creditedModuleIds', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    function isValidPersonalFlashcard(data) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'courseId', 'category', 'term',
+          'question', 'answer', 'masteryStatus', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerUid', 'courseId', 'courseCode', 'courseTitle',
+          'moduleId', 'moduleTitle', 'category', 'term', 'question',
+          'answer', 'portNumber', 'transportProtocol', 'osiLayer',
+          'explanation', 'memoryTip', 'masteryStatus', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && isValidId(data.courseId)
+        && (!('courseCode' in data) || (data.courseCode is string && data.courseCode.size() <= 64))
+        && (!('courseTitle' in data) || (data.courseTitle is string && data.courseTitle.size() <= 200))
+        && (!('moduleId' in data) || isValidId(data.moduleId))
+        && (!('moduleTitle' in data) || (data.moduleTitle is string && data.moduleTitle.size() <= 200))
+        && data.category is string && data.category in ['Terminology', 'Protocol', 'Port Number', 'Architecture']
+        && data.term is string && data.term.size() >= 1 && data.term.size() <= 140
+        && data.question is string && data.question.size() >= 1 && data.question.size() <= 600
+        && data.answer is string && data.answer.size() >= 1 && data.answer.size() <= 800
+        && (!('portNumber' in data) || (data.portNumber is string && data.portNumber.size() <= 40))
+        && (!('transportProtocol' in data) || (data.transportProtocol is string && data.transportProtocol.size() <= 40))
+        && (!('osiLayer' in data) || (data.osiLayer is string && data.osiLayer.size() <= 64))
+        && (!('explanation' in data) || (data.explanation is string && data.explanation.size() <= 1200))
+        && (!('memoryTip' in data) || (data.memoryTip is string && data.memoryTip.size() <= 600))
+        && data.masteryStatus is string && data.masteryStatus in ['unreviewed', 'mastered', 'review']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /personalFlashcards/{cardId} {
+      allow get: if isValidId(cardId)
+        && isVerified()
+        && (resource == null || isOwner(existing().ownerUid));
+
+      allow list: if isVerified()
+        && resource.data.ownerUid == request.auth.uid;
+
+      allow create: if isValidId(cardId)
+        && isVerified()
+        && isValidPersonalFlashcard(incoming())
+        && incoming().id == cardId
+        && incoming().ownerUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(cardId)
+        && isVerified()
+        && isValidPersonalFlashcard(incoming())
+        && isOwner(existing().ownerUid)
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'courseId', 'courseCode', 'courseTitle', 'moduleId', 'moduleTitle',
+          'category', 'term', 'question', 'answer', 'portNumber',
+          'transportProtocol', 'osiLayer', 'explanation', 'memoryTip',
+          'masteryStatus', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(cardId)
+        && isVerified()
+        && isOwner(existing().ownerUid);
+    }
   }
 }

@@ -7,22 +7,39 @@ export type SimCliMode =
   | 'privileged'
   | 'global'
   | 'interface'
+  | 'interface_range'
   | 'router_ospf'
-  | 'vlan_db';
+  | 'vlan_db'
+  | 'line';
+
+export interface SimPortSecurityConfig {
+  enabled: boolean;
+  maximum: number;
+  violation: 'protect' | 'restrict' | 'shutdown';
+  sticky: boolean;
+}
 
 export interface SimDeviceInterface {
   name: string;
   shortName: string;
-  kind: 'ethernet' | 'fiber' | 'serial' | 'subinterface';
+  kind: 'ethernet' | 'fiber' | 'serial' | 'subinterface' | 'loopback' | 'svi';
   ip: string;
   mask: string;
   adminUp: boolean;
   mac: string;
   description?: string;
+  duplex?: 'auto' | 'full' | 'half';
+  speed?: 'auto' | '10' | '100' | '1000';
+  bandwidth?: number;
+  clockRate?: number;
   // Switchport fields (for switches)
   switchportMode?: 'access' | 'trunk';
   accessVlan?: number;
+  trunkNativeVlan?: number;
   trunkAllowedVlans?: number[];
+  portfast?: boolean;
+  bpduGuard?: boolean;
+  portSecurity?: SimPortSecurityConfig;
   // Router-on-a-stick dot1Q tag (for subinterfaces like GigabitEthernet0/0.10)
   dot1qVlan?: number;
   parentInterface?: string;
@@ -44,11 +61,24 @@ export interface SimOspfConfig {
   processId: string;
   routerId: string;
   networks: SimOspfNetwork[];
+  passiveInterfaces?: string[];
+  passiveDefault?: boolean;
+  defaultInformationOriginate?: boolean;
+  referenceBandwidth?: number;
 }
 
 export interface SimVlanEntry {
   id: number;
   name: string;
+}
+
+export interface SimLineSettings {
+  password?: string;
+  login?: boolean;
+  loginLocal?: boolean;
+  transportInput?: string;
+  execTimeout?: string;
+  loggingSync?: boolean;
 }
 
 export interface SimDevice {
@@ -64,13 +94,29 @@ export interface SimDevice {
   interfaces: SimDeviceInterface[];
   gateway?: string;
   dns?: string;
+  defaultGateway?: string;
   staticRoutes: SimStaticRoute[];
   ospf?: SimOspfConfig;
   vlans: SimVlanEntry[];
   cliHistory: string[];
   cliMode: SimCliMode;
   activeInterfaceName?: string;
+  activeInterfaceRange?: string[];
   activeVlanId?: number;
+  activeLine?: 'console' | 'vty';
+  bannerMotd?: string;
+  enableSecret?: string;
+  servicePasswordEncryption?: boolean;
+  ipDomainLookup?: boolean;
+  domainName?: string;
+  nameServer?: string;
+  users?: Array<{ username: string; secret: string }>;
+  lineConfig?: {
+    console?: SimLineSettings;
+    vty?: SimLineSettings;
+  };
+  startupConfigLines?: string[];
+  startupConfigSavedAt?: string;
 }
 
 export interface SimLink {

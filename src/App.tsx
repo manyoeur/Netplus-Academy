@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AcademyProvider, useAcademy } from './context/AcademyContext';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
@@ -10,6 +10,7 @@ import { NetworkTopologySimulator } from './components/Lab/NetworkTopologySimula
 import { SubnettingCalculator } from './components/Lab/SubnettingCalculator';
 import { NumberBaseConverter } from './components/Lab/NumberBaseConverter';
 import { BinaryGame } from './components/Lab/BinaryGame';
+import { FlashcardDeckView } from './components/Flashcards/FlashcardDeckView';
 import { CertificateViewer } from './components/Certificates/CertificateViewer';
 import { ManagementPanel } from './components/Admin/ManagementPanel';
 import { AnalyticsDashboard } from './components/Admin/AnalyticsDashboard';
@@ -25,7 +26,15 @@ import { WifiOff, Network } from 'lucide-react';
 type ManagementSubTab = 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students';
 
 const AcademyApp: React.FC = () => {
-  const { currentUser, isOffline, toggleManualOfflineSim, courses, isAuthenticated, authReady } = useAcademy();
+  const {
+    currentUser,
+    isOffline,
+    toggleManualOfflineSim,
+    courses,
+    isAuthenticated,
+    authReady,
+    recordStudyTime,
+  } = useAcademy();
 
   const [currentTab, setCurrentTab] = useState<string>('courses');
   const [managementSubTab, setManagementSubTab] = useState<ManagementSubTab>('courses');
@@ -61,6 +70,53 @@ const AcademyApp: React.FC = () => {
     setActiveCourseId(courseId);
     setCurrentTab('player');
   };
+
+  // Track active study seconds when interacting with course content, lab simulator, or practice tools
+  const lastInteractionAtRef = useRef<number>(Date.now());
+  const recordStudyTimeRef = useRef(recordStudyTime);
+  useEffect(() => {
+    recordStudyTimeRef.current = recordStudyTime;
+  }, [recordStudyTime]);
+
+  useEffect(() => {
+    const markActive = () => {
+      lastInteractionAtRef.current = Date.now();
+    };
+    window.addEventListener('pointerdown', markActive, { passive: true });
+    window.addEventListener('keydown', markActive, { passive: true });
+    window.addEventListener('scroll', markActive, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', markActive);
+      window.removeEventListener('keydown', markActive);
+      window.removeEventListener('scroll', markActive);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const studySource =
+      currentTab === 'player'
+        ? 'course'
+        : currentTab === 'lab-sandbox'
+        ? 'lab'
+        : currentTab === 'subnet-calc' ||
+          currentTab === 'base-converter' ||
+          currentTab === 'binary-game' ||
+          currentTab === 'flashcard'
+        ? 'practice'
+        : null;
+
+    if (!studySource) return;
+    lastInteractionAtRef.current = Date.now();
+
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastInteractionAtRef.current > 90000) return;
+      recordStudyTimeRef.current(5, studySource);
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [isAuthenticated, currentTab]);
 
   if (!authReady) {
     return (
@@ -212,6 +268,11 @@ const AcademyApp: React.FC = () => {
         {/* Binary Conversion Practice Game */}
         {currentTab === 'binary-game' && (
           <BinaryGame />
+        )}
+
+        {/* AI Networking Flashcards */}
+        {currentTab === 'flashcard' && (
+          <FlashcardDeckView />
         )}
 
         {/* Discussion Forum */}

@@ -26,7 +26,7 @@ export const InteractiveCliTerminal: React.FC<InteractiveCliTerminalProps> = ({
   courseId,
   onCompleted
 }) => {
-  const { completeModule } = useAcademy();
+  const { completeModule, recordStudyTime } = useAcademy();
   const labData = module.lab;
 
   // Terminal state
@@ -74,6 +74,7 @@ export const InteractiveCliTerminal: React.FC<InteractiveCliTerminalProps> = ({
     if (!cmd) return;
 
     const lowerCmd = cmd.toLowerCase();
+    recordStudyTime(15, 'course');
     const newHistory = [...history, `${currentPrompt} ${cmd}`];
     setCommandLog(prev => [...prev, cmd]);
     setInputVal('');

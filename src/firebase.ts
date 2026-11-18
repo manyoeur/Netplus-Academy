@@ -12,7 +12,8 @@ import {
   collection,
   query,
   where,
-  serverTimestamp
+  serverTimestamp,
+  deleteField
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 import {
@@ -28,6 +29,22 @@ import {
   sanitizeLabId,
   sanitizeLinksForStorage
 } from './utils/labPersistence';
+import {
+  LearningStreakData,
+  computeLearningStreak,
+  sanitizeActiveDates
+} from './utils/learningStreak';
+import {
+  DailyStudyGoalData,
+  clampGoalMinutes,
+  normalizeStudyGoalData
+} from './utils/studyGoal';
+import { PersonalFlashcard } from './components/Flashcards/flashcardTypes';
+import {
+  normalizePersonalFlashcard,
+  sanitizeCourseRefId,
+  sanitizeFlashcardId
+} from './utils/personalFlashcards';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -599,5 +616,288 @@ export async function deleteLabTopologyFromFirestore(
   }
 }
 
+export async function fetchLearningStreakFromFirestore(): Promise<LearningStreakData | null> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return null;
+  const uid = auth.currentUser.uid;
+  const streakPath = `learningStreaks/${uid}`;
+  try {
+    const snap = await getDoc(doc(db, 'learningStreaks', uid));
+    if (!snap.exists()) return null;
+    const data = snap.data() as Record<string, any>;
+    const activeDates = sanitizeActiveDates(data.activeDates);
+    return {
+      activeDates,
+      longestStreak: Math.max(0, Math.trunc(Number(data.longestStreak) || 0)),
+      lastActiveDate:
+        typeof data.lastActiveDate === 'string'
+          ? data.lastActiveDate.slice(0, 16)
+          : activeDates[activeDates.length - 1] || '',
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.GET, streakPath);
+    }
+    return null;
+  }
+}
+
+export async function saveLearningStreakToFirestore(
+  data: LearningStreakData
+): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const uid = auth.currentUser.uid;
+  const streakPath = `learningStreaks/${uid}`;
+  const ref = doc(db, 'learningStreaks', uid);
+  const safeDates = sanitizeActiveDates(data.activeDates);
+  const computed = computeLearningStreak({
+    activeDates: safeDates,
+    longestStreak: data.longestStreak,
+    lastActiveDate: data.lastActiveDate,
+  });
+
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, {
+        activeDates: safeDates,
+        currentStreak: Math.min(3650, Math.max(0, Math.trunc(computed.currentStreak))),
+        longestStreak: Math.min(3650, Math.max(0, Math.trunc(computed.longestStreak))),
+        lastActiveDate: (computed.lastActiveDate || '').slice(0, 16),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(ref, {
+        uid,
+        activeDates: safeDates,
+        currentStreak: Math.min(3650, Math.max(0, Math.trunc(computed.currentStreak))),
+        longestStreak: Math.min(3650, Math.max(0, Math.trunc(computed.longestStreak))),
+        lastActiveDate: (computed.lastActiveDate || '').slice(0, 16),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.WRITE, streakPath);
+    }
+    return false;
+  }
+}
+
+export async function fetchStudyGoalFromFirestore(): Promise<DailyStudyGoalData | null> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return null;
+  const uid = auth.currentUser.uid;
+  const goalPath = `studyGoals/${uid}`;
+  try {
+    const snap = await getDoc(doc(db, 'studyGoals', uid));
+    if (!snap.exists()) return null;
+    const data = snap.data() as Record<string, any>;
+    return normalizeStudyGoalData({
+      dailyGoalMinutes: Number(data.dailyGoalMinutes),
+      dateKey: typeof data.dateKey === 'string' ? data.dateKey : undefined,
+      courseSeconds: Number(data.courseSeconds) || 0,
+      labSeconds: Number(data.labSeconds) || 0,
+      practiceSeconds: Number(data.practiceSeconds) || 0,
+      creditedModuleIds: Array.isArray(data.creditedModuleIds) ? data.creditedModuleIds : [],
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.GET, goalPath);
+    }
+    return null;
+  }
+}
+
+export async function saveStudyGoalToFirestore(
+  data: DailyStudyGoalData
+): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const uid = auth.currentUser.uid;
+  const goalPath = `studyGoals/${uid}`;
+  const ref = doc(db, 'studyGoals', uid);
+  const safe = normalizeStudyGoalData(data);
+
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, {
+        dailyGoalMinutes: clampGoalMinutes(safe.dailyGoalMinutes),
+        dateKey: safe.dateKey,
+        courseSeconds: Math.min(86400, Math.max(0, Math.trunc(safe.courseSeconds))),
+        labSeconds: Math.min(86400, Math.max(0, Math.trunc(safe.labSeconds))),
+        practiceSeconds: Math.min(86400, Math.max(0, Math.trunc(safe.practiceSeconds))),
+        creditedModuleIds: safe.creditedModuleIds.slice(0, 100),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(ref, {
+        uid,
+        dailyGoalMinutes: clampGoalMinutes(safe.dailyGoalMinutes),
+        dateKey: safe.dateKey,
+        courseSeconds: Math.min(86400, Math.max(0, Math.trunc(safe.courseSeconds))),
+        labSeconds: Math.min(86400, Math.max(0, Math.trunc(safe.labSeconds))),
+        practiceSeconds: Math.min(86400, Math.max(0, Math.trunc(safe.practiceSeconds))),
+        creditedModuleIds: safe.creditedModuleIds.slice(0, 100),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.WRITE, goalPath);
+    }
+    return false;
+  }
+}
+
+export async function fetchPersonalFlashcardsFromFirestore(): Promise<PersonalFlashcard[] | null> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return null;
+  const uid = auth.currentUser.uid;
+  const path = 'personalFlashcards';
+  try {
+    const q = query(collection(db, path), where('ownerUid', '==', uid));
+    const snap = await getDocs(q);
+    return snap.docs
+      .filter(d => d.data()?.ownerUid === uid)
+      .map(d => {
+        const data = d.data() as Record<string, any>;
+        const createdAtIso =
+          data.createdAt && typeof data.createdAt.toDate === 'function'
+            ? data.createdAt.toDate().toISOString()
+            : typeof data.createdAt === 'string'
+            ? data.createdAt
+            : new Date().toISOString();
+        const updatedAtIso =
+          data.updatedAt && typeof data.updatedAt.toDate === 'function'
+            ? data.updatedAt.toDate().toISOString()
+            : typeof data.updatedAt === 'string'
+            ? data.updatedAt
+            : createdAtIso;
+
+        return normalizePersonalFlashcard(
+          {
+            id: String(data.id || d.id),
+            ownerUid: uid,
+            courseId: String(data.courseId || 'general'),
+            courseCode: typeof data.courseCode === 'string' ? data.courseCode : undefined,
+            courseTitle: typeof data.courseTitle === 'string' ? data.courseTitle : undefined,
+            moduleId: typeof data.moduleId === 'string' ? data.moduleId : undefined,
+            moduleTitle: typeof data.moduleTitle === 'string' ? data.moduleTitle : undefined,
+            category: data.category,
+            term: String(data.term || ''),
+            question: String(data.question || ''),
+            answer: String(data.answer || ''),
+            portNumber: typeof data.portNumber === 'string' ? data.portNumber : undefined,
+            transportProtocol:
+              typeof data.transportProtocol === 'string' ? data.transportProtocol : undefined,
+            osiLayer: typeof data.osiLayer === 'string' ? data.osiLayer : undefined,
+            explanation: typeof data.explanation === 'string' ? data.explanation : '',
+            memoryTip: typeof data.memoryTip === 'string' ? data.memoryTip : '',
+            masteryStatus: data.masteryStatus,
+            createdAt: createdAtIso,
+            updatedAt: updatedAtIso
+          },
+          uid
+        );
+      });
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+    return null;
+  }
+}
+
+export async function savePersonalFlashcardToFirestore(
+  card: PersonalFlashcard
+): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const uid = auth.currentUser.uid;
+  const safeId = sanitizeFlashcardId(card.id);
+  const safeCourseId = sanitizeCourseRefId(card.courseId);
+  const cardPath = `personalFlashcards/${safeId}`;
+  const ref = doc(db, 'personalFlashcards', safeId);
+
+  const safeCourseCode = card.courseCode?.trim().slice(0, 64);
+  const safeCourseTitle = card.courseTitle?.trim().slice(0, 200);
+  const safeModuleId = card.moduleId ? sanitizeFlashcardId(card.moduleId) : '';
+  const safeModuleTitle = card.moduleTitle?.trim().slice(0, 200);
+  const safePort = card.portNumber?.trim().slice(0, 40);
+  const safeTransport = card.transportProtocol?.trim().slice(0, 40);
+  const safeOsi = card.osiLayer?.trim().slice(0, 64);
+  const safeExplanation = (card.explanation || '').trim().slice(0, 1200);
+  const safeMemoryTip = (card.memoryTip || '').trim().slice(0, 600);
+
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, {
+        courseId: safeCourseId,
+        courseCode: safeCourseCode || deleteField(),
+        courseTitle: safeCourseTitle || deleteField(),
+        moduleId: safeModuleId || deleteField(),
+        moduleTitle: safeModuleTitle || deleteField(),
+        category: card.category,
+        term: (card.term || 'Networking Concept').trim().slice(0, 140),
+        question: card.question.trim().slice(0, 600),
+        answer: card.answer.trim().slice(0, 800),
+        portNumber: safePort || deleteField(),
+        transportProtocol: safeTransport || deleteField(),
+        osiLayer: safeOsi || deleteField(),
+        explanation: safeExplanation,
+        memoryTip: safeMemoryTip,
+        masteryStatus: card.masteryStatus,
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      await setDoc(ref, {
+        id: safeId,
+        ownerUid: uid,
+        courseId: safeCourseId,
+        ...(safeCourseCode ? { courseCode: safeCourseCode } : {}),
+        ...(safeCourseTitle ? { courseTitle: safeCourseTitle } : {}),
+        ...(safeModuleId ? { moduleId: safeModuleId } : {}),
+        ...(safeModuleTitle ? { moduleTitle: safeModuleTitle } : {}),
+        category: card.category,
+        term: (card.term || 'Networking Concept').trim().slice(0, 140),
+        question: card.question.trim().slice(0, 600),
+        answer: card.answer.trim().slice(0, 800),
+        ...(safePort ? { portNumber: safePort } : {}),
+        ...(safeTransport ? { transportProtocol: safeTransport } : {}),
+        ...(safeOsi ? { osiLayer: safeOsi } : {}),
+        explanation: safeExplanation,
+        memoryTip: safeMemoryTip,
+        masteryStatus: card.masteryStatus,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.WRITE, cardPath);
+    }
+    return false;
+  }
+}
+
+export async function deletePersonalFlashcardFromFirestore(
+  cardId: string
+): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const safeId = sanitizeFlashcardId(cardId);
+  const cardPath = `personalFlashcards/${safeId}`;
+  try {
+    await deleteDoc(doc(db, 'personalFlashcards', safeId));
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.DELETE, cardPath);
+    }
+    return false;
+  }
+}
 
 

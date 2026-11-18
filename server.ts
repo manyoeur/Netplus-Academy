@@ -2,7 +2,7 @@ import express, { type Request, type Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 
 dotenv.config();
 
@@ -14,12 +14,16 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
-// Initialize Google Gen AI
-const apiKey = process.env.GEMINI_API_KEY || '';
-let ai: GoogleGenAI | null = null;
-if (apiKey) {
-  ai = new GoogleGenAI({
-    apiKey: apiKey,
+// Initialize Google Gen AI helper
+function getNormalizedApiKey(): string {
+  const raw = process.env.GEMINI_API_KEY || '';
+  return raw.trim().replace(/^['"]|['"]$/g, '');
+}
+
+function createGeminiClient(key: string): GoogleGenAI | null {
+  if (!key) return null;
+  return new GoogleGenAI({
+    apiKey: key,
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
@@ -27,6 +31,66 @@ if (apiKey) {
     },
   });
 }
+
+function getGeminiClient(): GoogleGenAI | null {
+  return createGeminiClient(getNormalizedApiKey());
+}
+
+function formatGeminiError(error: any): { status: number; message: string } {
+  let status =
+    typeof error?.status === 'number' && error.status >= 400 && error.status < 600
+      ? error.status
+      : 500;
+  let message = typeof error?.message === 'string' ? error.message : 'Failed to communicate with Gemini API.';
+  let reason = '';
+
+  if (message.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(message);
+      const errObj = parsed?.error || parsed;
+      if (typeof errObj?.code === 'number' && errObj.code >= 400 && errObj.code < 600) {
+        status = errObj.code;
+      }
+      if (typeof errObj?.message === 'string' && errObj.message) {
+        message = errObj.message;
+      }
+      if (Array.isArray(errObj?.details)) {
+        const info = errObj.details.find((d: any) => typeof d?.reason === 'string');
+        if (info?.reason) reason = info.reason;
+      }
+    } catch {
+      // Keep original message if not valid JSON
+    }
+  }
+
+  if (reason === 'API_KEY_INVALID' || /api key not valid/i.test(message)) {
+    return {
+      status: 400,
+      message:
+        'Gemini API key is invalid or not recognized. Please check or select a valid GEMINI_API_KEY in the Settings > Secrets panel and try again.',
+    };
+  }
+
+  if (status === 403 || reason === 'PERMISSION_DENIED') {
+    return {
+      status: 403,
+      message:
+        'Permission denied by Gemini API. Please verify your GEMINI_API_KEY in the Settings > Secrets panel.',
+    };
+  }
+
+  if (status === 429 || reason === 'RESOURCE_EXHAUSTED') {
+    return {
+      status: 429,
+      message:
+        'Gemini API rate limit or quota exceeded. Please wait a moment and try again, or verify your key in Settings > Secrets.',
+    };
+  }
+
+  return { status, message };
+}
+
+const ai = getGeminiClient();
 
 // AI Tutoring Endpoint
 app.post('/api/ai/tutor', async (req: Request, res: Response) => {
@@ -115,6 +179,176 @@ Provide:
   } catch (error: any) {
     console.error('Diagnostic error:', error);
     return res.status(500).json({ error: error.message });
+  }
+});
+
+// AI Networking Flashcard Deck Generator
+app.post('/api/flashcards/generate', async (req: Request, res: Response) => {
+  try {
+    const client = getGeminiClient();
+    if (!client) {
+      return res.status(503).json({
+        error: 'Gemini API key is not configured. Please add or select GEMINI_API_KEY in the Settings > Secrets panel.',
+      });
+    }
+
+    const {
+      topic = 'all',
+      difficulty = 'certification',
+      cardCount = 12,
+      customFocus = '',
+      avoidTerms = [],
+    } = req.body || {};
+
+    const clampedCount = Math.min(20, Math.max(5, Number(cardCount) || 12));
+
+    const topicFocusMap: Record<string, string> = {
+      all: 'a balanced mix of core networking terminology, OSI/TCP-IP concepts, key network protocols, and standard TCP/UDP port numbers',
+      terminology: 'essential computer networking terminology, OSI & TCP/IP model layers, switching/routing concepts, duplexing, MTU, VLANs, collision vs broadcast domains, and addressing',
+      protocols: 'networking protocols, their mechanics, handshake/state processes, and packet behavior (e.g., ARP, DNS, DHCP, OSPF, BGP, STP, ICMP, TCP/UDP, TLS, SNMP, NTP, IPsec)',
+      ports: 'memorizing standard well-known and registered TCP/UDP port numbers, their protocol names, transport protocol (TCP vs UDP vs both), and secure vs insecure counterparts',
+    };
+
+    const difficultyMap: Record<string, string> = {
+      foundations: 'Foundations (CompTIA Network+ / Intro to Networking level — clear definitions, essential ports, core concepts)',
+      certification: 'Certification (CompTIA Network+ & Cisco CCNA 200-301 exam level — practical scenarios, protocol behaviors, port distinctions, layer mapping)',
+      advanced: 'Advanced (CCNP / Senior Network Engineer level — subtle protocol edge cases, timers, flags, encapsulation details, and security ports)',
+    };
+
+    const cleanFocus = typeof customFocus === 'string' ? customFocus.trim().slice(0, 160) : '';
+    const cleanAvoid = Array.isArray(avoidTerms)
+      ? avoidTerms.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).slice(0, 40)
+      : [];
+
+    const topicInstruction = topicFocusMap[String(topic)] || topicFocusMap.all;
+    const difficultyInstruction = difficultyMap[String(difficulty)] || difficultyMap.certification;
+
+    const prompt = `Generate exactly ${clampedCount} high-yield networking study flashcards for students.
+
+Topic Focus: ${topicInstruction}
+Difficulty Level: ${difficultyInstruction}
+${cleanFocus ? `Specific Student Focus Request: "${cleanFocus}"` : ''}
+${cleanAvoid.length > 0 ? `Avoid repeating these previously studied terms/ports: ${cleanAvoid.join(', ')}` : ''}
+
+Strict Requirements:
+1. Every flashcard must be 100% technically accurate for industry networking certifications (CompTIA Network+, Cisco CCNA).
+2. Write the "question" as an engaging active-recall prompt suitable for the front of a flashcard (do NOT give away the answer inside the question).
+3. Write the "answer" concisely and clearly (1-2 sentences or exact port/protocol value) for immediate recall on the back of the card.
+4. Include "explanation" (1-2 crisp sentences adding real-world or exam context) and "memoryTip" (a short mnemonic, contrast, or rule of thumb to help memorize it).
+5. When a card relates to a network port or protocol, populate "portNumber" (e.g., "22", "67 / 68", "443", or "N/A" if conceptual), "transportProtocol" (e.g., "TCP", "UDP", "TCP / UDP", "Layer 3 / IP", or "N/A"), and "osiLayer" (e.g., "Layer 7 - Application", "Layer 3 - Network").
+6. Ensure all ${clampedCount} cards cover distinct concepts with zero duplicates.`;
+
+    const response = await client.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: {
+        systemInstruction: 'You are an expert Cisco CCIE and CompTIA Network+ curriculum designer creating high-retention active-recall flashcards for networking students.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            deckTitle: {
+              type: Type.STRING,
+              description: 'Short engaging title for the generated flashcard deck',
+            },
+            summary: {
+              type: Type.STRING,
+              description: 'One-sentence overview of what this deck covers',
+            },
+            cards: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  category: {
+                    type: Type.STRING,
+                    description: 'One of: Terminology, Protocol, Port Number, Architecture',
+                  },
+                  term: {
+                    type: Type.STRING,
+                    description: 'Short key term, protocol name, or port label',
+                  },
+                  question: {
+                    type: Type.STRING,
+                    description: 'Active-recall question for the front of the flashcard',
+                  },
+                  answer: {
+                    type: Type.STRING,
+                    description: 'Direct, accurate answer for the back of the flashcard',
+                  },
+                  portNumber: {
+                    type: Type.STRING,
+                    description: 'Standard port number(s) if applicable, otherwise N/A',
+                  },
+                  transportProtocol: {
+                    type: Type.STRING,
+                    description: 'TCP, UDP, TCP/UDP, ICMP, or N/A',
+                  },
+                  osiLayer: {
+                    type: Type.STRING,
+                    description: 'Primary OSI layer, e.g. Layer 7 (Application) or Layer 3 (Network)',
+                  },
+                  explanation: {
+                    type: Type.STRING,
+                    description: 'Brief practical or certification explanation',
+                  },
+                  memoryTip: {
+                    type: Type.STRING,
+                    description: 'Short mnemonic or memorization tip',
+                  },
+                },
+                required: ['id', 'category', 'term', 'question', 'answer', 'portNumber', 'transportProtocol', 'osiLayer', 'explanation', 'memoryTip'],
+              },
+            },
+          },
+          required: ['deckTitle', 'summary', 'cards'],
+        },
+      },
+    });
+
+    const rawText = response.text;
+    if (!rawText) {
+      return res.status(502).json({ error: 'Gemini returned an empty response when generating flashcards.' });
+    }
+
+    const parsed = JSON.parse(rawText);
+    if (!parsed || !Array.isArray(parsed.cards) || parsed.cards.length === 0) {
+      return res.status(502).json({ error: 'Generated flashcard payload was malformed or contained no cards.' });
+    }
+
+    const normalizedCards = parsed.cards.map((card: any, index: number) => ({
+      id: typeof card.id === 'string' && card.id.trim() ? card.id.trim() : `card-${Date.now()}-${index + 1}`,
+      category: ['Terminology', 'Protocol', 'Port Number', 'Architecture'].includes(card.category)
+        ? card.category
+        : 'Terminology',
+      term: String(card.term || `Concept ${index + 1}`),
+      question: String(card.question || ''),
+      answer: String(card.answer || ''),
+      portNumber: card.portNumber && String(card.portNumber).toUpperCase() !== 'N/A' ? String(card.portNumber) : undefined,
+      transportProtocol:
+        card.transportProtocol && String(card.transportProtocol).toUpperCase() !== 'N/A'
+          ? String(card.transportProtocol)
+          : undefined,
+      osiLayer: card.osiLayer && String(card.osiLayer).toUpperCase() !== 'N/A' ? String(card.osiLayer) : undefined,
+      explanation: String(card.explanation || ''),
+      memoryTip: String(card.memoryTip || ''),
+    })).filter((c: any) => c.question && c.answer);
+
+    return res.json({
+      deckTitle: String(parsed.deckTitle || 'AI Networking Flashcard Deck'),
+      summary: String(parsed.summary || 'AI-generated active-recall networking deck.'),
+      topic,
+      difficulty,
+      generatedAt: new Date().toISOString(),
+      cards: normalizedCards,
+    });
+  } catch (error: any) {
+    console.error('Error generating AI flashcards:', error);
+    const formatted = formatGeminiError(error);
+    return res.status(formatted.status).json({
+      error: formatted.message,
+    });
   }
 });
 

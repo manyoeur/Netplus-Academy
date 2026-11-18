@@ -418,6 +418,242 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "LearningStreak": {
+      "title": "LearningStreak",
+      "description": "Owner-isolated daily learning streak history and consecutive study day records.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth user UID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "activeDates": {
+          "type": "array",
+          "description": "Sorted unique YYYY-MM-DD local study dates (capped at 365 days)"
+        },
+        "currentStreak": {
+          "type": "number",
+          "description": "Current consecutive learning days count"
+        },
+        "longestStreak": {
+          "type": "number",
+          "description": "Longest consecutive learning days count achieved"
+        },
+        "lastActiveDate": {
+          "type": "string",
+          "description": "Most recent YYYY-MM-DD study date",
+          "maxLength": 16
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "uid",
+        "activeDates",
+        "currentStreak",
+        "longestStreak",
+        "lastActiveDate",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StudyGoal": {
+      "title": "StudyGoal",
+      "description": "Owner-isolated daily study goal target in minutes and daily course/lab/practice study progress.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth user UID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "dailyGoalMinutes": {
+          "type": "number",
+          "description": "Target study duration in minutes per day (5-300)"
+        },
+        "dateKey": {
+          "type": "string",
+          "description": "Local calendar date YYYY-MM-DD",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "courseSeconds": {
+          "type": "number",
+          "description": "Seconds spent interacting with course content today"
+        },
+        "labSeconds": {
+          "type": "number",
+          "description": "Seconds spent interacting with lab simulator today"
+        },
+        "practiceSeconds": {
+          "type": "number",
+          "description": "Seconds spent practicing with flashcards or tools today"
+        },
+        "creditedModuleIds": {
+          "type": "array",
+          "description": "Module IDs already credited toward today's study goal"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "uid",
+        "dailyGoalMinutes",
+        "dateKey",
+        "courseSeconds",
+        "labSeconds",
+        "practiceSeconds",
+        "creditedModuleIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PersonalFlashcard": {
+      "title": "PersonalFlashcard",
+      "description": "Student-created personal flashcard tagged to a specific Netplus Academy course and optional module.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Flashcard document ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the student who owns this flashcard",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Course ID this flashcard belongs to (or 'general' for cross-course cards)",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "courseCode": {
+          "type": "string",
+          "description": "Display code of the tagged course",
+          "maxLength": 64
+        },
+        "courseTitle": {
+          "type": "string",
+          "description": "Display title of the tagged course",
+          "maxLength": 200
+        },
+        "moduleId": {
+          "type": "string",
+          "description": "Optional module ID within the tagged course",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "moduleTitle": {
+          "type": "string",
+          "description": "Optional module title for display",
+          "maxLength": 200
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Terminology", "Protocol", "Port Number", "Architecture"],
+          "description": "Networking flashcard category"
+        },
+        "term": {
+          "type": "string",
+          "description": "Primary networking term or concept",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "question": {
+          "type": "string",
+          "description": "Front-of-card recall prompt",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "answer": {
+          "type": "string",
+          "description": "Back-of-card concise answer",
+          "minLength": 1,
+          "maxLength": 800
+        },
+        "portNumber": {
+          "type": "string",
+          "description": "Optional TCP/UDP port number",
+          "maxLength": 40
+        },
+        "transportProtocol": {
+          "type": "string",
+          "description": "Optional transport protocol tag",
+          "maxLength": 40
+        },
+        "osiLayer": {
+          "type": "string",
+          "description": "Optional OSI model layer",
+          "maxLength": 64
+        },
+        "explanation": {
+          "type": "string",
+          "description": "Optional technical explanation",
+          "maxLength": 1200
+        },
+        "memoryTip": {
+          "type": "string",
+          "description": "Optional mnemonic or study tip",
+          "maxLength": 600
+        },
+        "masteryStatus": {
+          "type": "string",
+          "enum": ["unreviewed", "mastered", "review"],
+          "description": "Student self-graded mastery state"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "courseId",
+        "category",
+        "term",
+        "question",
+        "answer",
+        "masteryStatus",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -436,6 +672,18 @@
     "/labTopologies/{topologyId}": {
       "schema": { "$ref": "#/entities/LabTopology" },
       "description": "Owner-isolated saved network topology layouts and lab progress snapshots."
+    },
+    "/learningStreaks/{userId}": {
+      "schema": { "$ref": "#/entities/LearningStreak" },
+      "description": "Owner-isolated daily learning streak records per student."
+    },
+    "/studyGoals/{userId}": {
+      "schema": { "$ref": "#/entities/StudyGoal" },
+      "description": "Owner-isolated daily study goal target and progress per student."
+    },
+    "/personalFlashcards/{cardId}": {
+      "schema": { "$ref": "#/entities/PersonalFlashcard" },
+      "description": "Owner-isolated personal manual flashcards created by students and tagged by course."
     }
   }
 }

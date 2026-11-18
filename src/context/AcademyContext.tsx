@@ -40,8 +40,49 @@ import {
   updateUserInFirestore,
   deleteUserFromFirestore,
   saveCoursePaymentToFirestore,
-  fetchCoursePaymentsFromFirestore
+  fetchCoursePaymentsFromFirestore,
+  fetchLearningStreakFromFirestore,
+  saveLearningStreakToFirestore,
+  fetchStudyGoalFromFirestore,
+  saveStudyGoalToFirestore,
+  fetchPersonalFlashcardsFromFirestore,
+  savePersonalFlashcardToFirestore,
+  deletePersonalFlashcardFromFirestore
 } from '../firebase';
+import {
+  CardMasteryStatus,
+  PersonalFlashcard,
+  PersonalFlashcardInput
+} from '../components/Flashcards/flashcardTypes';
+import {
+  GENERAL_COURSE_ID,
+  loadLocalPersonalFlashcards,
+  mergePersonalFlashcards,
+  normalizePersonalFlashcard,
+  saveLocalPersonalFlashcards,
+  sanitizeCourseRefId,
+  sanitizeFlashcardId
+} from '../utils/personalFlashcards';
+import {
+  ComputedLearningStreak,
+  LearningStreakData,
+  computeLearningStreak,
+  loadLocalLearningStreak,
+  mergeStreakData,
+  recordActivityInStreakData,
+  saveLocalLearningStreak
+} from '../utils/learningStreak';
+import {
+  ComputedDailyStudyGoal,
+  DailyStudyGoalData,
+  StudySource,
+  addStudySecondsToData,
+  computeDailyStudyGoal,
+  loadLocalStudyGoal,
+  mergeStudyGoalData,
+  saveLocalStudyGoal,
+  updateDailyGoalMinutesInData
+} from '../utils/studyGoal';
 import { 
   INITIAL_USERS, 
   INITIAL_COURSES, 
@@ -125,6 +166,15 @@ interface AcademyContextType {
   enrollInCourse: (courseId: string, customDates?: Partial<Omit<CourseEnrollment, 'courseId'>>) => void;
   completeModule: (courseId: string, moduleId: string) => void;
   updateStudentQuizAverage: (courseId: string, averageScore: number) => void;
+  learningStreak: ComputedLearningStreak;
+  recordLearningActivity: (activityLabel?: string) => void;
+  dailyStudyGoal: ComputedDailyStudyGoal;
+  setDailyStudyGoalMinutes: (minutes: number) => void;
+  recordStudyTime: (seconds: number, source: StudySource, moduleId?: string) => void;
+  personalFlashcards: PersonalFlashcard[];
+  savePersonalFlashcard: (input: PersonalFlashcardInput) => PersonalFlashcard;
+  deletePersonalFlashcard: (cardId: string) => void;
+  updatePersonalFlashcardMastery: (cardId: string, status: CardMasteryStatus) => void;
   addCourse: (course: Course) => void;
   updateCourse: (courseId: string, updated: Partial<Course>) => void;
   deleteCourse: (courseId: string) => void;
@@ -326,6 +376,37 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   });
 
   const currentUser = allUsers.find(u => u.id === currentUserId) || allUsers[0];
+
+  const [streakData, setStreakData] = useState<LearningStreakData>(() =>
+    loadLocalLearningStreak(currentUser.id)
+  );
+
+  useEffect(() => {
+    setStreakData(loadLocalLearningStreak(currentUser.id));
+  }, [currentUser.id]);
+
+  const learningStreak = computeLearningStreak(streakData);
+
+  const [studyGoalData, setStudyGoalData] = useState<DailyStudyGoalData>(() =>
+    loadLocalStudyGoal(currentUser.id)
+  );
+  const lastStudyGoalCloudSyncRef = useRef<number>(0);
+
+  useEffect(() => {
+    setStudyGoalData(loadLocalStudyGoal(currentUser.id));
+  }, [currentUser.id]);
+
+  const dailyStudyGoal = computeDailyStudyGoal(studyGoalData);
+
+  const [personalFlashcards, setPersonalFlashcards] = useState<PersonalFlashcard[]>(() =>
+    loadLocalPersonalFlashcards(currentUser.id)
+  );
+  const personalFlashcardsRef = useRef<PersonalFlashcard[]>(personalFlashcards);
+  personalFlashcardsRef.current = personalFlashcards;
+
+  useEffect(() => {
+    setPersonalFlashcards(loadLocalPersonalFlashcards(currentUser.id));
+  }, [currentUser.id]);
 
   const [invitations, setInvitations] = useState<Invitation[]>(() => {
     try {
@@ -567,6 +648,67 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     if (resolvedRole === 'admin' && fbUser.emailVerified) {
       refreshUsersDirectory().catch(() => {});
+    }
+
+    if (fbUser.emailVerified) {
+      fetchLearningStreakFromFirestore()
+        .then(remoteStreak => {
+          const localStreak = loadLocalLearningStreak(resolvedId);
+          const merged = mergeStreakData(localStreak, remoteStreak);
+          saveLocalLearningStreak(resolvedId, merged);
+          if (resolvedId === currentUser.id || resolvedId === fbUser.uid) {
+            setStreakData(merged);
+          }
+          if (
+            remoteStreak === null
+              ? merged.activeDates.length > 0
+              : merged.activeDates.length > remoteStreak.activeDates.length
+          ) {
+            saveLearningStreakToFirestore(merged).catch(() => {});
+          }
+        })
+        .catch(() => {});
+
+      fetchStudyGoalFromFirestore()
+        .then(remoteGoal => {
+          const localGoal = loadLocalStudyGoal(resolvedId);
+          const mergedGoal = mergeStudyGoalData(localGoal, remoteGoal);
+          saveLocalStudyGoal(resolvedId, mergedGoal);
+          if (resolvedId === currentUser.id || resolvedId === fbUser.uid) {
+            setStudyGoalData(mergedGoal);
+          }
+          if (
+            remoteGoal === null ||
+            mergedGoal.courseSeconds > remoteGoal.courseSeconds ||
+            mergedGoal.labSeconds > remoteGoal.labSeconds ||
+            mergedGoal.practiceSeconds > remoteGoal.practiceSeconds
+          ) {
+            saveStudyGoalToFirestore(mergedGoal).catch(() => {});
+          }
+        })
+        .catch(() => {});
+
+      fetchPersonalFlashcardsFromFirestore()
+        .then(remoteCards => {
+          const localCards = loadLocalPersonalFlashcards(resolvedId);
+          const mergedCards = mergePersonalFlashcards(localCards, remoteCards);
+          saveLocalPersonalFlashcards(resolvedId, mergedCards);
+          if (resolvedId === currentUser.id || resolvedId === fbUser.uid) {
+            setPersonalFlashcards(mergedCards);
+          }
+          if (remoteCards !== null) {
+            const remoteById = new Map(remoteCards.map(c => [c.id, c]));
+            for (const card of localCards) {
+              const remoteMatch = remoteById.get(card.id);
+              const localMs = Date.parse(card.updatedAt) || 0;
+              const remoteMs = remoteMatch ? Date.parse(remoteMatch.updatedAt) || 0 : -1;
+              if (!remoteMatch || localMs > remoteMs) {
+                savePersonalFlashcardToFirestore(card).catch(() => {});
+              }
+            }
+          }
+        })
+        .catch(() => {});
     }
 
     pendingGoogleInviteCodeRef.current = undefined;
@@ -1426,7 +1568,187 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
+  const recordLearningActivity = (activityLabel?: string) => {
+    const activeUserId = currentUser.id;
+    setStreakData(prev => {
+      const beforeComputed = computeLearningStreak(prev);
+      const { next, changed } = recordActivityInStreakData(prev);
+      if (!changed) return prev;
+
+      saveLocalLearningStreak(activeUserId, next);
+      saveLearningStreakToFirestore(next).catch(() => {});
+
+      const afterComputed = computeLearningStreak(next);
+      if (afterComputed.badge.id !== beforeComputed.badge.id && afterComputed.badge.minDays >= 1) {
+        triggerSystemNotification(
+          `Streak Badge Unlocked: ${afterComputed.badge.title}`,
+          `${afterComputed.currentStreak}-day learning streak achieved${activityLabel ? ` via ${activityLabel}` : ''}!`,
+          'system'
+        );
+      }
+
+      return next;
+    });
+  };
+
+  const setDailyStudyGoalMinutes = (minutes: number) => {
+    const activeUserId = currentUser.id;
+    setStudyGoalData(prev => {
+      const next = updateDailyGoalMinutesInData(prev, minutes);
+      saveLocalStudyGoal(activeUserId, next);
+      lastStudyGoalCloudSyncRef.current = Date.now();
+      saveStudyGoalToFirestore(next).catch(() => {});
+      return next;
+    });
+  };
+
+  const recordStudyTime = (seconds: number, source: StudySource, moduleId?: string) => {
+    const activeUserId = currentUser.id;
+    setStudyGoalData(prev => {
+      const before = computeDailyStudyGoal(prev);
+      const { next, added } = addStudySecondsToData(prev, seconds, source, moduleId);
+      if (!added) return prev;
+
+      saveLocalStudyGoal(activeUserId, next);
+      const after = computeDailyStudyGoal(next);
+      const justReachedGoal = !before.goalReached && after.goalReached;
+      const now = Date.now();
+
+      if (justReachedGoal || moduleId || now - lastStudyGoalCloudSyncRef.current >= 30000) {
+        lastStudyGoalCloudSyncRef.current = now;
+        saveStudyGoalToFirestore(next).catch(() => {});
+      }
+
+      if (justReachedGoal) {
+        triggerSystemNotification(
+          `Daily Study Goal Reached (${after.dailyGoalMinutes} min)`,
+          `Great focus! You hit your ${after.dailyGoalMinutes}-minute daily study target.`,
+          'system'
+        );
+      }
+
+      return next;
+    });
+
+    if (seconds >= 15 || moduleId) {
+      recordLearningActivity(
+        source === 'lab' ? 'Lab Simulation' : source === 'practice' ? 'Practice Lab' : 'Course Study'
+      );
+    }
+  };
+
+  const savePersonalFlashcard = (input: PersonalFlashcardInput): PersonalFlashcard => {
+    const activeUserId = currentUser.id;
+    const nowIso = new Date().toISOString();
+    const existing = input.id
+      ? personalFlashcardsRef.current.find(c => c.id === input.id)
+      : undefined;
+
+    const safeCourseId = sanitizeCourseRefId(input.courseId);
+    const matchedCourse =
+      safeCourseId !== GENERAL_COURSE_ID
+        ? courses.find(c => c.id === safeCourseId)
+        : undefined;
+    const safeModuleId =
+      safeCourseId !== GENERAL_COURSE_ID && input.moduleId
+        ? sanitizeFlashcardId(input.moduleId)
+        : undefined;
+    const matchedModule =
+      safeModuleId && matchedCourse
+        ? matchedCourse.modules.find(m => m.id === safeModuleId)
+        : undefined;
+
+    const card = normalizePersonalFlashcard(
+      {
+        id:
+          existing?.id ||
+          (input.id
+            ? sanitizeFlashcardId(input.id)
+            : `pfc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+        ownerUid: existing?.ownerUid || activeUserId,
+        courseId: safeCourseId,
+        courseCode:
+          safeCourseId === GENERAL_COURSE_ID
+            ? undefined
+            : matchedCourse?.code || input.courseCode,
+        courseTitle:
+          safeCourseId === GENERAL_COURSE_ID
+            ? undefined
+            : matchedCourse?.title || input.courseTitle,
+        moduleId: safeModuleId,
+        moduleTitle:
+          safeCourseId === GENERAL_COURSE_ID
+            ? undefined
+            : matchedModule?.title || input.moduleTitle,
+        category: input.category,
+        term: input.term,
+        question: input.question,
+        answer: input.answer,
+        portNumber: input.portNumber,
+        transportProtocol: input.transportProtocol,
+        osiLayer: input.osiLayer,
+        explanation: input.explanation || '',
+        memoryTip: input.memoryTip || '',
+        masteryStatus: input.masteryStatus || existing?.masteryStatus || 'unreviewed',
+        createdAt: existing?.createdAt || nowIso,
+        updatedAt: nowIso
+      },
+      activeUserId
+    );
+
+    setPersonalFlashcards(prev => {
+      const filtered = prev.filter(c => c.id !== card.id);
+      const next = [card, ...filtered];
+      saveLocalPersonalFlashcards(activeUserId, next);
+      return next;
+    });
+
+    savePersonalFlashcardToFirestore(card).catch(() => {});
+    recordLearningActivity(existing ? 'Updated personal flashcard' : 'Created personal flashcard');
+    return card;
+  };
+
+  const deletePersonalFlashcard = (cardId: string) => {
+    const activeUserId = currentUser.id;
+    setPersonalFlashcards(prev => {
+      const next = prev.filter(c => c.id !== cardId);
+      saveLocalPersonalFlashcards(activeUserId, next);
+      return next;
+    });
+    deletePersonalFlashcardFromFirestore(cardId).catch(() => {});
+  };
+
+  const updatePersonalFlashcardMastery = (cardId: string, status: CardMasteryStatus) => {
+    const activeUserId = currentUser.id;
+    const nowIso = new Date().toISOString();
+    let updatedCard: PersonalFlashcard | null = null;
+
+    setPersonalFlashcards(prev => {
+      const next = prev.map(card => {
+        if (card.id !== cardId) return card;
+        updatedCard = {
+          ...card,
+          masteryStatus: status,
+          updatedAt: nowIso
+        };
+        return updatedCard;
+      });
+      saveLocalPersonalFlashcards(activeUserId, next);
+      return next;
+    });
+
+    if (updatedCard) {
+      savePersonalFlashcardToFirestore(updatedCard).catch(() => {});
+    }
+  };
+
   const completeModule = (courseId: string, moduleId: string) => {
+    recordLearningActivity('Module completion');
+    const targetCourse = courses.find(c => c.id === courseId);
+    const completedMod = targetCourse?.modules.find(m => m.id === moduleId);
+    const creditMinutes = Math.min(15, Math.max(3, Math.round((completedMod?.durationMin || 8) * 0.4)));
+    recordStudyTime(creditMinutes * 60, 'course', moduleId);
+
     setAllUsers(prev => prev.map(u => {
       if (u.id === currentUser.id) {
         const completed = u.completedModuleIds.includes(moduleId)
@@ -1438,7 +1760,6 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }));
 
     // Update StudentProgressList
-    const targetCourse = courses.find(c => c.id === courseId);
     if (targetCourse) {
       const userCompletedInCourse = targetCourse.modules.filter(m => 
         currentUser.completedModuleIds.includes(m.id) || m.id === moduleId
@@ -1472,6 +1793,8 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const updateStudentQuizAverage = (courseId: string, averageScore: number) => {
+    recordLearningActivity('Quiz completion');
+    recordStudyTime(120, 'course');
     const safeAvg = Math.max(0, Math.min(100, Math.round(averageScore)));
     setStudentProgressList(prev =>
       prev.map(p =>
@@ -2508,6 +2831,15 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         enrollInCourse,
         completeModule,
         updateStudentQuizAverage,
+        learningStreak,
+        recordLearningActivity,
+        dailyStudyGoal,
+        setDailyStudyGoalMinutes,
+        recordStudyTime,
+        personalFlashcards,
+        savePersonalFlashcard,
+        deletePersonalFlashcard,
+        updatePersonalFlashcardMastery,
         addCourse,
         updateCourse,
         deleteCourse,

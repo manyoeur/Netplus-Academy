@@ -89,6 +89,7 @@ import {
   evaluateLinkStatus,
   executeDeviceCommand,
   getCliPrompt,
+  getCliTabCompletions,
   isInterfaceLineProtocolUp,
   isPortCompatibleWithCable,
   isValidIp,
@@ -118,6 +119,12 @@ interface SavedLabSnapshot {
   status?: 'in_progress' | 'completed';
   presetId: string;
   exportedAt?: string;
+  studentEmail?: string;
+  objectivesSummary?: {
+    passed: number;
+    total: number;
+    completed: boolean;
+  };
   devices: SimDevice[];
   links: SimLink[];
   shapes?: SimTopologyShape[];
@@ -280,14 +287,14 @@ const TemplateTopologyPreview: React.FC<{ devices: SimDevice[]; links: SimLink[]
         );
       })}
 
-      {devices.map(dev => {
+      {devices.map((dev, idx) => {
         const previewScale = 1.1;
         const rot = typeof dev.rotation === 'number' && Number.isFinite(dev.rotation) ? dev.rotation : 0;
         return (
           <g key={dev.id} transform={`translate(${dev.x}, ${dev.y})`}>
             <g
               transform={`${rot ? `rotate(${rot}) ` : ''}translate(${(-32 * previewScale).toFixed(1)}, ${(-28 * previewScale).toFixed(1)}) scale(${previewScale})`}
-              dangerouslySetInnerHTML={{ __html: getCiscoDeviceInnerSvg(dev.type) }}
+              dangerouslySetInnerHTML={{ __html: getCiscoDeviceInnerSvg(dev.type, `tpl_${patternId}_${idx}`) }}
             />
             <text
               y={46}
@@ -475,7 +482,7 @@ function computeAutoLayoutPositions(
 }
 
 export const NetworkTopologySimulator: React.FC = () => {
-  const { currentUser, isOffline } = useAcademy();
+  const { currentUser, isOffline, recordStudyTime } = useAcademy();
 
   const initialPresetState = useMemo(() => {
     const defaultPreset = NETWORK_LAB_PRESETS[0];
@@ -2332,10 +2339,34 @@ export const NetworkTopologySimulator: React.FC = () => {
     if (result.pingResult) {
       setLastPingResult(result.pingResult);
     }
+    recordStudyTime(15, 'lab');
   };
 
   const handleCliKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!selectedDevice) return;
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const { completed, suggestions } = getCliTabCompletions(selectedDevice, cliInput);
+      if (completed !== cliInput) {
+        setCliInput(completed);
+      } else if (suggestions.length > 0) {
+        const prompt = getCliPrompt(selectedDevice);
+        const hintLines = [
+          `${prompt} ${cliInput}`,
+          suggestions.slice(0, 12).join('    ')
+        ];
+        setDevices(prev =>
+          prev.map(d =>
+            d.id === selectedDevice.id
+              ? { ...d, cliHistory: [...d.cliHistory, ...hintLines] }
+              : d
+          )
+        );
+      }
+      return;
+    }
+
     const cmds = cmdHistoryMap[selectedDevice.id] || [];
     if (cmds.length === 0) return;
 
@@ -2400,50 +2431,118 @@ export const NetworkTopologySimulator: React.FC = () => {
   };
 
   const handleExportTopology = (record?: SavedLabRecord) => {
+    if (!record && devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0) {
+      flashBanner('Place at least one device, zone, or label before exporting a topology JSON file');
+      return;
+    }
+
+    const activeRecord = savedLabs.find(l => l.id === activeSavedLabId);
     const exportTitle =
       record?.title ||
-      savedLabs.find(l => l.id === activeSavedLabId)?.title ||
-      activePreset.title;
+      activeRecord?.title ||
+      (saveTitleInput.trim() ? saveTitleInput.trim() : activePreset.title);
+
+    const isLiveCompleted =
+      objectiveProgress.totalCount > 0 &&
+      objectiveProgress.passedCount === objectiveProgress.totalCount;
+
+    const resolvedStatus: 'in_progress' | 'completed' = record
+      ? record.status || 'in_progress'
+      : activeRecord?.status === 'completed' || isLiveCompleted
+      ? 'completed'
+      : 'in_progress';
+
+    const objectivesSummary = record
+      ? record.objectivesTotal > 0
+        ? {
+            passed: record.objectivesPassed,
+            total: record.objectivesTotal,
+            completed: record.objectivesPassed >= record.objectivesTotal
+          }
+        : undefined
+      : objectiveProgress.totalCount > 0
+      ? {
+          passed: objectiveProgress.passedCount,
+          total: objectiveProgress.totalCount,
+          completed: isLiveCompleted
+        }
+      : undefined;
+
     const payload: SavedLabSnapshot = {
       format: 'netplus-lab-project-v1',
       title: exportTitle,
-      status: record?.status || 'in_progress',
+      status: resolvedStatus,
       presetId: record?.presetId || activePresetId,
       exportedAt: new Date().toISOString(),
+      studentEmail: currentUser.email,
+      ...(objectivesSummary ? { objectivesSummary } : {}),
       devices: record ? record.devices : devices,
       links: record ? record.links : links,
       shapes: record ? record.shapes || [] : shapes,
       labels: record ? record.labels || [] : diagramLabels
     };
+    const filename = toProjectFileName(exportTitle);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = toProjectFileName(exportTitle);
+    a.download = filename;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
-    flashBanner(`Downloaded project file ${toProjectFileName(exportTitle)}`);
+    document.body.removeChild(a);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    flashBanner(`Exported topology JSON (${filename})`);
   };
 
-  const handleExportImage = async (format: 'png' | 'svg') => {
-    if (devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0) {
+  const handleExportImage = async (format: 'png' | 'svg', record?: SavedLabRecord) => {
+    const targetDevices = record ? record.devices : devices;
+    const targetLinks = record ? record.links : links;
+    const targetShapes = record ? record.shapes || [] : shapes;
+    const targetLabels = record ? record.labels || [] : diagramLabels;
+
+    if (targetDevices.length === 0 && targetShapes.length === 0 && targetLabels.length === 0) {
       flashBanner('Place at least one device, zone, or label before exporting a topology image');
       return;
     }
 
     const activeRecord = savedLabs.find(l => l.id === activeSavedLabId);
     const title =
+      record?.title ||
       activeRecord?.title ||
       (saveTitleInput.trim() ? saveTitleInput.trim() : activePreset.title);
     const isDarkTheme =
       typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
 
+    const objPassed = record ? record.objectivesPassed : objectiveProgress.passedCount;
+    const objTotal = record ? record.objectivesTotal : objectiveProgress.totalCount;
+    const isCompleted = record
+      ? record.status === 'completed'
+      : activeRecord?.status === 'completed' || (objTotal > 0 && objPassed === objTotal);
+
+    const statusTag = isCompleted
+      ? objTotal > 0
+        ? `Completed (${objPassed}/${objTotal} objectives)`
+        : 'Completed'
+      : objTotal > 0
+      ? `${objPassed}/${objTotal} objectives`
+      : '';
+
+    const subtitle = [
+      statusTag,
+      `${targetDevices.length} devices`,
+      `${targetLinks.length} cables`,
+      currentUser.email
+    ]
+      .filter(Boolean)
+      .join(' · ');
+
     const options = {
       title,
-      devices,
-      links,
-      shapes,
-      labels: diagramLabels,
+      subtitle,
+      devices: targetDevices,
+      links: targetLinks,
+      shapes: targetShapes,
+      labels: targetLabels,
       isDark: isDarkTheme
     };
 
@@ -2943,12 +3042,13 @@ export const NetworkTopologySimulator: React.FC = () => {
 
               <button
                 type="button"
+                disabled={devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0}
                 onClick={() => handleExportTopology()}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
-                title="Download .netlab.json project file"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-45 disabled:pointer-events-none transition-colors whitespace-nowrap shrink-0"
+                title="Export topology & device configurations as JSON (.netlab.json)"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Download File</span>
+                <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Export JSON</span>
               </button>
 
               <button
@@ -2956,7 +3056,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                 disabled={(devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0) || isExportingImage}
                 onClick={() => handleExportImage('png')}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-45 disabled:pointer-events-none transition-colors whitespace-nowrap shrink-0"
-                title="Export high-resolution PNG image (2000×1380)"
+                title="Export high-resolution PNG diagram (2000×1380)"
               >
                 <ImageIcon className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
                 <span>{isExportingImage ? 'Exporting PNG...' : 'Export PNG'}</span>
@@ -3162,10 +3262,10 @@ export const NetworkTopologySimulator: React.FC = () => {
             {/* Device Symbols (Drag onto canvas or click to add) */}
             {(
               [
-                { type: 'router' as const, label: 'Router', iconClass: 'w-7 h-5' },
-                { type: 'switch' as const, label: 'Switch', iconClass: 'w-7 h-5' },
-                { type: 'pc' as const, label: 'Workstation', iconClass: 'w-7 h-5' },
-                { type: 'server' as const, label: 'Server', iconClass: 'w-6 h-5' }
+                { type: 'router' as const, label: 'Router', iconClass: 'w-8 h-6' },
+                { type: 'switch' as const, label: 'Switch', iconClass: 'w-8 h-6' },
+                { type: 'pc' as const, label: 'Workstation', iconClass: 'w-8 h-6' },
+                { type: 'server' as const, label: 'Server', iconClass: 'w-7 h-6' }
               ] as const
             ).map(item => (
               <button
@@ -3185,7 +3285,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                 onClick={() => handleAddDevice(item.type)}
                 title={`Drag onto workspace or click to add ${item.label}`}
                 aria-label={`Add ${item.label}`}
-                className="relative inline-flex items-center justify-center w-10 h-9 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 hover:border-sky-400 dark:hover:border-cyan-400 hover:bg-sky-50 dark:hover:bg-sky-950/60 cursor-grab active:cursor-grabbing transition-colors shrink-0"
+                className="relative inline-flex items-center justify-center w-11 h-9 rounded-lg bg-white dark:bg-slate-900/95 border border-slate-200/90 dark:border-slate-700/90 shadow-xs hover:shadow-sm hover:border-sky-400 dark:hover:border-cyan-400 hover:bg-sky-50/70 dark:hover:bg-sky-950/60 hover:-translate-y-0.5 cursor-grab active:cursor-grabbing transition-all shrink-0"
               >
                 <CiscoDeviceIcon type={item.type} className={item.iconClass} />
               </button>
@@ -4553,13 +4653,13 @@ export const NetworkTopologySimulator: React.FC = () => {
                       } ${isSelected ? 'z-20' : 'z-10'}`}
                     >
                       <div
-                        className={`relative p-1 rounded-2xl flex items-center justify-center transition-transform duration-150 ${
+                        className={`relative p-1.5 rounded-2xl flex items-center justify-center transition-transform duration-150 ${
                           longPressMoveDeviceId === dev.id
                             ? 'ring-2 ring-cyan-400 bg-cyan-500/15 scale-105 shadow-md'
                             : isActiveHop
                             ? 'ring-3 ring-emerald-400 bg-emerald-500/15 scale-110'
                             : isSelected || isPendingSrc
-                            ? 'ring-2 ring-blue-500 dark:ring-cyan-400 bg-blue-500/10 dark:bg-cyan-400/10'
+                            ? 'ring-2 ring-blue-500 dark:ring-cyan-400 bg-blue-500/10 dark:bg-cyan-400/10 shadow-sm'
                             : ''
                         } ${tool === 'delete' ? 'hover:ring-2 hover:ring-red-500 hover:bg-red-500/10' : ''}`}
                       >
@@ -4571,7 +4671,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                         >
                           <CiscoDeviceIcon
                             type={dev.type}
-                            className="w-12 h-11 sm:w-14 sm:h-12 drop-shadow-[0_2px_4px_rgba(15,23,42,0.28)] transition-transform duration-150 group-hover:scale-105"
+                            className="w-13 h-11 sm:w-15 sm:h-13 drop-shadow-[0_4px_8px_rgba(2,6,23,0.3)] dark:drop-shadow-[0_4px_10px_rgba(56,189,248,0.16)] transition-transform duration-150 group-hover:scale-105"
                           />
 
                           {/* Single-Device Rotation Handle (orbits around device center) */}
@@ -4744,7 +4844,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                   <div className="p-1.5 rounded-2xl border-2 border-dashed border-sky-500 bg-sky-500/15 shadow-lg">
                     <CiscoDeviceIcon
                       type={paletteDropPreview.type}
-                      className="w-12 h-11 sm:w-14 sm:h-12 opacity-85"
+                      className="w-13 h-11 sm:w-15 sm:h-13 opacity-85"
                     />
                   </div>
                   <span className="mt-1 px-1.5 py-0.5 rounded bg-slate-900/90 text-white text-[10px] font-mono tabular-nums">
@@ -5741,7 +5841,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                       onChange={(e) => setCliInput(e.target.value)}
                       onKeyDown={handleCliKeyDown}
                       autoFocus
-                      placeholder="Type command or ?..."
+                      placeholder="Type command, ? for help, or Tab to autocomplete..."
                       className="flex-1 bg-transparent border-none outline-none text-cyan-300 font-mono text-xs p-0 placeholder-slate-600"
                     />
                   </form>
@@ -5756,18 +5856,20 @@ export const NetworkTopologySimulator: React.FC = () => {
                         'conf t',
                         'show ip int br',
                         'show ip route',
+                        'show ip ospf nei',
+                        'show cdp nei',
                         'show run',
-                        'int s0/0/0',
-                        'no shutdown'
+                        'copy run start'
                       ]
                     : selectedDevice.type === 'switch'
                     ? [
                         'conf t',
                         'show vlan brief',
+                        'show int status',
                         'show int trunk',
-                        'vlan 10',
-                        'int gig0/1',
-                        'switchport mode trunk'
+                        'show mac address-table',
+                        'show cdp nei',
+                        'int range fa0/1-4'
                       ]
                     : ['ipconfig', 'ipconfig /all', 'ping ', 'tracert ']
                   ).map(snippet => (
@@ -6527,6 +6629,39 @@ export const NetworkTopologySimulator: React.FC = () => {
                         </div>
                       ))}
                     </div>
+
+                    {objectiveProgress.passedCount === objectiveProgress.totalCount && (
+                      <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 space-y-2.5">
+                        <div className="flex items-start gap-2 text-xs text-emerald-900 dark:text-emerald-200">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                          <div>
+                            <div className="font-bold">Lab Completed!</div>
+                            <p className="text-[11px] text-emerald-800/90 dark:text-emerald-300/90 mt-0.5">
+                              Export your finished topology as JSON or a high-resolution PNG diagram for submission.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleExportTopology()}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-xs transition-colors whitespace-nowrap"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Export JSON</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isExportingImage}
+                            onClick={() => handleExportImage('png')}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100/70 dark:hover:bg-emerald-900/40 disabled:opacity-50 text-xs font-semibold transition-colors whitespace-nowrap"
+                          >
+                            <ImageIcon className="w-3.5 h-3.5" />
+                            <span>{isExportingImage ? 'Exporting PNG...' : 'Export PNG'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -6608,7 +6743,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                   My Lab Projects
                 </h2>
                 <p className="text-xs text-slate-600 dark:text-slate-400">
-                  Only your own saved and closed network lab project files appear here for later reopening or downloading as portable .netlab.json files.
+                  Only your own saved and completed network lab projects appear here for reopening or exporting as portable JSON (.netlab.json) and PNG diagram files.
                 </p>
               </div>
 
@@ -6793,10 +6928,26 @@ export const NetworkTopologySimulator: React.FC = () => {
                             type="button"
                             onClick={() => handleExportTopology(item)}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
-                            title={`Download ${toProjectFileName(item.title)}`}
+                            title={`Export JSON (${toProjectFileName(item.title)})`}
                           >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Download File</span>
+                            <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                            <span>Export JSON</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={
+                              isExportingImage ||
+                              (item.devices.length === 0 &&
+                                (item.shapes?.length ?? 0) === 0 &&
+                                (item.labels?.length ?? 0) === 0)
+                            }
+                            onClick={() => handleExportImage('png', item)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-45 disabled:pointer-events-none transition-colors whitespace-nowrap"
+                            title={`Export high-resolution PNG diagram for ${item.title}`}
+                          >
+                            <ImageIcon className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                            <span>Export PNG</span>
                           </button>
 
                           <button

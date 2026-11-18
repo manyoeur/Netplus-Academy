@@ -75,6 +75,18 @@ const MODULE_CHECKPOINT_QUESTIONS: Record<string, { title: string; questions: Qu
         options: ['show version', 'show running-config', 'configure terminal', 'ping 127.0.0.1'],
         correctAnswerIndex: 1,
         explanation: 'show running-config (or show run) displays the active configuration currently stored in RAM.'
+      },
+      {
+        id: 'cp-ccna-2-q4',
+        question: 'Which command saves active RAM changes to NVRAM so they persist across a router reboot?',
+        options: [
+          'write erase',
+          'copy running-config startup-config',
+          'reload in 5',
+          'no shutdown'
+        ],
+        correctAnswerIndex: 1,
+        explanation: 'copy running-config startup-config (or write memory) writes the active configuration from volatile RAM into non-volatile NVRAM.'
       }
     ]
   },
@@ -286,6 +298,18 @@ const MODULE_CHECKPOINT_QUESTIONS: Record<string, { title: string; questions: Qu
         ],
         correctAnswerIndex: 1,
         explanation: 'Assigning an interface to a VRF clears its previous IP address for safety, requiring re-entry of the `ip address` command.'
+      },
+      {
+        id: 'cp-ccnp-2-q4',
+        question: 'How do you test reachability to 10.20.20.1 strictly from inside the CORP-FINANCE VRF routing table?',
+        options: [
+          'ping 10.20.20.1',
+          'ping vrf CORP-FINANCE 10.20.20.1',
+          'traceroute global 10.20.20.1',
+          'show cdp neighbors CORP-FINANCE'
+        ],
+        correctAnswerIndex: 1,
+        explanation: 'Using `ping vrf <VRF_NAME> <target>` instructs IOS to source and route the ICMP echo using that VRF’s isolated RIB.'
       }
     ]
   },
@@ -389,6 +413,13 @@ const MODULE_CHECKPOINT_QUESTIONS: Record<string, { title: string; questions: Qu
         options: ['CDP', 'BFD (Bidirectional Forwarding Detection)', 'SNMPv2', 'TFTP'],
         correctAnswerIndex: 1,
         explanation: 'BFD probes run continuously inside SD-WAN data tunnels to detect brownouts, SLA violations, and path failures within milliseconds.'
+      },
+      {
+        id: 'cp-sdwan-2-q4',
+        question: 'If two OMP routes have equal administrative distance and origin, which OMP attribute breaks ties first in Cisco SD-WAN?',
+        options: ['Highest OMP Preference', 'Lowest Interface Bandwidth', 'Oldest DHCP Lease', 'Highest MAC Address'],
+        correctAnswerIndex: 0,
+        explanation: 'After validity and administrative distance checks, OMP selects the route with the highest OMP Preference value before evaluating origin/TLOC metrics.'
       }
     ]
   },
@@ -488,6 +519,13 @@ const CATEGORY_FALLBACK_QUESTIONS: Record<Course['category'], QuizQuestion[]> = 
       options: ['show ip interface brief', 'show version', 'show arp', 'show vlan id 1'],
       correctAnswerIndex: 0,
       explanation: 'show ip interface brief summarizes every interface’s IP address, physical status, and line protocol state in one table.'
+    },
+    {
+      id: 'fb-routing-4',
+      question: 'Which protocol prevents Layer 2 switching loops by placing redundant switch links into a blocking state?',
+      options: ['DHCP', 'Rapid Spanning Tree Protocol (802.1w)', 'SNMPv3', 'BGP'],
+      correctAnswerIndex: 1,
+      explanation: 'RSTP (802.1w) elects a Root Bridge and blocks redundant forwarding paths to prevent broadcast storms and MAC table instability.'
     }
   ],
   'Network Security & Firewalls': [
@@ -511,6 +549,18 @@ const CATEGORY_FALLBACK_QUESTIONS: Record<Course['category'], QuizQuestion[]> = 
       options: ['Permit any', 'Implicit deny any', 'Forward to default gateway', 'Enable NAT overload'],
       correctAnswerIndex: 1,
       explanation: 'Every Cisco ACL appends an invisible implicit deny any statement at the bottom.'
+    },
+    {
+      id: 'fb-sec-4',
+      question: 'Which stateful firewall inspection behavior allows legitimate return traffic back through an untrusted interface?',
+      options: [
+        'Dynamic session state tracking',
+        'Disabling reverse path forwarding',
+        'Converting TCP packets to UDP',
+        'Static ARP poisoning'
+      ],
+      correctAnswerIndex: 0,
+      explanation: 'Stateful firewalls maintain a connection state table so return packets matching an active outbound flow are permitted dynamically.'
     }
   ],
   'Cloud & SD-WAN': [
@@ -534,6 +584,13 @@ const CATEGORY_FALLBACK_QUESTIONS: Record<Course['category'], QuizQuestion[]> = 
       options: ['Application-Aware Routing with BFD SLA probes', 'Static default routes only', 'Port security sticky MAC', 'Disabling NAT'],
       correctAnswerIndex: 0,
       explanation: 'Application-Aware Routing monitors BFD loss, latency, and jitter metrics to steer SLA-sensitive traffic across healthy transports.'
+    },
+    {
+      id: 'fb-sdwan-4',
+      question: 'Which cloud interconnect service provides dedicated private Layer 2/Layer 3 connectivity directly into AWS VPCs?',
+      options: ['AWS Direct Connect', 'Amazon S3 Glacier', 'AWS CloudTrail', 'Route 53 Public DNS'],
+      correctAnswerIndex: 0,
+      explanation: 'AWS Direct Connect establishes a dedicated private physical link between an on-premises network or colocation facility and AWS.'
     }
   ],
   'Packet Analysis & Forensics': [
@@ -562,6 +619,13 @@ const CATEGORY_FALLBACK_QUESTIONS: Record<Course['category'], QuizQuestion[]> = 
       options: ['ip.addr == 10.0.0.1', 'ip.src != 10.0.0.1', 'tcp.port == 10', 'arp.opcode == 1'],
       correctAnswerIndex: 0,
       explanation: 'ip.addr == 10.0.0.1 matches packets where 10.0.0.1 appears as either source or destination.'
+    },
+    {
+      id: 'fb-pcap-4',
+      question: 'Which Wireshark display filter isolates DNS queries that returned a domain-not-found (NXDOMAIN) error?',
+      options: ['dns.flags.rcode == 3', 'tcp.port == 53 && tcp.flags.syn == 1', 'http.response.code == 200', 'icmp.type == 8'],
+      correctAnswerIndex: 0,
+      explanation: 'DNS response code (rcode) 3 corresponds to NXDOMAIN (Non-Existent Domain).'
     }
   ],
   'Automation & NetDevOps': [
@@ -590,6 +654,13 @@ const CATEGORY_FALLBACK_QUESTIONS: Record<Course['category'], QuizQuestion[]> = 
       options: ['POST', 'GET', 'DELETE', 'PATCH'],
       correctAnswerIndex: 1,
       explanation: 'GET performs a safe, read-only query of YANG-modeled configuration or operational data.'
+    },
+    {
+      id: 'fb-auto-4',
+      question: 'Which protocol runs over SSH (port 830) and supports candidate datastores with atomic commit and rollback operations?',
+      options: ['SNMPv1', 'NETCONF', 'TFTP', 'Syslog'],
+      correctAnswerIndex: 1,
+      explanation: 'NETCONF uses RPCs over SSH (TCP 830) and provides running/candidate/startup datastores with validated commits and rollback.'
     }
   ]
 };
@@ -698,7 +769,7 @@ export function getModuleQuiz(
       id: sharedBetweenId,
       title: mapped.title,
       subtitle: `Test your knowledge of ${module.title} (${mapped.questions.length} multiple-choice questions).`,
-      passingScore: course.gradingCriteria?.quizPassingScore ?? 67,
+      passingScore: course.gradingCriteria?.quizPassingScore ?? 75,
       questions: mapped.questions
     };
   }
@@ -711,11 +782,41 @@ export function getModuleQuiz(
     id: sharedBetweenId,
     title: `Module ${moduleIndex + 1} Quiz · ${module.title}`,
     subtitle: `Test your understanding of ${module.title} with multiple-choice practice questions.`,
-    passingScore: course.gradingCriteria?.quizPassingScore ?? 67,
+    passingScore: course.gradingCriteria?.quizPassingScore ?? 75,
     questions: fallback.map((q, idx) => ({
       ...q,
       id: `${module.id}-qm-${idx + 1}`
     }))
   };
 }
+
+/**
+ * Resolves the required post-module mastery quiz for a video lecture module.
+ * Shares the canonical storage key with getModuleQuiz/getBetweenModuleQuiz so passing
+ * once unlocks the next segment across Study Mode, auto-triggered modal, and Quiz Mode.
+ */
+export function getPostVideoModuleQuiz(
+  course: Course,
+  videoModule: CourseModule | undefined,
+  moduleIndex: number
+): CheckpointQuizConfig | null {
+  if (!videoModule || videoModule.type !== 'video') return null;
+
+  const baseQuiz = getModuleQuiz(course, videoModule, moduleIndex);
+  if (!baseQuiz) return null;
+
+  const nextModule =
+    moduleIndex >= 0 && moduleIndex < course.modules.length - 1
+      ? course.modules[moduleIndex + 1]
+      : undefined;
+
+  return {
+    ...baseQuiz,
+    title: `Post-Lecture Mastery Check · ${videoModule.title}`,
+    subtitle: nextModule
+      ? `Achieve at least ${baseQuiz.passingScore}% to verify lecture mastery and unlock "${nextModule.title}".`
+      : `Achieve at least ${baseQuiz.passingScore}% to verify lecture mastery and complete this module.`
+  };
+}
+
 

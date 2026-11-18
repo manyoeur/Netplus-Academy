@@ -8,7 +8,8 @@ import {
   Award,
   BookOpen,
   SkipForward,
-  CheckSquare
+  CheckSquare,
+  Lock
 } from 'lucide-react';
 import { QuizQuestion } from '../../types';
 
@@ -40,6 +41,7 @@ interface InteractiveQuizProps {
   onContinue?: () => void;
   onSkip?: () => void;
   onBackToModule?: () => void;
+  requirePassToContinue?: boolean;
 }
 
 const OPTION_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -62,7 +64,8 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
   onComplete,
   onContinue,
   onSkip,
-  onBackToModule
+  onBackToModule,
+  requirePassToContinue = false
 }) => {
   const [feedbackMode, setFeedbackMode] = useState<'immediate' | 'exam'>(defaultFeedbackMode);
   const [answers, setAnswers] = useState<Record<string, number>>({});
@@ -804,47 +807,66 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
           </div>
 
           {/* Summary Footer Actions */}
-          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              {allowRetakes && (
-                <button
-                  type="button"
-                  onClick={handleRetake}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Retake Quiz</span>
-                </button>
-              )}
+          <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
+            {requirePassToContinue && !metrics.passed && (
+              <div
+                role="alert"
+                className="p-3 rounded-xl bg-amber-50/80 dark:bg-amber-950/35 border border-amber-200 dark:border-amber-800 flex items-center gap-2.5 text-xs text-amber-900 dark:text-amber-200"
+              >
+                <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span>
+                  Mastery gate locked: score at least <strong className="tabular-nums">{passingScore}%</strong> to unlock{' '}
+                  <strong>{nextModuleTitle || 'the next segment'}</strong>.
+                </span>
+              </div>
+            )}
 
-              {onBackToModule && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                {allowRetakes && (
+                  <button
+                    type="button"
+                    onClick={handleRetake}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors duration-150 ${
+                      requirePassToContinue && !metrics.passed
+                        ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm'
+                        : 'border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>{requirePassToContinue && !metrics.passed ? 'Retake Quiz to Unlock' : 'Retake Quiz'}</span>
+                  </button>
+                )}
+
+                {onBackToModule && (
+                  <button
+                    type="button"
+                    onClick={onBackToModule}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  >
+                    <BookOpen className="w-3.5 h-3.5" />
+                    <span>Back to Module</span>
+                  </button>
+                )}
+              </div>
+
+              {onContinue && (!requirePassToContinue || metrics.passed || previousResult?.passed) && (
                 <button
                   type="button"
-                  onClick={onBackToModule}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0"
+                  onClick={onContinue}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-sm transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
                 >
-                  <BookOpen className="w-3.5 h-3.5" />
-                  <span>Back to Module</span>
+                  <span>
+                    {continueLabel
+                      ? continueLabel
+                      : nextModuleTitle
+                      ? `Continue to ${nextModuleTitle}`
+                      : 'Continue'}
+                  </span>
+                  <ChevronRight className="w-4 h-4" />
                 </button>
               )}
             </div>
-
-            {onContinue && (
-              <button
-                type="button"
-                onClick={onContinue}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              >
-                <span>
-                  {continueLabel
-                    ? continueLabel
-                    : nextModuleTitle
-                    ? `Continue to ${nextModuleTitle}`
-                    : 'Continue'}
-                </span>
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            )}
           </div>
         </div>
       )}

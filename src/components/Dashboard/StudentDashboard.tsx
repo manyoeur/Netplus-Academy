@@ -16,12 +16,15 @@ import {
   Play,
   Building2,
   CreditCard,
-  FileText
+  FileText,
+  Flame
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course, CoursePaymentRecord } from '../../types';
 import { CourseThumbnail } from '../Courses/CourseThumbnail';
 import { CourseRadialProgressChart } from './CourseRadialProgressChart';
+import { DailyStreakCard } from './DailyStreakCard';
+import { DailyStudyGoalCard } from './DailyStudyGoalCard';
 import {
   resolveCourseEnrollment,
   formatEnrollmentDateRange,
@@ -46,7 +49,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onOpenCliLab,
   onOpenCourseCheckout
 }) => {
-  const { currentUser, courses, coursePayments } = useAcademy();
+  const {
+    currentUser,
+    courses,
+    coursePayments,
+    learningStreak,
+    recordLearningActivity,
+    dailyStudyGoal,
+    setDailyStudyGoalMinutes,
+  } = useAcademy();
   const [viewMode, setViewMode] = useState<DashboardViewMode>(() => {
     try {
       const saved = localStorage.getItem(DASHBOARD_VIEW_STORAGE_KEY);
@@ -111,7 +122,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div
+            title={`${learningStreak.badge.title}: ${learningStreak.badge.subtitle}`}
+            className={`px-3 py-1.5 rounded-xl backdrop-blur-md border text-xs font-mono flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              learningStreak.studiedToday
+                ? 'bg-amber-500/20 border-amber-400/40 text-amber-200'
+                : 'bg-white/10 border-white/15 text-slate-200'
+            }`}
+          >
+            <Flame className={`w-4 h-4 ${learningStreak.currentStreak > 0 ? 'text-amber-400' : 'text-slate-300'}`} />
+            <span className="font-bold tabular-nums">{learningStreak.currentStreak}d Streak</span>
+            <span className="text-white/40">·</span>
+            <span className="font-semibold text-cyan-200">{learningStreak.badge.title}</span>
+          </div>
+
           {currentUser.subscription.tier === 'free' ? (
             <button
               onClick={onOpenPricing}
@@ -128,6 +153,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           )}
         </div>
       </div>
+
+      {/* Daily Learning Streak & Achievement Badge */}
+      <DailyStreakCard
+        streak={learningStreak}
+        onLogTodayStudy={() => recordLearningActivity('Daily study check-in')}
+      />
 
       {/* Quick Stats Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -159,6 +190,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </p>
         </div>
       </div>
+
+      {/* Daily Study Goal Radial Progress */}
+      <DailyStudyGoalCard
+        goal={dailyStudyGoal}
+        onUpdateGoalMinutes={setDailyStudyGoalMinutes}
+        hasEnrolledCourses={enrolledCourses.length > 0}
+        onContinueCourse={
+          enrolledCourses.length > 0 ? () => onSelectCourse(enrolledCourses[0].id) : undefined
+        }
+        onOpenLab={onOpenCliLab}
+      />
 
       {/* D3.js Radial Progress Analytics */}
       <CourseRadialProgressChart
