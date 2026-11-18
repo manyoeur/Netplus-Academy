@@ -36,6 +36,12 @@ import {
   Check,
   Type,
   Magnet,
+  Hand,
+  SquareDashedMousePointer,
+  Move,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
   X
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
@@ -93,7 +99,7 @@ import {
 import { NETWORK_LAB_PRESETS } from './networkLabPresets';
 import { CiscoDeviceIcon, getCiscoDeviceInnerSvg } from './CiscoDeviceIcon';
 
-type CanvasTool = 'select' | 'cable' | 'delete';
+type CanvasTool = 'select' | 'marquee' | 'pan' | 'cable' | 'delete';
 type CableToolMode = 'auto' | SimCableType;
 type InspectorTab = 'cli' | 'config' | 'tables' | 'objectives';
 
@@ -555,8 +561,26 @@ export const NetworkTopologySimulator: React.FC = () => {
   const terminalEndRef = useRef<HTMLDivElement>(null);
   const cliInputRef = useRef<HTMLInputElement>(null);
 
-  // Dragging & marquee selection box state
+  // Viewport & logical canvas refs (zoom/pan wrapper + 1000x580 stage)
+  const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const [zoom, setZoom] = useState<number>(1);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const zoomRef = useRef<number>(zoom);
+  zoomRef.current = zoom;
+  const panRef = useRef<{ x: number; y: number }>(pan);
+  panRef.current = pan;
+  const [isSpacePanning, setIsSpacePanning] = useState<boolean>(false);
+  const isSpacePanningRef = useRef<boolean>(isSpacePanning);
+  isSpacePanningRef.current = isSpacePanning;
+  const [isPanningActive, setIsPanningActive] = useState<boolean>(false);
+  const panStateRef = useRef<{
+    startClientX: number;
+    startClientY: number;
+    initPanX: number;
+    initPanY: number;
+    moved: boolean;
+  } | null>(null);
   const devicesRef = useRef<SimDevice[]>(devices);
   devicesRef.current = devices;
   const shapesRef = useRef<SimTopologyShape[]>(shapes);
@@ -577,6 +601,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     startY: number;
     currentX: number;
     currentY: number;
+    count: number;
   } | null>(null);
   const dragStateRef = useRef<{
     leadId: string;
@@ -965,7 +990,56 @@ export const NetworkTopologySimulator: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [lastPingResult]);
 
-  // Pointer drag & marquee selection box handling for topology canvas nodes
+  // Native non-passive mouse-wheel zoom anchored at cursor position
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || workspaceView !== 'editor') return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const vRect = viewport.getBoundingClientRect();
+      if (vRect.width <= 0 || vRect.height <= 0) return;
+
+      const rawDeltaY =
+        e.deltaMode === 1
+          ? e.deltaY * 16
+          : e.deltaMode === 2
+          ? e.deltaY * 240
+          : e.deltaY;
+      if (rawDeltaY === 0) return;
+
+      const clampedDelta = Math.max(-180, Math.min(180, rawDeltaY));
+      const curZoom = zoomRef.current;
+      const curPan = panRef.current;
+      const sensitivity = e.ctrlKey ? 0.008 : 0.0016;
+      const nextZoom = Math.min(
+        2.75,
+        Math.max(0.4, Number((curZoom * Math.exp(-clampedDelta * sensitivity)).toFixed(4)))
+      );
+      if (nextZoom === curZoom) return;
+
+      const mouseX = e.clientX - vRect.left;
+      const mouseY = e.clientY - vRect.top;
+      const stageX = (mouseX - curPan.x) / curZoom;
+      const stageY = (mouseY - curPan.y) / curZoom;
+      const nextPan = {
+        x: mouseX - stageX * nextZoom,
+        y: mouseY - stageY * nextZoom
+      };
+
+      zoomRef.current = nextZoom;
+      panRef.current = nextPan;
+      setZoom(nextZoom);
+      setPan(nextPan);
+    };
+
+    viewport.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      viewport.removeEventListener('wheel', handleWheel);
+    };
+  }, [workspaceView]);
+
+  // Pointer drag, viewport pan, & marquee selection box handling for topology canvas nodes
   useEffect(() => {
     const clientToCanvas = (clientX: number, clientY: number, rect: DOMRect) => ({
       x: Math.min(1000, Math.max(0, ((clientX - rect.left) / rect.width) * 1000)),
@@ -973,6 +1047,22 @@ export const NetworkTopologySimulator: React.FC = () => {
     });
 
     const handlePointerMove = (e: PointerEvent) => {
+      const pDrag = panStateRef.current;
+      if (pDrag) {
+        const dx = e.clientX - pDrag.startClientX;
+        const dy = e.clientY - pDrag.startClientY;
+        if (Math.hypot(dx, dy) > 2) {
+          pDrag.moved = true;
+        }
+        const nextPan = {
+          x: pDrag.initPanX + dx,
+          y: pDrag.initPanY + dy
+        };
+        panRef.current = nextPan;
+        setPan(nextPan);
+        return;
+      }
+
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
@@ -1320,13 +1410,6 @@ export const NetworkTopologySimulator: React.FC = () => {
         if (!marquee.moved) return;
 
         const curr = clientToCanvas(e.clientX, e.clientY, rect);
-        setSelectionBox({
-          startX: marquee.startCanvasX,
-          startY: marquee.startCanvasY,
-          currentX: curr.x,
-          currentY: curr.y
-        });
-
         const minX = Math.min(marquee.startCanvasX, curr.x);
         const maxX = Math.max(marquee.startCanvasX, curr.x);
         const minY = Math.min(marquee.startCanvasY, curr.y);
@@ -1346,9 +1429,18 @@ export const NetworkTopologySimulator: React.FC = () => {
           ? Array.from(new Set([...marquee.initialSelectedIds, ...boxedIds]))
           : boxedIds;
 
+        setSelectionBox({
+          startX: marquee.startCanvasX,
+          startY: marquee.startCanvasY,
+          currentX: curr.x,
+          currentY: curr.y,
+          count: nextIds.length
+        });
+
         setSelectedDeviceIds(nextIds);
         setSelectedLinkId(null);
         setSelectedShapeId(null);
+        setSelectedDiagramLabelId(null);
         setSelectedDeviceId(prev =>
           prev && nextIds.includes(prev) ? prev : nextIds[0] || null
         );
@@ -1366,6 +1458,8 @@ export const NetworkTopologySimulator: React.FC = () => {
         }, 0);
       }
       if (
+        dragStateRef.current?.moved ||
+        panStateRef.current?.moved ||
         marqueeStateRef.current?.moved ||
         rotateStateRef.current?.moved ||
         shapeDragStateRef.current?.moved ||
@@ -1378,6 +1472,7 @@ export const NetworkTopologySimulator: React.FC = () => {
           suppressCanvasClickRef.current = false;
         }, 0);
       }
+      panStateRef.current = null;
       dragStateRef.current = null;
       marqueeStateRef.current = null;
       rotateStateRef.current = null;
@@ -1385,6 +1480,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       shapeResizeStateRef.current = null;
       labelDragStateRef.current = null;
       diagramLabelDragStateRef.current = null;
+      setIsPanningActive(false);
       setLongPressMoveDeviceId(null);
       setDraggingLabelDeviceId(null);
       setSelectionBox(null);
@@ -1401,6 +1497,68 @@ export const NetworkTopologySimulator: React.FC = () => {
     };
   }, []);
 
+  const startGroupDrag = useCallback(
+    (e: React.PointerEvent, preferredLeadId?: string) => {
+      if (
+        (tool !== 'select' && tool !== 'marquee') ||
+        e.button !== 0 ||
+        selectedDeviceIds.length === 0
+      ) {
+        return;
+      }
+      e.stopPropagation();
+      e.preventDefault();
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      const startCanvasX = Math.min(
+        1000,
+        Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000)
+      );
+      const startCanvasY = Math.min(
+        580,
+        Math.max(0, ((e.clientY - rect.top) / rect.height) * 580)
+      );
+
+      const activeSet = new Set(selectedDeviceIds);
+      const initialPositions = devicesRef.current
+        .filter(d => activeSet.has(d.id))
+        .map(d => ({ id: d.id, x: d.x, y: d.y }));
+      if (initialPositions.length === 0) return;
+
+      const lead =
+        (preferredLeadId
+          ? initialPositions.find(p => p.id === preferredLeadId)
+          : undefined) || initialPositions[0];
+
+      if (dragStateRef.current?.holdTimerId != null) {
+        window.clearTimeout(dragStateRef.current.holdTimerId);
+      }
+
+      dragStateRef.current = {
+        leadId: lead.id,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        startCanvasX,
+        startCanvasY,
+        initialPositions,
+        isLongPressReady: true,
+        holdTimerId: null,
+        moved: false
+      };
+      setLongPressMoveDeviceId(lead.id);
+      setSelectedLinkId(null);
+      setSelectedShapeId(null);
+      setSelectedDiagramLabelId(null);
+      setActiveSnapGuides({
+        readout: { x: lead.x, y: lead.y - 34, text: `${lead.x}, ${lead.y}` }
+      });
+    },
+    [selectedDeviceIds, tool]
+  );
+
   const startRotationDrag = useCallback(
     (
       e: React.PointerEvent,
@@ -1408,7 +1566,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       pivotX: number,
       pivotY: number
     ) => {
-      if (tool !== 'select' || e.button !== 0 || targetIds.length === 0) return;
+      if ((tool !== 'select' && tool !== 'marquee') || e.button !== 0 || targetIds.length === 0) return;
       e.stopPropagation();
       e.preventDefault();
       const canvas = canvasRef.current;
@@ -1473,6 +1631,111 @@ export const NetworkTopologySimulator: React.FC = () => {
     }, 3600);
   };
 
+  const zoomAtViewportCenter = useCallback((targetZoom: number) => {
+    const nextZoom = Math.min(2.75, Math.max(0.4, Number(targetZoom.toFixed(4))));
+    const curZoom = zoomRef.current;
+    const curPan = panRef.current;
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      zoomRef.current = nextZoom;
+      setZoom(nextZoom);
+      return;
+    }
+    const vRect = viewport.getBoundingClientRect();
+    const cx = vRect.width > 0 ? vRect.width / 2 : 500;
+    const cy = vRect.height > 0 ? vRect.height / 2 : 290;
+    const stageX = (cx - curPan.x) / curZoom;
+    const stageY = (cy - curPan.y) / curZoom;
+    const nextPan = {
+      x: cx - stageX * nextZoom,
+      y: cy - stageY * nextZoom
+    };
+    zoomRef.current = nextZoom;
+    panRef.current = nextPan;
+    setZoom(nextZoom);
+    setPan(nextPan);
+  }, []);
+
+  const handleResetZoomPan = useCallback(() => {
+    zoomRef.current = 1;
+    panRef.current = { x: 0, y: 0 };
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, []);
+
+  const handleFitToView = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      handleResetZoomPan();
+      return;
+    }
+    const vRect = viewport.getBoundingClientRect();
+    if (vRect.width <= 0 || vRect.height <= 0) {
+      handleResetZoomPan();
+      return;
+    }
+    if (devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0) {
+      handleResetZoomPan();
+      return;
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    devices.forEach(d => {
+      minX = Math.min(minX, d.x - 48);
+      minY = Math.min(minY, d.y - 44);
+      maxX = Math.max(maxX, d.x + 48);
+      maxY = Math.max(maxY, d.y + 62);
+    });
+    shapes.forEach(s => {
+      minX = Math.min(minX, s.x);
+      minY = Math.min(minY, s.y);
+      maxX = Math.max(maxX, s.x + s.width);
+      maxY = Math.max(maxY, s.y + s.height);
+    });
+    diagramLabels.forEach(l => {
+      minX = Math.min(minX, l.x - 45);
+      minY = Math.min(minY, l.y - 20);
+      maxX = Math.max(maxX, l.x + 45);
+      maxY = Math.max(maxY, l.y + 20);
+    });
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+      handleResetZoomPan();
+      return;
+    }
+
+    const baseScaleX = vRect.width / 1000;
+    const baseScaleY = vRect.height / 580;
+    const contentPxW = Math.max(60, (maxX - minX) * baseScaleX);
+    const contentPxH = Math.max(60, (maxY - minY) * baseScaleY);
+
+    const fitZoom = Math.min(
+      2.0,
+      Math.max(
+        0.4,
+        Number(
+          Math.min((vRect.width * 0.88) / contentPxW, (vRect.height * 0.88) / contentPxH).toFixed(4)
+        )
+      )
+    );
+
+    const stageCxPx = ((minX + maxX) / 2) * baseScaleX;
+    const stageCyPx = ((minY + maxY) / 2) * baseScaleY;
+    const nextPan = {
+      x: vRect.width / 2 - stageCxPx * fitZoom,
+      y: vRect.height / 2 - stageCyPx * fitZoom
+    };
+
+    zoomRef.current = fitZoom;
+    panRef.current = nextPan;
+    setZoom(fitZoom);
+    setPan(nextPan);
+  }, [devices, shapes, diagramLabels, handleResetZoomPan]);
+
   // Load or reset preset
   const handleSelectPreset = (presetId: string) => {
     const preset = NETWORK_LAB_PRESETS.find(p => p.id === presetId);
@@ -1495,6 +1758,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     setPendingCableTarget(null);
     setLastPingResult(null);
     setInspectorTab('objectives');
+    handleResetZoomPan();
     flashBanner(`Loaded "${preset.title}"`);
   };
 
@@ -1753,6 +2017,14 @@ export const NetworkTopologySimulator: React.FC = () => {
         return;
       }
 
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (!e.repeat) {
+          setIsSpacePanning(true);
+        }
+        return;
+      }
+
       if (e.key === 'F2' && tool === 'select' && selectedDeviceIds.length === 1) {
         const target = devices.find(d => d.id === selectedDeviceIds[0]);
         if (target) {
@@ -1762,7 +2034,11 @@ export const NetworkTopologySimulator: React.FC = () => {
         return;
       }
 
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && tool === 'select') {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.key.toLowerCase() === 'a' &&
+        (tool === 'select' || tool === 'marquee')
+      ) {
         if (devices.length === 0) return;
         e.preventDefault();
         setSelectedDeviceIds(devices.map(d => d.id));
@@ -1804,8 +2080,25 @@ export const NetworkTopologySimulator: React.FC = () => {
       }
     };
 
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        setIsSpacePanning(false);
+      }
+    };
+
+    const handleWindowBlur = () => {
+      setIsSpacePanning(false);
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleWindowBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleWindowBlur);
+      setIsSpacePanning(false);
+    };
   }, [
     devices,
     handleDeleteDiagramLabel,
@@ -1867,8 +2160,16 @@ export const NetworkTopologySimulator: React.FC = () => {
   };
 
   const handleDeviceClick = (device: SimDevice, e?: React.MouseEvent) => {
-    if (suppressDeviceClickAfterDragRef.current || dragStateRef.current?.moved) {
+    if (
+      suppressCanvasClickRef.current ||
+      suppressDeviceClickAfterDragRef.current ||
+      dragStateRef.current?.moved
+    ) {
       suppressDeviceClickAfterDragRef.current = false;
+      return;
+    }
+
+    if (tool === 'pan' || isSpacePanningRef.current) {
       return;
     }
 
@@ -2093,6 +2394,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     setRecentlySavedProjectId(null);
     setIsSavePromptOpen(false);
     setInspectorTab('objectives');
+    handleResetZoomPan();
     setWorkspaceView('editor');
     flashBanner('Started a new Blank Lab Project');
   };
@@ -2186,6 +2488,7 @@ export const NetworkTopologySimulator: React.FC = () => {
           if (typeof parsed.title === 'string' && parsed.title.trim()) {
             setSaveTitleInput(parsed.title.trim());
           }
+          handleResetZoomPan();
           setWorkspaceView('editor');
           flashBanner(
             `Opened project file "${typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title : file.name}"`
@@ -2327,6 +2630,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     setPendingCableTarget(null);
     setLastPingResult(null);
     setRecentlySavedProjectId(null);
+    handleResetZoomPan();
     setWorkspaceView('editor');
     flashBanner(`Opened lab project "${record.title}"`);
   };
@@ -2461,7 +2765,7 @@ export const NetworkTopologySimulator: React.FC = () => {
   );
 
   const selectedGroupBounds = useMemo(() => {
-    if (tool !== 'select' || selectedDeviceIds.length < 2) return null;
+    if ((tool !== 'select' && tool !== 'marquee') || selectedDeviceIds.length < 2) return null;
     const selectedSet = new Set(selectedDeviceIds);
     const items = devices.filter(d => selectedSet.has(d.id));
     if (items.length < 2) return null;
@@ -3070,6 +3374,42 @@ export const NetworkTopologySimulator: React.FC = () => {
             <button
               type="button"
               onClick={() => {
+                setTool('marquee');
+                setPendingCableSource(null);
+                setPendingCableTarget(null);
+              }}
+              title="Drag a rectangular marquee anywhere on the canvas to select multiple devices and move them as a group (hold Shift to add)"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                tool === 'marquee'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <SquareDashedMousePointer className="w-3.5 h-3.5" />
+              <span>Marquee</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setTool('pan');
+                setPendingCableSource(null);
+                setPendingCableTarget(null);
+              }}
+              title="Drag to pan canvas (or hold Space + drag, or middle-mouse drag)"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                tool === 'pan'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Hand className="w-3.5 h-3.5" />
+              <span>Pan</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
                 setTool('delete');
                 setPendingCableSource(null);
                 setPendingCableTarget(null);
@@ -3162,11 +3502,27 @@ export const NetworkTopologySimulator: React.FC = () => {
                   <>
                     <span aria-hidden="true">·</span>
                     <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Click: select · Long-click: move · Double-click: console
+                      Click: select · Hold: move · Double-click: console · Drag empty: marquee · Space+drag: pan
                     </span>
                   </>
                 )}
-                {tool === 'select' && selectedDeviceIds.length > 0 && (
+                {tool === 'marquee' && selectedDeviceIds.length === 0 && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-[11px] font-medium text-blue-600 dark:text-cyan-400">
+                      Drag rectangle anywhere to select multiple devices · Hold Shift to add
+                    </span>
+                  </>
+                )}
+                {tool === 'pan' && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-[11px] font-medium text-blue-600 dark:text-cyan-400">
+                      Drag canvas to pan · Scroll mouse wheel to zoom
+                    </span>
+                  </>
+                )}
+                {(tool === 'select' || tool === 'marquee') && selectedDeviceIds.length > 0 && (
                   <>
                     <span aria-hidden="true">·</span>
                     <span className="font-mono tabular-nums font-semibold text-blue-600 dark:text-cyan-400">
@@ -3296,9 +3652,12 @@ export const NetworkTopologySimulator: React.FC = () => {
               </div>
             </div>
 
-            {/* Interactive Blueprint Stage */}
+            {/* Interactive Viewport & Zoom/Pan Blueprint Stage */}
             <div
-              ref={canvasRef}
+              ref={viewportRef}
+              onAuxClick={(e) => {
+                if (e.button === 1) e.preventDefault();
+              }}
               onDragOver={(e) => {
                 const transferType = e.dataTransfer.getData('application/x-netlab-device') as SimDeviceType;
                 const activeType = draggedPaletteTypeRef.current || transferType;
@@ -3359,9 +3718,71 @@ export const NetworkTopologySimulator: React.FC = () => {
                 const rawY = ((e.clientY - rect.top) / rect.height) * 580;
                 handleAddDevice(dropType, rawX, rawY);
               }}
+              onPointerDownCapture={(e) => {
+                const targetEl = e.target as HTMLElement | null;
+                if (targetEl?.closest('[data-zoom-hud="true"]')) return;
+                const shouldStartPan =
+                  e.button === 1 ||
+                  (e.button === 0 && (tool === 'pan' || isSpacePanningRef.current));
+                if (shouldStartPan) {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  panStateRef.current = {
+                    startClientX: e.clientX,
+                    startClientY: e.clientY,
+                    initPanX: panRef.current.x,
+                    initPanY: panRef.current.y,
+                    moved: false
+                  };
+                  setIsPanningActive(true);
+                  return;
+                }
+
+                if (tool === 'marquee' && e.button === 0) {
+                  if (
+                    targetEl?.closest('[data-group-move="true"]') ||
+                    targetEl?.closest('[data-group-rotate="true"]')
+                  ) {
+                    return;
+                  }
+                  const devEl = targetEl?.closest('[data-device-id]') as HTMLElement | null;
+                  const devId = devEl?.getAttribute('data-device-id');
+                  const isModifier = e.ctrlKey || e.metaKey || e.shiftKey;
+                  if (devId && !isModifier && selectedDeviceIds.includes(devId)) {
+                    startGroupDrag(e, devId);
+                    return;
+                  }
+
+                  const canvas = canvasRef.current;
+                  if (!canvas) return;
+                  const rect = canvas.getBoundingClientRect();
+                  if (rect.width <= 0 || rect.height <= 0) return;
+
+                  e.stopPropagation();
+                  e.preventDefault();
+                  const startCanvasX = Math.min(
+                    1000,
+                    Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000)
+                  );
+                  const startCanvasY = Math.min(
+                    580,
+                    Math.max(0, ((e.clientY - rect.top) / rect.height) * 580)
+                  );
+
+                  marqueeStateRef.current = {
+                    startClientX: e.clientX,
+                    startClientY: e.clientY,
+                    startCanvasX,
+                    startCanvasY,
+                    additive: isModifier,
+                    initialSelectedIds: selectedDeviceIds,
+                    moved: false
+                  };
+                }
+              }}
               onPointerDown={(e) => {
-                if (tool !== 'select' || e.button !== 0) return;
-                if (e.target !== e.currentTarget) return;
+                if (tool !== 'select' || isSpacePanningRef.current || e.button !== 0) return;
+                if (e.target !== viewportRef.current && e.target !== canvasRef.current) return;
                 const canvas = canvasRef.current;
                 if (!canvas) return;
                 const rect = canvas.getBoundingClientRect();
@@ -3385,19 +3806,38 @@ export const NetworkTopologySimulator: React.FC = () => {
                   suppressCanvasClickRef.current = false;
                   return;
                 }
-                if (e.target === e.currentTarget) {
+                if (tool === 'pan') return;
+                const clickedStage =
+                  e.target === viewportRef.current || e.target === canvasRef.current;
+                if (clickedStage || (tool === 'marquee' && !(e.target as HTMLElement | null)?.closest('[data-device-id]'))) {
                   setSelectedLinkId(null);
                   setSelectedShapeId(null);
                   setSelectedDiagramLabelId(null);
                   setConsoleDeviceId(null);
-                  if (tool === 'select' && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
+                  if ((tool === 'select' || tool === 'marquee') && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
                     setSelectedDeviceIds([]);
                     setSelectedDeviceId(null);
                   }
                 }
               }}
-              className="relative w-full aspect-[1000/580] min-h-[260px] sm:min-h-[380px] bg-slate-50 dark:bg-[#090f1d] select-none overflow-hidden"
+              className={`relative w-full aspect-[1000/580] min-h-[260px] sm:min-h-[380px] bg-slate-100/80 dark:bg-[#050914] select-none overflow-hidden ${
+                isPanningActive
+                  ? 'cursor-grabbing'
+                  : tool === 'pan' || isSpacePanning
+                  ? 'cursor-grab'
+                  : tool === 'marquee'
+                  ? 'cursor-crosshair'
+                  : ''
+              }`}
             >
+              <div
+                ref={canvasRef}
+                style={{
+                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                  transformOrigin: '0 0'
+                }}
+                className="relative w-full h-full bg-slate-50 dark:bg-[#090f1d] shadow-xs ring-1 ring-slate-200/70 dark:ring-slate-800/70"
+              >
               {/* True-Coordinate Logical SVG Grid Backdrop */}
               <svg
                 viewBox="0 0 1000 580"
@@ -3718,20 +4158,30 @@ export const NetworkTopologySimulator: React.FC = () => {
               {/* Marquee Drag Selection Box */}
               {selectionBox && (
                 <div
-                  className="absolute border-2 border-blue-500 bg-blue-500/10 dark:border-cyan-400 dark:bg-cyan-400/15 rounded-sm pointer-events-none z-20"
+                  className="absolute border-2 border-dashed border-blue-600 bg-blue-500/12 dark:border-cyan-400 dark:bg-cyan-400/15 rounded-md pointer-events-none z-30"
                   style={{
                     left: `${(Math.min(selectionBox.startX, selectionBox.currentX) / 1000) * 100}%`,
                     top: `${(Math.min(selectionBox.startY, selectionBox.currentY) / 580) * 100}%`,
                     width: `${(Math.abs(selectionBox.currentX - selectionBox.startX) / 1000) * 100}%`,
                     height: `${(Math.abs(selectionBox.currentY - selectionBox.startY) / 580) * 100}%`
                   }}
-                />
+                >
+                  <div
+                    className={`absolute ${
+                      Math.max(selectionBox.startY, selectionBox.currentY) > 540
+                        ? '-top-6'
+                        : '-bottom-6'
+                    } right-0 px-2 py-0.5 rounded-md bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 text-[10px] font-mono font-bold tabular-nums shadow-md whitespace-nowrap`}
+                  >
+                    {selectionBox.count} {selectionBox.count === 1 ? 'device' : 'devices'}
+                  </div>
+                </div>
               )}
 
-              {/* Multi-Select Group Bounding Box & Group Rotation Handle */}
+              {/* Multi-Select Group Bounding Box, Group Move Handle & Group Rotation Handle */}
               {selectedGroupBounds && (
                 <div
-                  className="absolute border border-dashed border-blue-500/80 dark:border-cyan-400/80 bg-blue-500/[0.03] dark:bg-cyan-400/[0.04] rounded-2xl pointer-events-none z-20"
+                  className="absolute border-2 border-dashed border-blue-500/80 dark:border-cyan-400/80 bg-blue-500/[0.03] dark:bg-cyan-400/[0.04] rounded-2xl pointer-events-none z-20"
                   style={{
                     left: `${(selectedGroupBounds.left / 1000) * 100}%`,
                     top: `${(selectedGroupBounds.top / 580) * 100}%`,
@@ -3746,6 +4196,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                   >
                     <button
                       type="button"
+                      data-group-rotate="true"
                       aria-label="Rotate selected devices"
                       title="Drag to rotate selected devices together (Shift snaps 15° · double-click resets 0°)"
                       onPointerDown={(e) =>
@@ -3767,6 +4218,26 @@ export const NetworkTopologySimulator: React.FC = () => {
                     </button>
                     <div className="w-px h-2.5 bg-blue-500 dark:bg-cyan-400" />
                   </div>
+
+                  {/* Direct Group Drag-to-Move Handle */}
+                  <button
+                    type="button"
+                    data-group-move="true"
+                    aria-label={`Move ${selectedGroupBounds.ids.length} selected devices as a group`}
+                    title="Drag to move all selected devices together as a group"
+                    onPointerDown={(e) => startGroupDrag(e)}
+                    onClick={(e) => e.stopPropagation()}
+                    className={`absolute left-1/2 -translate-x-1/2 ${
+                      selectedGroupBounds.bottom > 542
+                        ? 'top-1.5'
+                        : selectedGroupBounds.top < 36
+                        ? '-top-3.5'
+                        : '-bottom-3.5'
+                    } inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-600 dark:bg-cyan-500 text-white dark:text-slate-950 text-[11px] font-semibold shadow-md pointer-events-auto z-30 cursor-grab active:cursor-grabbing hover:brightness-110 transition-all whitespace-nowrap tabular-nums`}
+                  >
+                    <Move className="w-3 h-3" />
+                    <span>Move Group ({selectedGroupBounds.ids.length})</span>
+                  </button>
                 </div>
               )}
 
@@ -3837,6 +4308,11 @@ export const NetworkTopologySimulator: React.FC = () => {
                         className="pointer-events-auto cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (suppressCanvasClickRef.current) {
+                            suppressCanvasClickRef.current = false;
+                            return;
+                          }
+                          if (tool === 'pan' || tool === 'marquee' || isSpacePanningRef.current) return;
                           if (tool === 'delete') {
                             handleDeleteLink(link.id);
                           } else {
@@ -3983,6 +4459,7 @@ export const NetworkTopologySimulator: React.FC = () => {
 
                     {/* Device Icon Node */}
                     <div
+                      data-device-id={dev.id}
                       style={{
                         left: `${(dev.x / 1000) * 100}%`,
                         top: `${(dev.y / 580) * 100}%`
@@ -3990,6 +4467,10 @@ export const NetworkTopologySimulator: React.FC = () => {
                       title={
                         tool === 'select'
                           ? 'Click: select · Long-click & drag: move · Double-click: open console'
+                          : tool === 'marquee'
+                          ? isSelected && selectedDeviceIds.length >= 2
+                            ? 'Drag to move selected group · Shift+drag canvas to adjust marquee'
+                            : 'Drag rectangle to select multiple devices'
                           : undefined
                       }
                       onPointerDown={(e) => {
@@ -4460,6 +4941,60 @@ export const NetworkTopologySimulator: React.FC = () => {
                   </div>
                 </div>
               )}
+              </div>
+
+              {/* Floating Viewport Zoom & Fit Controls HUD */}
+              <div
+                data-zoom-hud="true"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                className="absolute bottom-3 right-3 z-40 inline-flex items-center gap-0.5 p-1 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 shadow-lg backdrop-blur-xs"
+              >
+                <button
+                  type="button"
+                  aria-label="Zoom out"
+                  title="Zoom out"
+                  disabled={zoom <= 0.41}
+                  onClick={() => zoomAtViewportCenter(zoom - 0.15)}
+                  className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  aria-label="Reset zoom and pan to 100%"
+                  title="Reset zoom & pan to 100%"
+                  onClick={handleResetZoomPan}
+                  className="px-2 py-1 rounded-lg text-[11px] font-mono font-bold tabular-nums text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-w-[3.25rem] text-center whitespace-nowrap shrink-0"
+                >
+                  {Math.round(zoom * 100)}%
+                </button>
+
+                <button
+                  type="button"
+                  aria-label="Zoom in"
+                  title="Zoom in"
+                  disabled={zoom >= 2.74}
+                  onClick={() => zoomAtViewportCenter(zoom + 0.15)}
+                  className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+
+                <span className="h-4 w-px bg-slate-200 dark:bg-slate-700 mx-0.5" aria-hidden="true" />
+
+                <button
+                  type="button"
+                  aria-label="Fit topology to view"
+                  title="Fit topology diagram to view"
+                  onClick={handleFitToView}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+                >
+                  <Maximize2 className="w-3 h-3 text-blue-600 dark:text-cyan-400" />
+                  <span>Fit</span>
+                </button>
+              </div>
             </div>
 
             {/* Selected Shape Styling Bar */}
