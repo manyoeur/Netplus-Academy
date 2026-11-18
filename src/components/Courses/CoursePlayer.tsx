@@ -23,14 +23,16 @@ import {
   Clapperboard,
   SquarePen,
   Activity,
-  ChevronUp
+  ChevronUp,
+  BookOpen,
+  CheckCircle2
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course } from '../../types';
 import { InteractiveCliTerminal } from '../Lab/InteractiveCliTerminal';
 import { CourseThumbnail } from './CourseThumbnail';
 import { InteractiveQuiz, QuizResult } from './InteractiveQuiz';
-import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
+import { getBetweenModuleQuiz, getModuleQuiz } from '../../data/checkpointQuizzes';
 import {
   resolveCourseHierarchy,
   getModuleSectionBreadcrumb
@@ -123,7 +125,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   onOpenPricing,
   onOpenCourseCheckout
 }) => {
-  const { courses, currentUser, completeModule, enrollInCourse } = useAcademy();
+  const { courses, currentUser, completeModule, updateStudentQuizAverage, enrollInCourse } = useAcademy();
   const course = courses.find(c => c.id === courseId) || courses[0];
 
   const [readingStore, setReadingStore] = useState<ReadingStore>(() =>
@@ -194,8 +196,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     setExpandedSections(nextSec);
   };
 
-  // Between-module checkpoint state (null = viewing module, number = checkpoint after module index)
-  const [activeCheckpointAfterIndex, setActiveCheckpointAfterIndex] = useState<number | null>(null);
+  // Player mode: 'study' (module lessons/labs) or 'quiz' (per-module MCQ Quiz Mode)
+  const [playerMode, setPlayerMode] = useState<'study' | 'quiz'>('study');
+  const [quizOrigin, setQuizOrigin] = useState<'manual' | 'next-step'>('manual');
   const [checkpointStore, setCheckpointStore] = useState<CheckpointStore>(() =>
     readCheckpointStore(currentUser.id)
   );
@@ -218,7 +221,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     const freshStore = readReadingStore(currentUser.id);
     setReadingStore(freshStore);
     setCheckpointStore(readCheckpointStore(currentUser.id));
-    setActiveCheckpointAfterIndex(null);
+    setPlayerMode('study');
+    setQuizOrigin('manual');
     const lastModId = freshStore[course.id]?.lastModuleId;
     const foundIdx = lastModId ? course.modules.findIndex(m => m.id === lastModId) : -1;
     setActiveModuleIndex(foundIdx >= 0 ? foundIdx : 0);
@@ -294,7 +298,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
   // Save active module reference & restore its saved scroll position whenever course or module changes
   useEffect(() => {
-    if (!activeModule || activeCheckpointAfterIndex !== null) return;
+    if (!activeModule || playerMode === 'quiz') return;
 
     isRestoringRef.current = true;
     setResumedFromPercent(null);
@@ -373,11 +377,11 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       }
       isRestoringRef.current = false;
     };
-  }, [course.id, activeModule?.id, currentUser.id, activeCheckpointAfterIndex]);
+  }, [course.id, activeModule?.id, currentUser.id, playerMode]);
 
   // Listen for scroll events on the active module and persist reading progress to localStorage
   useEffect(() => {
-    if (!activeModule || activeCheckpointAfterIndex !== null) return;
+    if (!activeModule || playerMode === 'quiz') return;
 
     let pendingMetrics: { scrollY: number; scrollRatio: number; percent: number } | null = null;
 
@@ -434,17 +438,17 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       }
       writePendingToStorage();
     };
-  }, [course.id, activeModule?.id, currentUser.id, activeCheckpointAfterIndex, computeScrollMetrics, persistModuleReading]);
+  }, [course.id, activeModule?.id, currentUser.id, playerMode, computeScrollMetrics, persistModuleReading]);
 
   const flushCurrentModuleProgress = useCallback(() => {
-    if (!activeModule || isRestoringRef.current || activeCheckpointAfterIndex !== null) return;
+    if (!activeModule || isRestoringRef.current || playerMode === 'quiz') return;
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
     const metrics = computeScrollMetrics();
     persistModuleReading(course.id, activeModule.id, metrics);
-  }, [activeModule, activeCheckpointAfterIndex, course.id, computeScrollMetrics, persistModuleReading]);
+  }, [activeModule, playerMode, course.id, computeScrollMetrics, persistModuleReading]);
 
   const handleJumpToTop = () => {
     setResumedFromPercent(null);
@@ -463,25 +467,37 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     course.price > 0 &&
     (!isEnrolled || expiryInfo?.status === 'expired');
   const isViewingLockedContent =
-    isStudentPaymentRequired && (activeModuleIndex > 0 || activeCheckpointAfterIndex !== null);
+    isStudentPaymentRequired && activeModuleIndex > 0;
 
-  const activeCheckpointQuiz =
-    activeCheckpointAfterIndex !== null
-      ? getBetweenModuleQuiz(
-          course,
-          course.modules[activeCheckpointAfterIndex],
-          course.modules[activeCheckpointAfterIndex + 1]
-        )
-      : null;
+  // Resolve multiple-choice quizzes for every module in the course
+  const moduleQuizzes = useMemo(
+    () => course.modules.map((mod, idx) => getModuleQuiz(course, mod, idx)),
+    [course]
+  );
 
-  const currentModuleCheckpointQuiz =
-    activeCheckpointAfterIndex === null && activeModuleIndex < course.modules.length - 1
-      ? getBetweenModuleQuiz(
-          course,
-          activeModule,
-          course.modules[activeModuleIndex + 1]
-        )
-      : null;
+  const activeModuleQuiz = moduleQuizzes[activeModuleIndex] || null;
+
+  const quizMastery = useMemo(() => {
+    const courseResults = checkpointStore[course.id] || {};
+    let passedCount = 0;
+    let attemptedCount = 0;
+    let scoreSum = 0;
+
+    moduleQuizzes.forEach(quiz => {
+      if (!quiz) return;
+      const res = courseResults[quiz.id];
+      if (res) {
+        attemptedCount += 1;
+        scoreSum += res.score;
+        if (res.passed) {
+          passedCount += 1;
+        }
+      }
+    });
+
+    const averageScore = attemptedCount > 0 ? Math.round(scoreSum / attemptedCount) : 0;
+    return { passedCount, attemptedCount, averageScore };
+  }, [checkpointStore, course.id, moduleQuizzes]);
 
   const saveQuizResult = useCallback(
     (quizId: string, result: QuizResult) => {
@@ -492,31 +508,57 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
         const shouldKeepBest =
           prevResult && prevResult.passed && prevResult.score > result.score;
         const storedResult = shouldKeepBest ? prevResult : result;
+        const nextCourseMap = {
+          ...courseMap,
+          [quizId]: storedResult
+        };
         const next: CheckpointStore = {
           ...prev,
-          [course.id]: {
-            ...courseMap,
-            [quizId]: storedResult
-          }
+          [course.id]: nextCourseMap
         };
         writeCheckpointStore(currentUser.id, next);
+
+        // Sync average quiz score into AcademyContext progress analytics
+        const scores = moduleQuizzes
+          .map(q => (q ? nextCourseMap[q.id]?.score : undefined))
+          .filter((s): s is number => typeof s === 'number');
+        if (scores.length > 0) {
+          const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+          updateStudentQuizAverage(course.id, avg);
+        }
+
         return next;
       });
     },
-    [course.id, currentUser.id]
+    [course.id, currentUser.id, moduleQuizzes, updateStudentQuizAverage]
   );
 
-  const handleOpenCheckpoint = (afterIndex: number) => {
+  const handleOpenModuleQuiz = (moduleIndex: number, origin: 'manual' | 'next-step' = 'manual') => {
     flushCurrentModuleProgress();
-    setActiveModuleIndex(afterIndex);
-    setActiveCheckpointAfterIndex(afterIndex);
+    setActiveModuleIndex(moduleIndex);
+    setQuizOrigin(origin);
+    setPlayerMode('quiz');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSwitchPlayerMode = (nextMode: 'study' | 'quiz') => {
+    if (nextMode === playerMode) return;
+    if (nextMode === 'quiz') {
+      handleOpenModuleQuiz(activeModuleIndex, 'manual');
+    } else {
+      setQuizOrigin('manual');
+      setPlayerMode('study');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   const handleSelectModule = (idx: number) => {
     flushCurrentModuleProgress();
-    setActiveCheckpointAfterIndex(null);
+    setQuizOrigin('manual');
     setActiveModuleIndex(idx);
+    if (playerMode === 'quiz') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   const handleNextModule = () => {
@@ -527,11 +569,21 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       return;
     }
 
-    if (activeCheckpointAfterIndex !== null) {
-      const nextIdx = activeCheckpointAfterIndex + 1;
-      setActiveCheckpointAfterIndex(null);
+    if (playerMode === 'quiz') {
+      const nextIdx = activeModuleIndex + 1;
       if (nextIdx < course.modules.length) {
         setActiveModuleIndex(nextIdx);
+        if (quizOrigin === 'next-step') {
+          setPlayerMode('study');
+          setQuizOrigin('manual');
+        }
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        setPlayerMode('study');
+        setQuizOrigin('manual');
+        if (progressPercent === 100) {
+          onViewCertificates();
+        }
       }
       return;
     }
@@ -542,13 +594,12 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     if (activeModuleIndex < course.modules.length - 1) {
       const nextModule = course.modules[activeModuleIndex + 1];
       const betweenQuiz = getBetweenModuleQuiz(course, activeModule, nextModule);
-      const existingCheckpoint = betweenQuiz
-        ? checkpointStore[course.id]?.[betweenQuiz.id]
+      const existingCheckpoint = activeModuleQuiz
+        ? checkpointStore[course.id]?.[activeModuleQuiz.id]
         : undefined;
 
       if (betweenQuiz && !existingCheckpoint?.passed) {
-        setActiveCheckpointAfterIndex(activeModuleIndex);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        handleOpenModuleQuiz(activeModuleIndex, 'next-step');
       } else {
         setActiveModuleIndex(prev => prev + 1);
       }
@@ -556,9 +607,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   };
 
   const handlePrevModule = () => {
-    if (activeCheckpointAfterIndex !== null) {
-      setActiveModuleIndex(activeCheckpointAfterIndex);
-      setActiveCheckpointAfterIndex(null);
+    if (playerMode === 'quiz') {
+      setPlayerMode('study');
+      setQuizOrigin('manual');
       return;
     }
 
@@ -571,14 +622,14 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   return (
     <div className="w-full space-y-4">
       {/* Top Navigation Bar */}
-      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <button
             onClick={() => {
               flushCurrentModuleProgress();
               onBack();
             }}
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 transition-colors shrink-0"
+            className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             aria-label="Back to courses"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -594,8 +645,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               </h2>
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
-              {activeCheckpointAfterIndex !== null && activeCheckpointQuiz
-                ? `Knowledge Retention Check · Between Module ${activeCheckpointAfterIndex + 1} & Module ${activeCheckpointAfterIndex + 2}`
+              {playerMode === 'quiz' && activeModuleQuiz
+                ? `Quiz Mode · Module ${activeModuleIndex + 1} of ${course.modules.length}: ${activeModule.title}`
                 : activeBreadcrumb
                 ? `${activeBreadcrumb.chapterNumber} ${activeBreadcrumb.chapterTitle} › ${activeBreadcrumb.sectionNumber} ${activeBreadcrumb.mainContentTitle} › ${activeBreadcrumb.itemNumber} ${activeModule.title} · Scroll ${currentReadingPercent}%`
                 : `Module ${activeModuleIndex + 1} of ${course.modules.length}: ${activeModule.title} · Scroll ${currentReadingPercent}%`}
@@ -603,8 +654,51 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           </div>
         </div>
 
-        {/* Progress & Actions */}
-        <div className="flex items-center gap-4 shrink-0">
+        {/* Mode Switcher, Progress & Actions */}
+        <div className="flex flex-wrap items-center justify-between lg:justify-end gap-3 shrink-0">
+          {/* Segmented Study Mode / Quiz Mode Toggle */}
+          <div
+            role="tablist"
+            aria-label="Course player mode"
+            className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={playerMode === 'study'}
+              onClick={() => handleSwitchPlayerMode('study')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                playerMode === 'study'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5 shrink-0" />
+              <span>Study Mode</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={playerMode === 'quiz'}
+              onClick={() => handleSwitchPlayerMode('quiz')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                playerMode === 'quiz'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <CheckSquare className="w-3.5 h-3.5 shrink-0" />
+              <span>Quiz Mode</span>
+              <span
+                className={`font-mono text-[10px] tabular-nums ${
+                  playerMode === 'quiz' ? 'text-blue-100' : 'text-slate-400 dark:text-slate-500'
+                }`}
+              >
+                {quizMastery.passedCount}/{course.modules.length}
+              </span>
+            </button>
+          </div>
+
           <div className="w-36 hidden sm:block text-right">
             <div className="flex justify-between text-[11px] font-mono tabular-nums font-bold text-slate-500 mb-1">
               <span>Course</span>
@@ -737,23 +831,18 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                 ) : (
                                   section.items.map(({ module: m, flatIndex: idx, itemNumber }) => {
                                     const isActive =
-                                      activeCheckpointAfterIndex === null && idx === activeModuleIndex;
+                                      playerMode === 'study' && idx === activeModuleIndex;
                                     const isDone = isModuleCompleted(m.id);
                                     const savedModPercent = isActive
                                       ? currentReadingPercent
                                       : readingStore[course.id]?.modules?.[m.id]?.percent ?? 0;
 
-                                    const nextMod =
-                                      idx < course.modules.length - 1
-                                        ? course.modules[idx + 1]
-                                        : undefined;
-                                    const betweenQuiz = nextMod
-                                      ? getBetweenModuleQuiz(course, m, nextMod)
-                                      : null;
-                                    const checkpointResult = betweenQuiz
-                                      ? checkpointStore[course.id]?.[betweenQuiz.id]
+                                    const modQuiz = moduleQuizzes[idx];
+                                    const modQuizResult = modQuiz
+                                      ? checkpointStore[course.id]?.[modQuiz.id]
                                       : undefined;
-                                    const isCheckpointActive = activeCheckpointAfterIndex === idx;
+                                    const isQuizActive =
+                                      playerMode === 'quiz' && idx === activeModuleIndex;
 
                                     const ModTypeIcon =
                                       m.type === 'lab'
@@ -813,13 +902,13 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                           )}
                                         </button>
 
-                                        {/* Injected Between-Module Retention Checkpoint Trigger */}
-                                        {betweenQuiz && (
+                                        {/* Per-Module Quiz Mode Trigger */}
+                                        {modQuiz && m.type !== 'quiz' && (
                                           <button
                                             type="button"
-                                            onClick={() => handleOpenCheckpoint(idx)}
+                                            onClick={() => handleOpenModuleQuiz(idx, 'manual')}
                                             className={`w-full px-2.5 py-1.5 rounded-lg text-left transition-colors flex items-center justify-between gap-2 ${
-                                              isCheckpointActive
+                                              isQuizActive
                                                 ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-900 dark:text-cyan-200 font-semibold'
                                                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                                             }`}
@@ -827,26 +916,26 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                             <div className="flex items-center gap-2 min-w-0">
                                               <CheckSquare
                                                 className={`w-3.5 h-3.5 shrink-0 ${
-                                                  checkpointResult?.passed
+                                                  modQuizResult?.passed
                                                     ? 'text-emerald-600 dark:text-emerald-400'
-                                                    : isCheckpointActive
+                                                    : isQuizActive
                                                     ? 'text-blue-600 dark:text-cyan-400'
                                                     : 'text-slate-400'
                                                 }`}
                                               />
                                               <span className="text-[11px] truncate">
-                                                Retention Check · {betweenQuiz.questions.length} Qs
+                                                Module Quiz · {modQuiz.questions.length} Qs
                                               </span>
                                             </div>
-                                            {checkpointResult && (
+                                            {modQuizResult && (
                                               <span
                                                 className={`text-[10px] font-mono tabular-nums font-bold shrink-0 ${
-                                                  checkpointResult.passed
+                                                  modQuizResult.passed
                                                     ? 'text-emerald-600 dark:text-emerald-400'
                                                     : 'text-amber-600 dark:text-amber-400'
                                                 }`}
                                               >
-                                                {checkpointResult.score}%
+                                                {modQuizResult.score}%
                                               </span>
                                             )}
                                           </button>
@@ -1016,8 +1105,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             </div>
           )}
 
-          {/* Reading Progress & Resume Banner (hidden when in between-module checkpoint quiz or locked preview) */}
-          {activeCheckpointAfterIndex === null && !isViewingLockedContent && (
+          {/* Reading Progress & Resume Banner (shown in Study Mode for unlocked modules) */}
+          {playerMode === 'study' && !isViewingLockedContent && (
             <div className="px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 min-w-0">
@@ -1135,7 +1224,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveCheckpointAfterIndex(null);
+                    setPlayerMode('study');
+                    setQuizOrigin('manual');
                     setActiveModuleIndex(0);
                   }}
                   className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold transition-colors"
@@ -1144,44 +1234,130 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 </button>
               </div>
             </div>
-          ) : activeCheckpointAfterIndex !== null && activeCheckpointQuiz ? (
-            <InteractiveQuiz
-              quizKey={activeCheckpointQuiz.id}
-              title={activeCheckpointQuiz.title}
-              subtitle={activeCheckpointQuiz.subtitle}
-              questions={activeCheckpointQuiz.questions}
-              passingScore={
-                course.modules[activeCheckpointAfterIndex]?.checkpointQuiz?.passingScore ??
-                course.gradingCriteria?.quizPassingScore ??
-                activeCheckpointQuiz.passingScore
-              }
-              mode="checkpoint"
-              previousModuleTitle={course.modules[activeCheckpointAfterIndex]?.title}
-              nextModuleTitle={course.modules[activeCheckpointAfterIndex + 1]?.title}
-              previousResult={checkpointStore[course.id]?.[activeCheckpointQuiz.id] || null}
-              allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
-              onComplete={(result) => {
-                saveQuizResult(activeCheckpointQuiz.id, result);
-              }}
-              onContinue={() => {
-                const targetIdx = activeCheckpointAfterIndex + 1;
-                setActiveCheckpointAfterIndex(null);
-                if (targetIdx < course.modules.length) {
-                  setActiveModuleIndex(targetIdx);
+          ) : playerMode === 'quiz' && activeModuleQuiz ? (
+            <div className="space-y-4">
+              {/* Quiz Mode Mastery Header & Per-Module Selector Strip */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-0.5 min-w-0">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Quiz Mode · Test Your Knowledge by Module
+                    </h3>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                      <span>
+                        Passed <strong className="text-slate-800 dark:text-slate-200">{quizMastery.passedCount}/{course.modules.length}</strong> modules
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        Average score <strong className="text-blue-600 dark:text-cyan-400">{quizMastery.attemptedCount > 0 ? `${quizMastery.averageScore}%` : '—'}</strong>
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span>Passing any module quiz marks that module complete</span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchPlayerMode('study')}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  >
+                    <BookOpen className="w-3.5 h-3.5" />
+                    <span>Return to Study Mode</span>
+                  </button>
+                </div>
+
+                {/* Module-by-Module Quiz Switcher */}
+                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+                  {course.modules.map((mod, idx) => {
+                    const qConfig = moduleQuizzes[idx];
+                    const res = qConfig ? checkpointStore[course.id]?.[qConfig.id] : undefined;
+                    const isSelected = idx === activeModuleIndex;
+                    const isLocked = isStudentPaymentRequired && idx > 0;
+
+                    return (
+                      <button
+                        key={mod.id}
+                        type="button"
+                        onClick={() => handleSelectModule(idx)}
+                        title={mod.title}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono tabular-nums transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                          isSelected
+                            ? 'bg-blue-600 border-blue-600 text-white font-bold shadow-sm'
+                            : res?.passed
+                            ? 'bg-emerald-50/80 dark:bg-emerald-950/35 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 hover:border-emerald-400'
+                            : res
+                            ? 'bg-amber-50/80 dark:bg-amber-950/35 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 hover:border-amber-400'
+                            : 'bg-slate-50 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400 dark:hover:border-cyan-500'
+                        }`}
+                      >
+                        {isLocked ? (
+                          <Lock className="w-3 h-3 shrink-0" />
+                        ) : res?.passed ? (
+                          <CheckCircle2
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              isSelected ? 'text-white' : 'text-emerald-600 dark:text-emerald-400'
+                            }`}
+                          />
+                        ) : null}
+                        <span>M{idx + 1}</span>
+                        {res ? (
+                          <span className="opacity-90">· {res.score}%</span>
+                        ) : qConfig ? (
+                          <span className="opacity-70">· {qConfig.questions.length} Qs</span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <InteractiveQuiz
+                quizKey={`quiz-mode:${course.id}:${activeModule.id}:${activeModuleQuiz.id}`}
+                title={activeModuleQuiz.title}
+                subtitle={activeModuleQuiz.subtitle}
+                questions={activeModuleQuiz.questions}
+                passingScore={activeModuleQuiz.passingScore}
+                mode="quiz-mode"
+                allowModeToggle={true}
+                previousModuleTitle={activeModule.title}
+                nextModuleTitle={
+                  activeModuleIndex < course.modules.length - 1
+                    ? course.modules[activeModuleIndex + 1]?.title
+                    : undefined
                 }
-              }}
-              onSkip={() => {
-                const targetIdx = activeCheckpointAfterIndex + 1;
-                setActiveCheckpointAfterIndex(null);
-                if (targetIdx < course.modules.length) {
-                  setActiveModuleIndex(targetIdx);
+                continueLabel={
+                  activeModuleIndex < course.modules.length - 1
+                    ? quizOrigin === 'next-step'
+                      ? `Continue to Module ${activeModuleIndex + 2}`
+                      : `Next: Module ${activeModuleIndex + 2} Quiz`
+                    : progressPercent === 100
+                    ? 'Finish & View Certificate'
+                    : 'Return to Study Mode'
                 }
-              }}
-              onBackToModule={() => {
-                setActiveModuleIndex(activeCheckpointAfterIndex);
-                setActiveCheckpointAfterIndex(null);
-              }}
-            />
+                previousResult={checkpointStore[course.id]?.[activeModuleQuiz.id] || null}
+                allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
+                onComplete={(result) => {
+                  saveQuizResult(activeModuleQuiz.id, result);
+                  if (result.passed && !isStudentPaymentRequired) {
+                    completeModule(course.id, activeModule.id);
+                  }
+                }}
+                onContinue={handleNextModule}
+                onSkip={
+                  quizOrigin === 'next-step' && activeModuleIndex < course.modules.length - 1
+                    ? () => {
+                        setPlayerMode('study');
+                        setQuizOrigin('manual');
+                        setActiveModuleIndex(prev => prev + 1);
+                      }
+                    : undefined
+                }
+                onBackToModule={() => {
+                  setPlayerMode('study');
+                  setQuizOrigin('manual');
+                }}
+              />
+            </div>
           ) : (
             <>
               {/* Theory Module */}
@@ -1317,6 +1493,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                     75
                   }
                   mode="module"
+                  allowModeToggle={true}
                   nextModuleTitle={
                     activeModuleIndex < course.modules.length - 1
                       ? course.modules[activeModuleIndex + 1]?.title
@@ -1340,8 +1517,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 />
               )}
 
-              {/* Quick Between-Module Retention Prompt at Bottom of Module */}
-              {currentModuleCheckpointQuiz && (
+              {/* Post-Module Quiz Mode Callout at Bottom of Every Non-Quiz Module */}
+              {activeModule.type !== 'quiz' && activeModuleQuiz && (
                 <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-start gap-3 min-w-0">
                     <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-cyan-400 shrink-0">
@@ -1349,35 +1526,40 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                     </div>
                     <div className="min-w-0 space-y-0.5">
                       <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-900 dark:text-slate-100">
-                        <span>{currentModuleCheckpointQuiz.title}</span>
-                        {checkpointStore[course.id]?.[currentModuleCheckpointQuiz.id] && (
+                        <span>{activeModuleQuiz.title}</span>
+                        {checkpointStore[course.id]?.[activeModuleQuiz.id] && (
                           <span
                             className={`font-mono text-[11px] tabular-nums ${
-                              checkpointStore[course.id][currentModuleCheckpointQuiz.id].passed
+                              checkpointStore[course.id][activeModuleQuiz.id].passed
                                 ? 'text-emerald-600 dark:text-emerald-400'
                                 : 'text-amber-600 dark:text-amber-400'
                             }`}
                           >
-                            · Best {checkpointStore[course.id][currentModuleCheckpointQuiz.id].score}%
+                            · Best {checkpointStore[course.id][activeModuleQuiz.id].score}%
+                            {checkpointStore[course.id][activeModuleQuiz.id].passed
+                              ? ' (Passed)'
+                              : ' (Retry)'}
                           </span>
                         )}
                       </div>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        {currentModuleCheckpointQuiz.questions.length} quick questions with instant feedback before Module {activeModuleIndex + 2}.
+                        Test your knowledge after Module {activeModuleIndex + 1} with{' '}
+                        {activeModuleQuiz.questions.length} multiple-choice questions (Pass{' '}
+                        {activeModuleQuiz.passingScore}%).
                       </p>
                     </div>
                   </div>
 
                   <button
                     type="button"
-                    onClick={() => handleOpenCheckpoint(activeModuleIndex)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200 dark:border-cyan-800 bg-white dark:bg-slate-800 text-xs font-semibold text-blue-700 dark:text-cyan-300 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0"
+                    onClick={() => handleOpenModuleQuiz(activeModuleIndex, 'manual')}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200 dark:border-cyan-800 bg-white dark:bg-slate-800 text-xs font-semibold text-blue-700 dark:text-cyan-300 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   >
                     <CheckSquare className="w-3.5 h-3.5" />
                     <span>
-                      {checkpointStore[course.id]?.[currentModuleCheckpointQuiz.id]
-                        ? 'Retake Retention Check'
-                        : 'Take Retention Check'}
+                      {checkpointStore[course.id]?.[activeModuleQuiz.id]
+                        ? 'Retake in Quiz Mode'
+                        : 'Test in Quiz Mode'}
                     </span>
                   </button>
                 </div>
@@ -1387,35 +1569,54 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
           {/* Bottom Next/Previous Step Bar */}
           {!isViewingLockedContent && (
-            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3">
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-3">
               <button
+                type="button"
                 onClick={handlePrevModule}
-                disabled={activeModuleIndex === 0 && activeCheckpointAfterIndex === null}
-                className="flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 whitespace-nowrap shrink-0"
+                disabled={activeModuleIndex === 0 && playerMode === 'study'}
+                className="flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               >
                 <ChevronLeft className="w-4 h-4" />
                 <span>
-                  {activeCheckpointAfterIndex !== null
-                    ? `Back to Module ${activeCheckpointAfterIndex + 1}`
+                  {playerMode === 'quiz'
+                    ? `Back to Module ${activeModuleIndex + 1} Study`
                     : 'Previous Module'}
                 </span>
               </button>
 
-              <button
-                onClick={handleNextModule}
-                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-all whitespace-nowrap shrink-0"
-              >
-                <span>
-                  {isStudentPaymentRequired
-                    ? `Pay $${course.price} & Unlock Next Modules`
-                    : activeCheckpointAfterIndex !== null
-                    ? `Proceed to Module ${activeCheckpointAfterIndex + 2}`
-                    : activeModuleIndex === course.modules.length - 1
-                    ? 'Finish & Generate Certificate'
-                    : 'Complete & Next Module'}
-                </span>
-                <ChevronRight className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                {playerMode === 'study' && activeModule.type !== 'quiz' && activeModuleQuiz && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenModuleQuiz(activeModuleIndex, 'manual')}
+                    className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  >
+                    <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                    <span>Module Quiz</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleNextModule}
+                  className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-all whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <span>
+                    {isStudentPaymentRequired
+                      ? `Pay $${course.price} & Unlock Next Modules`
+                      : playerMode === 'quiz'
+                      ? activeModuleIndex < course.modules.length - 1
+                        ? `Proceed to Module ${activeModuleIndex + 2}`
+                        : progressPercent === 100
+                        ? 'Finish & View Certificate'
+                        : 'Return to Study Mode'
+                      : activeModuleIndex === course.modules.length - 1
+                      ? 'Finish & Generate Certificate'
+                      : 'Complete & Next Module'}
+                  </span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
         </div>

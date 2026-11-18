@@ -27,9 +27,12 @@ interface InteractiveQuizProps {
   subtitle?: string;
   questions: QuizQuestion[];
   passingScore: number;
-  mode?: 'checkpoint' | 'module';
+  mode?: 'checkpoint' | 'module' | 'quiz-mode';
+  allowModeToggle?: boolean;
+  defaultFeedbackMode?: 'immediate' | 'exam';
   nextModuleTitle?: string;
   previousModuleTitle?: string;
+  continueLabel?: string;
   previousResult?: QuizResult | null;
   allowRetakes?: boolean;
   onComplete?: (result: QuizResult) => void;
@@ -47,8 +50,11 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
   questions,
   passingScore,
   mode = 'checkpoint',
+  allowModeToggle = false,
+  defaultFeedbackMode = 'immediate',
   nextModuleTitle,
   previousModuleTitle,
+  continueLabel,
   previousResult,
   allowRetakes = true,
   onComplete,
@@ -56,9 +62,11 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
   onSkip,
   onBackToModule
 }) => {
+  const [feedbackMode, setFeedbackMode] = useState<'immediate' | 'exam'>(defaultFeedbackMode);
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [activeIndex, setActiveIndex] = useState<number>(0);
   const [showSummary, setShowSummary] = useState<boolean>(false);
+  const [isExamSubmitted, setIsExamSubmitted] = useState<boolean>(false);
   const completedAttemptRef = useRef<boolean>(false);
 
   // Reset internal state cleanly whenever the quiz target changes
@@ -66,6 +74,7 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
     setAnswers({});
     setActiveIndex(0);
     setShowSummary(false);
+    setIsExamSubmitted(false);
     completedAttemptRef.current = false;
   }, [quizKey]);
 
@@ -100,9 +109,9 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
     };
   }, [answers, passingScore, questions, totalCount]);
 
-  // Fire completion callback automatically once all questions have received immediate feedback
+  // In immediate mode, fire completion callback automatically once all questions are answered
   useEffect(() => {
-    if (metrics.allAnswered && !completedAttemptRef.current) {
+    if (feedbackMode === 'immediate' && metrics.allAnswered && !completedAttemptRef.current) {
       completedAttemptRef.current = true;
       onComplete?.({
         score: metrics.overallScore,
@@ -115,6 +124,7 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
     }
   }, [
     answers,
+    feedbackMode,
     metrics.allAnswered,
     metrics.correctCount,
     metrics.overallScore,
@@ -130,28 +140,64 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
   const currentQuestion = questions[activeIndex] || questions[0];
   const selectedForCurrent = answers[currentQuestion.id];
   const isCurrentAnswered = typeof selectedForCurrent === 'number';
+  const shouldRevealCurrent =
+    isCurrentAnswered && (feedbackMode === 'immediate' || isExamSubmitted);
   const isCurrentCorrect =
-    isCurrentAnswered && selectedForCurrent === currentQuestion.correctAnswerIndex;
+    shouldRevealCurrent && selectedForCurrent === currentQuestion.correctAnswerIndex;
 
   const handleSelectOption = (questionId: string, optionIndex: number) => {
-    // Immediate feedback locks the question so the learner reviews the result right away
-    if (typeof answers[questionId] === 'number') return;
+    if (feedbackMode === 'immediate') {
+      // Immediate feedback locks the question so the learner reviews the result right away
+      if (typeof answers[questionId] === 'number') return;
+    } else if (isExamSubmitted) {
+      return;
+    }
     setAnswers(prev => ({
       ...prev,
       [questionId]: optionIndex
     }));
   };
 
+  const handleSwitchFeedbackMode = (nextMode: 'immediate' | 'exam') => {
+    if (nextMode === feedbackMode) return;
+    setFeedbackMode(nextMode);
+    setAnswers({});
+    setActiveIndex(0);
+    setShowSummary(false);
+    setIsExamSubmitted(false);
+    completedAttemptRef.current = false;
+  };
+
+  const handleSubmitExam = () => {
+    if (!metrics.allAnswered) return;
+    setIsExamSubmitted(true);
+    setShowSummary(true);
+    if (!completedAttemptRef.current) {
+      completedAttemptRef.current = true;
+      onComplete?.({
+        score: metrics.overallScore,
+        correctCount: metrics.correctCount,
+        totalCount,
+        passed: metrics.passed,
+        answers,
+        completedAt: new Date().toISOString()
+      });
+    }
+  };
+
   const handleRetake = () => {
     setAnswers({});
     setActiveIndex(0);
     setShowSummary(false);
+    setIsExamSubmitted(false);
     completedAttemptRef.current = false;
   };
 
   const handleNextStep = () => {
     if (activeIndex < totalCount - 1) {
       setActiveIndex(prev => prev + 1);
+    } else if (feedbackMode === 'exam' && !isExamSubmitted) {
+      handleSubmitExam();
     } else {
       setShowSummary(true);
     }
@@ -179,12 +225,18 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
           <div className="space-y-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono uppercase tracking-wider text-blue-600 dark:text-cyan-400 font-semibold">
               <CheckSquare className="w-3.5 h-3.5 shrink-0" />
-              <span>{mode === 'checkpoint' ? 'Between-Module Retention Check' : 'Module Assessment'}</span>
+              <span>
+                {mode === 'quiz-mode'
+                  ? 'Module Quiz Mode'
+                  : mode === 'checkpoint'
+                  ? 'Between-Module Retention Check'
+                  : 'Module Assessment'}
+              </span>
               <span className="text-slate-300 dark:text-slate-700">·</span>
               <span className="tabular-nums text-slate-600 dark:text-slate-400">
                 Pass {passingScore}%
               </span>
-              {previousResult && !metrics.allAnswered && (
+              {previousResult && !(feedbackMode === 'immediate' ? metrics.allAnswered : isExamSubmitted) && (
                 <>
                   <span className="text-slate-300 dark:text-slate-700">·</span>
                   <span
@@ -194,7 +246,7 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
                         : 'text-amber-600 dark:text-amber-400'
                     }`}
                   >
-                    Last score {previousResult.score}% ({previousResult.passed ? 'Passed' : 'Retry'})
+                    Best score {previousResult.score}% ({previousResult.passed ? 'Passed' : 'Retry'})
                   </span>
                 </>
               )}
@@ -210,32 +262,71 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
             )}
           </div>
 
-          {/* Live Scoreboard Readout */}
-          <div className="flex items-center gap-4 px-3.5 py-2.5 rounded-xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 shrink-0 tabular-nums">
-            <div>
-              <div className="text-[10px] uppercase tracking-wider font-mono text-slate-500 dark:text-slate-400">
-                Live Score
+          <div className="flex flex-col sm:items-end gap-2.5 shrink-0">
+            {allowModeToggle && (
+              <div
+                role="group"
+                aria-label="Quiz feedback mode"
+                className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              >
+                <button
+                  type="button"
+                  onClick={() => handleSwitchFeedbackMode('immediate')}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                    feedbackMode === 'immediate'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  Instant Feedback
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchFeedbackMode('exam')}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                    feedbackMode === 'exam'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  Exam Check
+                </button>
               </div>
-              <div className="text-base font-extrabold text-slate-900 dark:text-white">
-                {metrics.answeredCount > 0 ? `${metrics.overallScore}%` : '0%'}
+            )}
+
+            {/* Live Scoreboard Readout */}
+            <div className="flex items-center gap-4 px-3.5 py-2.5 rounded-xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 shrink-0 tabular-nums">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider font-mono text-slate-500 dark:text-slate-400">
+                  {feedbackMode === 'exam' && !isExamSubmitted ? 'Exam Score' : 'Live Score'}
+                </div>
+                <div className="text-base font-extrabold text-slate-900 dark:text-white">
+                  {feedbackMode === 'exam' && !isExamSubmitted
+                    ? 'Pending'
+                    : metrics.answeredCount > 0
+                    ? `${metrics.overallScore}%`
+                    : '0%'}
+                </div>
               </div>
-            </div>
-            <div className="h-7 w-px bg-slate-200 dark:bg-slate-700" />
-            <div>
-              <div className="text-[10px] uppercase tracking-wider font-mono text-slate-500 dark:text-slate-400">
-                Correct
+              <div className="h-7 w-px bg-slate-200 dark:bg-slate-700" />
+              <div>
+                <div className="text-[10px] uppercase tracking-wider font-mono text-slate-500 dark:text-slate-400">
+                  Correct
+                </div>
+                <div className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                  {feedbackMode === 'exam' && !isExamSubmitted
+                    ? `—/${totalCount}`
+                    : `${metrics.correctCount}/${totalCount}`}
+                </div>
               </div>
-              <div className="text-sm font-bold text-slate-800 dark:text-slate-200">
-                {metrics.correctCount}/{totalCount}
-              </div>
-            </div>
-            <div className="h-7 w-px bg-slate-200 dark:bg-slate-700" />
-            <div>
-              <div className="text-[10px] uppercase tracking-wider font-mono text-slate-500 dark:text-slate-400">
-                Progress
-              </div>
-              <div className="text-sm font-bold text-blue-600 dark:text-cyan-400">
-                {metrics.answeredCount}/{totalCount}
+              <div className="h-7 w-px bg-slate-200 dark:bg-slate-700" />
+              <div>
+                <div className="text-[10px] uppercase tracking-wider font-mono text-slate-500 dark:text-slate-400">
+                  Answered
+                </div>
+                <div className="text-sm font-bold text-blue-600 dark:text-cyan-400">
+                  {metrics.answeredCount}/{totalCount}
+                </div>
               </div>
             </div>
           </div>
@@ -246,16 +337,20 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
           {questions.map((q, idx) => {
             const picked = answers[q.id];
             const answered = typeof picked === 'number';
-            const correct = answered && picked === q.correctAnswerIndex;
+            const revealed = answered && (feedbackMode === 'immediate' || isExamSubmitted);
+            const correct = revealed && picked === q.correctAnswerIndex;
             const isCurrent = !showSummary && idx === activeIndex;
 
             let stepStyle =
               'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-400 dark:hover:border-cyan-500';
 
-            if (answered) {
+            if (revealed) {
               stepStyle = correct
                 ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300'
                 : 'bg-red-50 dark:bg-red-950/50 border-red-300 dark:border-red-700 text-red-800 dark:text-red-300';
+            } else if (answered) {
+              stepStyle =
+                'bg-blue-50 dark:bg-blue-950/50 border-blue-300 dark:border-cyan-700 text-blue-800 dark:text-cyan-200';
             }
 
             if (isCurrent) {
@@ -270,27 +365,25 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
                   setShowSummary(false);
                   setActiveIndex(idx);
                 }}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-mono tabular-nums transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 ${stepStyle}`}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-mono tabular-nums transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${stepStyle}`}
               >
-                {answered ? (
+                {revealed ? (
                   correct ? (
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   ) : (
                     <XCircle className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0" />
                   )
-                ) : (
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500 shrink-0" />
-                )}
+                ) : null}
                 <span>Q{idx + 1}</span>
               </button>
             );
           })}
 
-          {metrics.allAnswered && (
+          {(feedbackMode === 'immediate' ? metrics.allAnswered : isExamSubmitted) && (
             <button
               type="button"
               onClick={() => setShowSummary(true)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                 showSummary
                   ? 'bg-blue-600 border-blue-600 text-white'
                   : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-blue-500'
@@ -312,7 +405,7 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
               <span>
                 Question {activeIndex + 1} of {totalCount}
               </span>
-              {isCurrentAnswered ? (
+              {shouldRevealCurrent ? (
                 <span
                   className={`inline-flex items-center gap-1 font-semibold ${
                     isCurrentCorrect
@@ -332,8 +425,16 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
                     </>
                   )}
                 </span>
+              ) : isCurrentAnswered ? (
+                <span className="font-semibold text-blue-600 dark:text-cyan-400">
+                  Selection recorded · Submit at end to grade
+                </span>
               ) : (
-                <span>Select an answer for immediate feedback</span>
+                <span>
+                  {feedbackMode === 'exam'
+                    ? 'Select an option (you can change answers before submitting)'
+                    : 'Select an answer for immediate feedback'}
+                </span>
               )}
             </div>
 
@@ -348,13 +449,15 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
               const isSelected = selectedForCurrent === optIdx;
               const isRightOption = optIdx === currentQuestion.correctAnswerIndex;
               const letter = OPTION_LETTERS[optIdx] || String(optIdx + 1);
+              const lockOption =
+                feedbackMode === 'immediate' ? isCurrentAnswered : isExamSubmitted;
 
               let containerClass =
                 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:border-blue-500 dark:hover:border-cyan-400 hover:bg-slate-50 dark:hover:bg-slate-800/70';
               let badgeClass =
                 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700';
 
-              if (isCurrentAnswered) {
+              if (shouldRevealCurrent) {
                 if (isRightOption) {
                   containerClass =
                     'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 dark:border-emerald-600 text-emerald-950 dark:text-emerald-100';
@@ -369,6 +472,11 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
                   containerClass =
                     'bg-slate-50/70 dark:bg-slate-900/50 border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 opacity-75';
                 }
+              } else if (isSelected) {
+                containerClass =
+                  'bg-blue-50/90 dark:bg-blue-950/40 border-blue-600 dark:border-cyan-400 text-blue-950 dark:text-cyan-50';
+                badgeClass =
+                  'bg-blue-600 dark:bg-cyan-500 text-white border-blue-600 dark:border-cyan-500';
               }
 
               return (
@@ -377,10 +485,10 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
                   type="button"
                   role="radio"
                   aria-checked={isSelected}
-                  disabled={isCurrentAnswered}
+                  disabled={lockOption}
                   onClick={() => handleSelectOption(currentQuestion.id, optIdx)}
-                  className={`w-full min-h-[44px] p-3 rounded-xl border text-left transition-colors duration-150 motion-reduce:transition-none flex items-center justify-between gap-3 ${
-                    isCurrentAnswered ? 'cursor-default' : 'cursor-pointer'
+                  className={`w-full min-h-[44px] p-3 rounded-xl border text-left transition-colors duration-150 motion-reduce:transition-none flex items-center justify-between gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                    lockOption ? 'cursor-default' : 'cursor-pointer'
                   } ${containerClass}`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -392,17 +500,24 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
                     <span className="text-xs sm:text-sm leading-snug">{option}</span>
                   </div>
 
-                  {isCurrentAnswered && isRightOption && (
+                  {shouldRevealCurrent && isRightOption && (
                     <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300 whitespace-nowrap shrink-0">
                       <CheckCircle2 className="w-4 h-4 shrink-0" />
                       <span>{isSelected ? 'Correct' : 'Correct Answer'}</span>
                     </span>
                   )}
 
-                  {isCurrentAnswered && isSelected && !isRightOption && (
+                  {shouldRevealCurrent && isSelected && !isRightOption && (
                     <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 dark:text-red-300 whitespace-nowrap shrink-0">
                       <XCircle className="w-4 h-4 shrink-0" />
                       <span>Incorrect</span>
+                    </span>
+                  )}
+
+                  {!shouldRevealCurrent && isSelected && (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 dark:text-cyan-300 whitespace-nowrap shrink-0">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>Selected</span>
                     </span>
                   )}
                 </button>
@@ -411,7 +526,7 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
           </div>
 
           {/* Immediate Feedback & Explanation Callout */}
-          {isCurrentAnswered && (
+          {shouldRevealCurrent && (
             <div
               role="status"
               aria-live="polite"
@@ -450,30 +565,30 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
                 type="button"
                 onClick={handlePrevStep}
                 disabled={activeIndex === 0}
-                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               >
                 <ChevronLeft className="w-3.5 h-3.5" />
                 <span>Prev Question</span>
               </button>
 
-              {onBackToModule && previousModuleTitle && (
+              {onBackToModule && (
                 <button
                   type="button"
                   onClick={onBackToModule}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   <BookOpen className="w-3.5 h-3.5" />
-                  <span>Review Module</span>
+                  <span>{previousModuleTitle ? 'Review Module' : 'Back to Study Mode'}</span>
                 </button>
               )}
             </div>
 
             <div className="flex items-center gap-2">
-              {mode === 'checkpoint' && onSkip && !metrics.allAnswered && (
+              {onSkip && !(feedbackMode === 'immediate' ? metrics.allAnswered : isExamSubmitted) && (
                 <button
                   type="button"
                   onClick={onSkip}
-                  className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   <SkipForward className="w-3.5 h-3.5" />
                   <span>Skip Check</span>
@@ -485,17 +600,27 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
                   type="button"
                   onClick={handleNextStep}
                   disabled={!isCurrentAnswered}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   <span>Next Question</span>
                   <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              ) : feedbackMode === 'exam' && !isExamSubmitted ? (
+                <button
+                  type="button"
+                  onClick={handleSubmitExam}
+                  disabled={!metrics.allAnswered}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <Award className="w-3.5 h-3.5" />
+                  <span>Submit &amp; Grade Quiz</span>
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={handleNextStep}
                   disabled={!metrics.allAnswered}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   <Award className="w-3.5 h-3.5" />
                   <span>View Score Summary</span>
@@ -647,10 +772,12 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
               <button
                 type="button"
                 onClick={onContinue}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               >
                 <span>
-                  {nextModuleTitle
+                  {continueLabel
+                    ? continueLabel
+                    : nextModuleTitle
                     ? `Continue to ${nextModuleTitle}`
                     : 'Continue'}
                 </span>

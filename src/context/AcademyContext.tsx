@@ -124,6 +124,7 @@ interface AcademyContextType {
   // Courses & Learning
   enrollInCourse: (courseId: string, customDates?: Partial<Omit<CourseEnrollment, 'courseId'>>) => void;
   completeModule: (courseId: string, moduleId: string) => void;
+  updateStudentQuizAverage: (courseId: string, averageScore: number) => void;
   addCourse: (course: Course) => void;
   updateCourse: (courseId: string, updated: Partial<Course>) => void;
   deleteCourse: (courseId: string) => void;
@@ -1470,6 +1471,17 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
+  const updateStudentQuizAverage = (courseId: string, averageScore: number) => {
+    const safeAvg = Math.max(0, Math.min(100, Math.round(averageScore)));
+    setStudentProgressList(prev =>
+      prev.map(p =>
+        p.studentId === currentUser.id && p.courseId === courseId
+          ? { ...p, quizAverage: safeAvg, lastActive: 'Just now' }
+          : p
+      )
+    );
+  };
+
   const addCourse = (newCourse: Course) => {
     const courseWithOwner: Course = {
       ...newCourse,
@@ -2495,6 +2507,7 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         toggleManualOfflineSim,
         enrollInCourse,
         completeModule,
+        updateStudentQuizAverage,
         addCourse,
         updateCourse,
         deleteCourse,
