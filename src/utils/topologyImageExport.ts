@@ -1,4 +1,10 @@
-import { SimCableType, SimDevice, SimLink } from '../components/Lab/networkSimTypes';
+import {
+  SimCableType,
+  SimDevice,
+  SimDiagramLabel,
+  SimLink,
+  SimTopologyShape
+} from '../components/Lab/networkSimTypes';
 import { getCiscoDeviceInnerSvg } from '../components/Lab/CiscoDeviceIcon';
 import {
   computeCableGeometry,
@@ -12,6 +18,8 @@ interface TopologyExportOptions {
   subtitle?: string;
   devices: SimDevice[];
   links: SimLink[];
+  shapes?: SimTopologyShape[];
+  labels?: SimDiagramLabel[];
   isDark?: boolean;
 }
 
@@ -47,7 +55,7 @@ export function buildTopologySvgString(
   options: TopologyExportOptions,
   pixelScale: number = 1
 ): string {
-  const { title, subtitle, devices, links, isDark = false } = options;
+  const { title, subtitle, devices, links, shapes = [], labels = [], isDark = false } = options;
 
   const logicalW = 1000;
   const headerH = 64;
@@ -171,37 +179,164 @@ export function buildTopologySvgString(
       const boxW = Math.max(76, nameWidth, ipWidth);
       const boxH = ipText ? 31 : 19;
       const iconScale = 0.88;
+      const rotation = typeof dev.rotation === 'number' && Number.isFinite(dev.rotation) ? dev.rotation : 0;
+      const labelOffsetX =
+        typeof dev.labelOffsetX === 'number' && Number.isFinite(dev.labelOffsetX)
+          ? dev.labelOffsetX
+          : 0;
+      const labelOffsetY =
+        typeof dev.labelOffsetY === 'number' && Number.isFinite(dev.labelOffsetY)
+          ? dev.labelOffsetY
+          : 0;
 
       return `
         <g transform="translate(${cx.toFixed(1)}, ${cy.toFixed(1)})">
-          <g transform="translate(${(-32 * iconScale).toFixed(1)}, ${(-28 * iconScale).toFixed(1)}) scale(${iconScale})">
+          <g transform="${rotation ? `rotate(${rotation.toFixed(1)}) ` : ''}translate(${(-32 * iconScale).toFixed(1)}, ${(-28 * iconScale).toFixed(1)}) scale(${iconScale})">
             ${getCiscoDeviceInnerSvg(dev.type)}
           </g>
-          <rect
-            x="${(-boxW / 2).toFixed(1)}" y="29"
-            width="${boxW.toFixed(1)}" height="${boxH}" rx="7"
-            fill="${palette.pillBg}" stroke="${palette.pillBorder}" stroke-width="1"
-          />
+          <g transform="translate(${labelOffsetX.toFixed(1)}, ${labelOffsetY.toFixed(1)})">
+            <rect
+              x="${(-boxW / 2).toFixed(1)}" y="29"
+              width="${boxW.toFixed(1)}" height="${boxH}" rx="7"
+              fill="${palette.pillBg}" stroke="${palette.pillBorder}" stroke-width="1"
+            />
+            <text
+              x="0" y="42"
+              text-anchor="middle"
+              font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
+              font-size="11"
+              font-weight="700"
+              fill="${palette.titleText}"
+            >${escapeXml(dev.name)}</text>
+            ${
+              ipText
+                ? `<text
+                    x="0" y="54.5"
+                    text-anchor="middle"
+                    font-family="Fira Code, ui-monospace, SFMono-Regular, Menlo, monospace"
+                    font-size="9.5"
+                    font-weight="500"
+                    fill="${palette.accentText}"
+                  >${escapeXml(ipText)}</text>`
+                : ''
+            }
+          </g>
+        </g>
+      `;
+    })
+    .join('\n');
+
+  const shapeElements = shapes
+    .map(shape => {
+      const sx = shape.x;
+      const sy = shape.y + headerH;
+      const w = Math.max(50, shape.width);
+      const h = Math.max(40, shape.height);
+      const isFillNone = !shape.fillColor || shape.fillColor === 'transparent' || shape.fillColor === 'none';
+      const fill = isFillNone ? 'none' : shape.fillColor;
+      const fillOpacity = isFillNone ? 0 : Math.min(1, Math.max(0, shape.fillOpacity ?? 0.32));
+      const stroke = shape.borderColor || '#64748b';
+      const strokeWidth = shape.borderWidth || 2;
+      const dash =
+        shape.lineStyle === 'dashed'
+          ? '7 5'
+          : shape.lineStyle === 'dotted'
+          ? '2.5 4.5'
+          : undefined;
+      const labelText = shape.label?.trim();
+      const labelColor = shape.labelColor || stroke;
+
+      const geomMarkup =
+        shape.kind === 'circle'
+          ? `<ellipse
+              cx="${(sx + w / 2).toFixed(1)}"
+              cy="${(sy + h / 2).toFixed(1)}"
+              rx="${(w / 2).toFixed(1)}"
+              ry="${(h / 2).toFixed(1)}"
+              fill="${escapeXml(fill)}"
+              fill-opacity="${fillOpacity.toFixed(2)}"
+              stroke="${escapeXml(stroke)}"
+              stroke-width="${strokeWidth}"
+              ${dash ? `stroke-dasharray="${dash}"` : ''}
+            />`
+          : `<rect
+              x="${sx.toFixed(1)}"
+              y="${sy.toFixed(1)}"
+              width="${w.toFixed(1)}"
+              height="${h.toFixed(1)}"
+              rx="14"
+              fill="${escapeXml(fill)}"
+              fill-opacity="${fillOpacity.toFixed(2)}"
+              stroke="${escapeXml(stroke)}"
+              stroke-width="${strokeWidth}"
+              ${dash ? `stroke-dasharray="${dash}"` : ''}
+            />`;
+
+      const labelMarkup = labelText
+        ? shape.kind === 'circle'
+          ? `<text
+              x="${(sx + w / 2).toFixed(1)}"
+              y="${(sy + Math.min(26, Math.max(16, h * 0.16))).toFixed(1)}"
+              text-anchor="middle"
+              font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
+              font-size="11.5"
+              font-weight="700"
+              fill="${escapeXml(labelColor)}"
+            >${escapeXml(labelText)}</text>`
+          : `<text
+              x="${(sx + 12).toFixed(1)}"
+              y="${(sy + 19).toFixed(1)}"
+              text-anchor="start"
+              font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
+              font-size="11.5"
+              font-weight="700"
+              fill="${escapeXml(labelColor)}"
+            >${escapeXml(labelText)}</text>`
+        : '';
+
+      return `<g>${geomMarkup}${labelMarkup}</g>`;
+    })
+    .join('\n');
+
+  const labelElements = labels
+    .filter(item => item.text && item.text.trim().length > 0)
+    .map(item => {
+      const lx = item.x;
+      const ly = item.y + headerH;
+      const fontSize = Math.min(20, Math.max(10, Number(item.fontSize) || 12));
+      const lines = item.text.split('\n').slice(0, 6);
+      const maxLen = Math.max(...lines.map(l => l.length), 1);
+      const boxW = maxLen * (fontSize * 0.62) + 16;
+      const lineH = fontSize * 1.3;
+      const boxH = lines.length * lineH + 8;
+      const textColor = item.color || (isDark ? '#e2e8f0' : '#1e293b');
+      const hasBg = Boolean(item.bgColor && item.bgColor !== 'transparent');
+      const weight = item.bold !== false ? '700' : '500';
+      const style = item.italic ? 'italic' : 'normal';
+      const startY = ly - ((lines.length - 1) * lineH) / 2 + fontSize * 0.35;
+
+      const bgRect = hasBg
+        ? `<rect x="${(lx - boxW / 2).toFixed(1)}" y="${(ly - boxH / 2).toFixed(1)}" width="${boxW.toFixed(1)}" height="${boxH.toFixed(1)}" rx="6" fill="${escapeXml(item.bgColor!)}" fill-opacity="0.9" stroke="${palette.pillBorder}" stroke-width="1" />`
+        : '';
+
+      const tspans = lines
+        .map(
+          (line, idx) =>
+            `<tspan x="${lx.toFixed(1)}" y="${(startY + idx * lineH).toFixed(1)}">${escapeXml(line)}</tspan>`
+        )
+        .join('');
+
+      return `
+        <g>
+          ${bgRect}
           <text
-            x="0" y="42"
             text-anchor="middle"
             font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
-            font-size="11"
-            font-weight="700"
-            fill="${palette.titleText}"
-          >${escapeXml(dev.name)}</text>
-          ${
-            ipText
-              ? `<text
-                  x="0" y="54.5"
-                  text-anchor="middle"
-                  font-family="Fira Code, ui-monospace, SFMono-Regular, Menlo, monospace"
-                  font-size="9.5"
-                  font-weight="500"
-                  fill="${palette.accentText}"
-                >${escapeXml(ipText)}</text>`
-              : ''
-          }
+            font-size="${fontSize}"
+            font-weight="${weight}"
+            font-style="${style}"
+            fill="${escapeXml(textColor)}"
+          >${tspans}</text>
         </g>
       `;
     })
@@ -251,11 +386,17 @@ export function buildTopologySvgString(
   <!-- Topology Grid Background -->
   <rect x="0" y="${headerH}" width="${logicalW}" height="${canvasH}" fill="url(#bpGridDots)" />
 
+  <!-- Grouping Shapes Layer -->
+  ${shapeElements}
+
   <!-- Links Layer -->
   ${linkElements}
 
   <!-- Devices Layer -->
   ${deviceElements}
+
+  <!-- Diagram Annotation Labels Layer -->
+  ${labelElements}
 
   <!-- Bottom Legend Footer -->
   <rect x="0" y="${headerH + canvasH}" width="${logicalW}" height="${footerH}" fill="${palette.surface}" />

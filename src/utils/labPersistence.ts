@@ -1,4 +1,4 @@
-import { SimDevice, SimLink } from '../components/Lab/networkSimTypes';
+import { SimDevice, SimDiagramLabel, SimLink, SimTopologyShape } from '../components/Lab/networkSimTypes';
 
 export interface ActiveLabDraft {
   draftKey: string;
@@ -8,6 +8,8 @@ export interface ActiveLabDraft {
   presetId: string;
   devices: SimDevice[];
   links: SimLink[];
+  shapes?: SimTopologyShape[];
+  labels?: SimDiagramLabel[];
   updatedAt: string;
 }
 
@@ -18,6 +20,8 @@ export interface SavedLabRecord {
   presetId: string;
   devices: SimDevice[];
   links: SimLink[];
+  shapes?: SimTopologyShape[];
+  labels?: SimDiagramLabel[];
   deviceCount: number;
   linkCount: number;
   objectivesPassed: number;
@@ -55,22 +59,31 @@ function stripUndefinedDeep<T>(val: T): T {
 }
 
 export function sanitizeDevicesForStorage(devices: SimDevice[]): SimDevice[] {
-  return devices.slice(0, 40).map(dev =>
-    stripUndefinedDeep({
+  return devices.slice(0, 40).map(dev => {
+    const rawRot = Number(dev.rotation);
+    const normRot = Number.isFinite(rawRot) ? ((Math.round(rawRot) % 360) + 360) % 360 : 0;
+    const rawLx = Number(dev.labelOffsetX);
+    const normLx = Number.isFinite(rawLx) ? Math.round(Math.min(220, Math.max(-220, rawLx))) : 0;
+    const rawLy = Number(dev.labelOffsetY);
+    const normLy = Number.isFinite(rawLy) ? Math.round(Math.min(180, Math.max(-180, rawLy))) : 0;
+    return stripUndefinedDeep({
       ...dev,
       id: String(dev.id).slice(0, 128),
       name: String(dev.name || 'Device').slice(0, 64),
       model: String(dev.model || '').slice(0, 80),
       x: Math.round(Number(dev.x) || 0),
       y: Math.round(Number(dev.y) || 0),
+      rotation: normRot !== 0 ? normRot : undefined,
+      labelOffsetX: normLx !== 0 ? normLx : undefined,
+      labelOffsetY: normLy !== 0 ? normLy : undefined,
       cliHistory: Array.isArray(dev.cliHistory)
         ? dev.cliHistory.slice(-40).map(line => String(line).slice(0, 400))
         : [],
       interfaces: Array.isArray(dev.interfaces) ? dev.interfaces.slice(0, 24) : [],
       staticRoutes: Array.isArray(dev.staticRoutes) ? dev.staticRoutes.slice(0, 32) : [],
       vlans: Array.isArray(dev.vlans) ? dev.vlans.slice(0, 32) : []
-    })
-  );
+    });
+  });
 }
 
 export function sanitizeLinksForStorage(links: SimLink[]): SimLink[] {
@@ -84,6 +97,52 @@ export function sanitizeLinksForStorage(links: SimLink[]): SimLink[] {
       toPort: String(link.toPort).slice(0, 64)
     })
   );
+}
+
+export function sanitizeShapesForStorage(shapes: SimTopologyShape[] | undefined): SimTopologyShape[] {
+  if (!Array.isArray(shapes)) return [];
+  return shapes.slice(0, 40).map(shape =>
+    stripUndefinedDeep({
+      id: String(shape.id).slice(0, 128),
+      kind: shape.kind === 'circle' ? ('circle' as const) : ('rectangle' as const),
+      x: Math.round(Math.min(980, Math.max(0, Number(shape.x) || 0))),
+      y: Math.round(Math.min(560, Math.max(0, Number(shape.y) || 0))),
+      width: Math.round(Math.min(990, Math.max(50, Number(shape.width) || 180))),
+      height: Math.round(Math.min(570, Math.max(40, Number(shape.height) || 120))),
+      fillColor: String(shape.fillColor || 'transparent').slice(0, 32),
+      fillOpacity: Math.min(1, Math.max(0, Number.isFinite(Number(shape.fillOpacity)) ? Number(shape.fillOpacity) : 0.32)),
+      borderColor: String(shape.borderColor || '#64748b').slice(0, 32),
+      lineStyle:
+        shape.lineStyle === 'dotted'
+          ? ('dotted' as const)
+          : shape.lineStyle === 'solid'
+          ? ('solid' as const)
+          : ('dashed' as const),
+      borderWidth: Math.min(5, Math.max(1, Math.round(Number(shape.borderWidth) || 2))),
+      label: typeof shape.label === 'string' && shape.label.trim() ? shape.label.trim().slice(0, 80) : undefined,
+      labelColor: typeof shape.labelColor === 'string' && shape.labelColor.trim() ? shape.labelColor.trim().slice(0, 32) : undefined
+    })
+  );
+}
+
+export function sanitizeLabelsForStorage(labels: SimDiagramLabel[] | undefined): SimDiagramLabel[] {
+  if (!Array.isArray(labels)) return [];
+  return labels
+    .slice(0, 60)
+    .map(item =>
+      stripUndefinedDeep({
+        id: String(item.id).slice(0, 128),
+        text: String(item.text || '').slice(0, 160),
+        x: Math.round(Math.min(980, Math.max(20, Number(item.x) || 500))),
+        y: Math.round(Math.min(565, Math.max(15, Number(item.y) || 290))),
+        color: typeof item.color === 'string' && item.color.trim() ? item.color.trim().slice(0, 32) : undefined,
+        bgColor: typeof item.bgColor === 'string' && item.bgColor.trim() ? item.bgColor.trim().slice(0, 32) : undefined,
+        fontSize: Math.min(20, Math.max(10, Math.round(Number(item.fontSize) || 12))),
+        bold: item.bold !== undefined ? Boolean(item.bold) : true,
+        italic: item.italic ? true : undefined
+      })
+    )
+    .filter(item => item.text.trim().length > 0);
 }
 
 export function sanitizeLabId(rawId: string): string {
@@ -190,6 +249,8 @@ export async function saveActiveLabDraftToIdb(draft: ActiveLabDraft): Promise<vo
     ...draft,
     devices: sanitizeDevicesForStorage(draft.devices),
     links: sanitizeLinksForStorage(draft.links),
+    shapes: sanitizeShapesForStorage(draft.shapes),
+    labels: sanitizeLabelsForStorage(draft.labels),
     updatedAt: draft.updatedAt || new Date().toISOString()
   };
 
@@ -275,7 +336,9 @@ export async function putSavedLabToIdb(record: SavedLabRecord): Promise<void> {
     id: sanitizeLabId(record.id),
     title: record.title.trim().slice(0, 120) || 'Untitled Topology',
     devices: sanitizeDevicesForStorage(record.devices),
-    links: sanitizeLinksForStorage(record.links)
+    links: sanitizeLinksForStorage(record.links),
+    shapes: sanitizeShapesForStorage(record.shapes),
+    labels: sanitizeLabelsForStorage(record.labels)
   };
 
   const db = await openLabsDb();

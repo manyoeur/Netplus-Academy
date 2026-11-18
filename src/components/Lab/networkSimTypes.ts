@@ -58,6 +58,9 @@ export interface SimDevice {
   model: string;
   x: number; // Canvas coordinate 0..1000
   y: number; // Canvas coordinate 0..580
+  rotation?: number; // Orientation in degrees (0..359)
+  labelOffsetX?: number; // Relative X offset for device label pill (-220..220)
+  labelOffsetY?: number; // Relative Y offset for device label pill (-180..180)
   interfaces: SimDeviceInterface[];
   gateway?: string;
   dns?: string;
@@ -77,6 +80,37 @@ export interface SimLink {
   fromPort: string;
   toDeviceId: string;
   toPort: string;
+}
+
+export type SimShapeKind = 'rectangle' | 'circle';
+export type SimShapeLineStyle = 'dashed' | 'dotted' | 'solid';
+
+export interface SimTopologyShape {
+  id: string;
+  kind: SimShapeKind;
+  x: number; // Top-left X in 0..1000 canvas coordinates
+  y: number; // Top-left Y in 0..580 canvas coordinates
+  width: number;
+  height: number;
+  fillColor: string; // Hex color or 'transparent'
+  fillOpacity: number; // 0..1
+  borderColor: string; // Hex color
+  lineStyle: SimShapeLineStyle;
+  borderWidth?: number; // 1..4
+  label?: string;
+  labelColor?: string;
+}
+
+export interface SimDiagramLabel {
+  id: string;
+  text: string;
+  x: number; // Canvas coordinate 0..1000
+  y: number; // Canvas coordinate 0..580
+  color?: string;
+  bgColor?: string; // 'transparent' or hex
+  fontSize?: number; // 10..20
+  bold?: boolean;
+  italic?: boolean;
 }
 
 export interface SimLinkStatus {

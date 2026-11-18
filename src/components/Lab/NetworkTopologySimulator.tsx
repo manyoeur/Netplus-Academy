@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   Network,
-  Cable,
   MousePointer2,
   Trash2,
   Plus,
   RotateCcw,
+  RotateCw,
   Play,
   Terminal as TerminalIcon,
   Sliders,
@@ -30,6 +30,12 @@ import {
   Grid3x3,
   Image as ImageIcon,
   FileCode,
+  Square,
+  Circle,
+  Pencil,
+  Check,
+  Type,
+  Magnet,
   X
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
@@ -49,7 +55,9 @@ import {
   sanitizeDevicesForStorage,
   sanitizeLabId,
   sanitizeLinksForStorage,
-  saveActiveLabDraftToIdb
+  sanitizeShapesForStorage,
+  saveActiveLabDraftToIdb,
+  sanitizeLabelsForStorage
 } from '../../utils/labPersistence';
 import {
   exportTopologyAsPng,
@@ -62,7 +70,11 @@ import {
   SimCableType,
   SimDevice,
   SimDeviceType,
-  SimLink
+  SimDiagramLabel,
+  SimLink,
+  SimShapeKind,
+  SimShapeLineStyle,
+  SimTopologyShape
 } from './networkSimTypes';
 import {
   computeCableGeometry,
@@ -82,6 +94,7 @@ import { NETWORK_LAB_PRESETS } from './networkLabPresets';
 import { CiscoDeviceIcon, getCiscoDeviceInnerSvg } from './CiscoDeviceIcon';
 
 type CanvasTool = 'select' | 'cable' | 'delete';
+type CableToolMode = 'auto' | SimCableType;
 type InspectorTab = 'cli' | 'config' | 'tables' | 'objectives';
 
 interface PendingCableSource {
@@ -101,7 +114,61 @@ interface SavedLabSnapshot {
   exportedAt?: string;
   devices: SimDevice[];
   links: SimLink[];
+  shapes?: SimTopologyShape[];
+  labels?: SimDiagramLabel[];
 }
+
+type ShapeResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+type SnapGridStep = 10 | 20 | 40;
+
+const snapToStep = (val: number, step: number): number => Math.round(val / step) * step;
+
+const snapClampedToGrid = (
+  val: number,
+  min: number,
+  max: number,
+  step: number,
+  enabled: boolean
+): number => {
+  if (!enabled) {
+    return Math.round(Math.min(max, Math.max(min, val)));
+  }
+  const minGrid = Math.ceil(min / step) * step;
+  const maxGrid = Math.floor(max / step) * step;
+  if (minGrid > maxGrid) {
+    return Math.round(Math.min(max, Math.max(min, val)));
+  }
+  return Math.min(maxGrid, Math.max(minGrid, snapToStep(val, step)));
+};
+
+const SHAPE_FILL_PRESETS: Array<{ label: string; value: string }> = [
+  { label: 'None', value: 'transparent' },
+  { label: 'Lavender', value: '#ddd6fe' },
+  { label: 'Mint', value: '#ccfbf1' },
+  { label: 'Slate', value: '#cbd5e1' },
+  { label: 'Sky', value: '#bae6fd' },
+  { label: 'Amber', value: '#fef3c7' },
+  { label: 'Rose', value: '#ffe4e6' }
+];
+
+const SHAPE_BORDER_PRESETS: Array<{ label: string; value: string }> = [
+  { label: 'Slate', value: '#64748b' },
+  { label: 'Violet', value: '#7c3aed' },
+  { label: 'Blue', value: '#2563eb' },
+  { label: 'Emerald', value: '#059669' },
+  { label: 'Amber', value: '#d97706' },
+  { label: 'Red', value: '#dc2626' }
+];
+
+const DIAGRAM_LABEL_COLORS: Array<{ label: string; value: string }> = [
+  { label: 'Violet', value: '#7c3aed' },
+  { label: 'Blue', value: '#2563eb' },
+  { label: 'Cyan', value: '#0891b2' },
+  { label: 'Emerald', value: '#059669' },
+  { label: 'Amber', value: '#d97706' },
+  { label: 'Red', value: '#dc2626' },
+  { label: 'Slate', value: '#475569' }
+];
 
 function toProjectFileName(title: string): string {
   const slug = title
@@ -209,10 +276,11 @@ const TemplateTopologyPreview: React.FC<{ devices: SimDevice[]; links: SimLink[]
 
       {devices.map(dev => {
         const previewScale = 1.1;
+        const rot = typeof dev.rotation === 'number' && Number.isFinite(dev.rotation) ? dev.rotation : 0;
         return (
           <g key={dev.id} transform={`translate(${dev.x}, ${dev.y})`}>
             <g
-              transform={`translate(${(-32 * previewScale).toFixed(1)}, ${(-28 * previewScale).toFixed(1)}) scale(${previewScale})`}
+              transform={`${rot ? `rotate(${rot}) ` : ''}translate(${(-32 * previewScale).toFixed(1)}, ${(-28 * previewScale).toFixed(1)}) scale(${previewScale})`}
               dangerouslySetInnerHTML={{ __html: getCiscoDeviceInnerSvg(dev.type) }}
             />
             <text
@@ -416,6 +484,8 @@ export const NetworkTopologySimulator: React.FC = () => {
   const [activePresetId, setActivePresetId] = useState<string>(initialPresetState.presetId);
   const [devices, setDevices] = useState<SimDevice[]>(initialPresetState.devices);
   const [links, setLinks] = useState<SimLink[]>(initialPresetState.links);
+  const [shapes, setShapes] = useState<SimTopologyShape[]>([]);
+  const [diagramLabels, setDiagramLabels] = useState<SimDiagramLabel[]>([]);
 
   // IndexedDB + Firestore persistent lab project state
   const [workspaceView, setWorkspaceView] = useState<'editor' | 'projects'>('editor');
@@ -435,6 +505,7 @@ export const NetworkTopologySimulator: React.FC = () => {
 
   const [tool, setTool] = useState<CanvasTool>('select');
   const [autoLayoutMode, setAutoLayoutMode] = useState<AutoLayoutMode>('grid');
+  const [cableToolMode, setCableToolMode] = useState<CableToolMode>('auto');
   const [selectedCableType, setSelectedCableType] = useState<SimCableType>('straight');
   const [pendingCableSource, setPendingCableSource] = useState<PendingCableSource | null>(null);
   const [pendingCableTarget, setPendingCableTarget] = useState<PendingCableTarget | null>(null);
@@ -446,7 +517,36 @@ export const NetworkTopologySimulator: React.FC = () => {
     initialPresetState.devices[0]?.id ? [initialPresetState.devices[0].id] : []
   );
   const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('config');
+  const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
+  const [selectedDiagramLabelId, setSelectedDiagramLabelId] = useState<string | null>(null);
+  const [editingDiagramLabelId, setEditingDiagramLabelId] = useState<string | null>(null);
+  const [editingDiagramLabelDraft, setEditingDiagramLabelDraft] = useState<string>('');
+  const [editingDeviceLabelId, setEditingDeviceLabelId] = useState<string | null>(null);
+  const [editingDeviceLabelDraft, setEditingDeviceLabelDraft] = useState<string>('');
+  const [isRenamingInspectorHeader, setIsRenamingInspectorHeader] = useState<boolean>(false);
+  const [inspectorNameDraft, setInspectorNameDraft] = useState<string>('');
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('objectives');
+  const [consoleDeviceId, setConsoleDeviceId] = useState<string | null>(null);
+  const [longPressMoveDeviceId, setLongPressMoveDeviceId] = useState<string | null>(null);
+  const draggedPaletteTypeRef = useRef<SimDeviceType | null>(null);
+  const [paletteDropPreview, setPaletteDropPreview] = useState<{
+    type: SimDeviceType;
+    x: number;
+    y: number;
+  } | null>(null);
+  const suppressDeviceClickAfterDragRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    setIsRenamingInspectorHeader(false);
+  }, [selectedDeviceId]);
+
+  useEffect(() => {
+    if (!consoleDeviceId) {
+      setInspectorTab('objectives');
+    } else if (!devices.some(d => d.id === consoleDeviceId)) {
+      setConsoleDeviceId(null);
+    }
+  }, [consoleDeviceId, devices]);
 
   // CLI state
   const [cliInput, setCliInput] = useState<string>('');
@@ -459,6 +559,19 @@ export const NetworkTopologySimulator: React.FC = () => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const devicesRef = useRef<SimDevice[]>(devices);
   devicesRef.current = devices;
+  const shapesRef = useRef<SimTopologyShape[]>(shapes);
+  shapesRef.current = shapes;
+  const [snapToGrid, setSnapToGrid] = useState<boolean>(true);
+  const [gridSize, setGridSize] = useState<SnapGridStep>(20);
+  const snapToGridRef = useRef<boolean>(snapToGrid);
+  snapToGridRef.current = snapToGrid;
+  const gridSizeRef = useRef<SnapGridStep>(gridSize);
+  gridSizeRef.current = gridSize;
+  const [activeSnapGuides, setActiveSnapGuides] = useState<{
+    x?: number;
+    y?: number;
+    readout?: { x: number; y: number; text: string };
+  } | null>(null);
   const [selectionBox, setSelectionBox] = useState<{
     startX: number;
     startY: number;
@@ -466,11 +579,14 @@ export const NetworkTopologySimulator: React.FC = () => {
     currentY: number;
   } | null>(null);
   const dragStateRef = useRef<{
+    leadId: string;
     startClientX: number;
     startClientY: number;
     startCanvasX: number;
     startCanvasY: number;
     initialPositions: Array<{ id: string; x: number; y: number }>;
+    isLongPressReady: boolean;
+    holdTimerId: number | null;
     moved: boolean;
   } | null>(null);
   const marqueeStateRef = useRef<{
@@ -480,6 +596,70 @@ export const NetworkTopologySimulator: React.FC = () => {
     startCanvasY: number;
     additive: boolean;
     initialSelectedIds: string[];
+    moved: boolean;
+  } | null>(null);
+  const rotateStateRef = useRef<{
+    pivotX: number;
+    pivotY: number;
+    startPointerAngleDeg: number;
+    initialRotations: Array<{ id: string; rotation: number }>;
+    isGroup: boolean;
+    moved: boolean;
+  } | null>(null);
+  const [activeRotationInfo, setActiveRotationInfo] = useState<{
+    x: number;
+    y: number;
+    label: string;
+  } | null>(null);
+  const shapeDragStateRef = useRef<{
+    shapeId: string;
+    startClientX: number;
+    startClientY: number;
+    startCanvasX: number;
+    startCanvasY: number;
+    initX: number;
+    initY: number;
+    width: number;
+    height: number;
+    moved: boolean;
+  } | null>(null);
+  const shapeResizeStateRef = useRef<{
+    shapeId: string;
+    handle: ShapeResizeHandle;
+    startCanvasX: number;
+    startCanvasY: number;
+    initX: number;
+    initY: number;
+    initW: number;
+    initH: number;
+    moved: boolean;
+  } | null>(null);
+  const [activeShapeResizeInfo, setActiveShapeResizeInfo] = useState<{
+    x: number;
+    y: number;
+    label: string;
+  } | null>(null);
+  const labelDragStateRef = useRef<{
+    deviceId: string;
+    startClientX: number;
+    startClientY: number;
+    startCanvasX: number;
+    startCanvasY: number;
+    devX: number;
+    devY: number;
+    initOffsetX: number;
+    initOffsetY: number;
+    moved: boolean;
+  } | null>(null);
+  const [draggingLabelDeviceId, setDraggingLabelDeviceId] = useState<string | null>(null);
+  const diagramLabelDragStateRef = useRef<{
+    labelId: string;
+    startClientX: number;
+    startClientY: number;
+    startCanvasX: number;
+    startCanvasY: number;
+    initX: number;
+    initY: number;
     moved: boolean;
   } | null>(null);
   const suppressCanvasClickRef = useRef<boolean>(false);
@@ -569,21 +749,31 @@ export const NetworkTopologySimulator: React.FC = () => {
         setActivePresetId(draft.presetId);
         setDevices(draft.devices);
         setLinks(draft.links);
+        setShapes(Array.isArray(draft.shapes) ? draft.shapes : []);
+        setDiagramLabels(Array.isArray(draft.labels) ? draft.labels : []);
         setActiveSavedLabId(draft.activeSavedLabId || null);
         const firstId = draft.devices[0]?.id || null;
         setSelectedDeviceId(firstId);
         setSelectedDeviceIds(firstId ? [firstId] : []);
+        setConsoleDeviceId(null);
         setSelectedLinkId(null);
+        setSelectedShapeId(null);
+        setSelectedDiagramLabelId(null);
         setLastPingResult(null);
         setLastAutoSavedAt(draft.updatedAt);
       } else {
         setActivePresetId('blank-sandbox');
         setDevices([]);
         setLinks([]);
+        setShapes([]);
+        setDiagramLabels([]);
         setActiveSavedLabId(null);
         setSelectedDeviceId(null);
         setSelectedDeviceIds([]);
+        setConsoleDeviceId(null);
         setSelectedLinkId(null);
+        setSelectedShapeId(null);
+        setSelectedDiagramLabelId(null);
         setLastPingResult(null);
         setLastAutoSavedAt(null);
       }
@@ -603,7 +793,18 @@ export const NetworkTopologySimulator: React.FC = () => {
               const cloudTime = new Date(cloudItem.updatedAt).getTime();
               const localTime = existingLocal ? new Date(existingLocal.updatedAt).getTime() : 0;
               if (!existingLocal || cloudTime >= localTime) {
-                const scopedCloudItem: SavedLabRecord = { ...cloudItem, userId: ownerScopeId };
+                const scopedCloudItem: SavedLabRecord = {
+                  ...cloudItem,
+                  userId: ownerScopeId,
+                  shapes:
+                    Array.isArray(cloudItem.shapes) && cloudItem.shapes.length > 0
+                      ? cloudItem.shapes
+                      : existingLocal?.shapes,
+                  labels:
+                    Array.isArray(cloudItem.labels) && cloudItem.labels.length > 0
+                      ? cloudItem.labels
+                      : existingLocal?.labels
+                };
                 mergedMap.set(cloudItem.id, scopedCloudItem);
                 await putSavedLabToIdb(scopedCloudItem);
               }
@@ -640,6 +841,8 @@ export const NetworkTopologySimulator: React.FC = () => {
     const hasWorkspaceContent =
       devices.length > 0 ||
       links.length > 0 ||
+      shapes.length > 0 ||
+      diagramLabels.length > 0 ||
       activeSavedLabId !== null ||
       activePresetId !== 'blank-sandbox';
 
@@ -658,6 +861,8 @@ export const NetworkTopologySimulator: React.FC = () => {
         presetId: activePresetId,
         devices,
         links,
+        shapes,
+        labels: diagramLabels,
         updatedAt: nowIso
       }).then(() => {
         setLastAutoSavedAt(nowIso);
@@ -669,7 +874,7 @@ export const NetworkTopologySimulator: React.FC = () => {
         window.clearTimeout(saveTimerRef.current);
       }
     };
-  }, [activePresetId, activeSavedLabId, ownerScopeId, devices, links, workspaceView]);
+  }, [activePresetId, activeSavedLabId, ownerScopeId, devices, links, shapes, diagramLabels, workspaceView]);
 
   // Keep pingSourceId valid
   useEffect(() => {
@@ -707,9 +912,23 @@ export const NetworkTopologySimulator: React.FC = () => {
     [devices, selectedDeviceId]
   );
 
+  const isConsoleActive = Boolean(
+    selectedDevice && consoleDeviceId === selectedDevice.id && selectedDeviceIds.length <= 1
+  );
+
   const selectedLink = useMemo(
     () => links.find(l => l.id === selectedLinkId) || null,
     [links, selectedLinkId]
+  );
+
+  const selectedShape = useMemo(
+    () => shapes.find(s => s.id === selectedShapeId) || null,
+    [shapes, selectedShapeId]
+  );
+
+  const selectedDiagramLabel = useMemo(
+    () => diagramLabels.find(l => l.id === selectedDiagramLabelId) || null,
+    [diagramLabels, selectedDiagramLabelId]
   );
 
   const linkStatuses = useMemo(() => {
@@ -759,10 +978,82 @@ export const NetworkTopologySimulator: React.FC = () => {
       const rect = canvas.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return;
 
+      const snapActive = snapToGridRef.current && !e.altKey;
+      const step = gridSizeRef.current;
+
+      const diagramLabelDrag = diagramLabelDragStateRef.current;
+      if (diagramLabelDrag) {
+        const dist = Math.hypot(
+          e.clientX - diagramLabelDrag.startClientX,
+          e.clientY - diagramLabelDrag.startClientY
+        );
+        if (dist > 3) {
+          diagramLabelDrag.moved = true;
+        }
+        const curr = clientToCanvas(e.clientX, e.clientY, rect);
+        const nextX = snapClampedToGrid(
+          diagramLabelDrag.initX + (curr.x - diagramLabelDrag.startCanvasX),
+          25,
+          975,
+          step,
+          snapActive
+        );
+        const nextY = snapClampedToGrid(
+          diagramLabelDrag.initY + (curr.y - diagramLabelDrag.startCanvasY),
+          18,
+          562,
+          step,
+          snapActive
+        );
+        setDiagramLabels(prev =>
+          prev.map(l =>
+            l.id === diagramLabelDrag.labelId ? { ...l, x: nextX, y: nextY } : l
+          )
+        );
+        setActiveSnapGuides({
+          readout: { x: nextX, y: nextY - 14, text: `${nextX}, ${nextY}` }
+        });
+        return;
+      }
+
+      const labelDrag = labelDragStateRef.current;
+      if (labelDrag) {
+        const dist = Math.hypot(e.clientX - labelDrag.startClientX, e.clientY - labelDrag.startClientY);
+        if (dist > 3) {
+          labelDrag.moved = true;
+        }
+        const curr = clientToCanvas(e.clientX, e.clientY, rect);
+        const rawDx = curr.x - labelDrag.startCanvasX;
+        const rawDy = curr.y - labelDrag.startCanvasY;
+        const minOx = Math.max(-220, 42 - labelDrag.devX);
+        const maxOx = Math.min(220, 958 - labelDrag.devX);
+        const minOy = Math.max(-180, 14 - (labelDrag.devY + 34));
+        const maxOy = Math.min(180, 558 - (labelDrag.devY + 34));
+        const nextOx = Math.round(Math.min(maxOx, Math.max(minOx, labelDrag.initOffsetX + rawDx)));
+        const nextOy = Math.round(Math.min(maxOy, Math.max(minOy, labelDrag.initOffsetY + rawDy)));
+        setDevices(prev =>
+          prev.map(d =>
+            d.id === labelDrag.deviceId
+              ? { ...d, labelOffsetX: nextOx, labelOffsetY: nextOy }
+              : d
+          )
+        );
+        return;
+      }
+
       const drag = dragStateRef.current;
       if (drag) {
         const dist = Math.hypot(e.clientX - drag.startClientX, e.clientY - drag.startClientY);
-        if (dist > 3) {
+        if (!drag.isLongPressReady) {
+          if (dist > 12) {
+            if (drag.holdTimerId != null) {
+              window.clearTimeout(drag.holdTimerId);
+            }
+            dragStateRef.current = null;
+          }
+          return;
+        }
+        if (dist > 2) {
           drag.moved = true;
         }
 
@@ -781,13 +1072,37 @@ export const NetworkTopologySimulator: React.FC = () => {
           if (p.y > maxInitY) maxInitY = p.y;
         });
 
-        const minDx = 65 - minInitX;
-        const maxDx = 935 - maxInitX;
+        const minDx = 60 - minInitX;
+        const maxDx = 940 - maxInitX;
         const minDy = 60 - minInitY;
-        const maxDy = 515 - maxInitY;
+        const maxDy = 520 - maxInitY;
 
-        const dx = Math.round(Math.min(maxDx, Math.max(minDx, rawDx)));
-        const dy = Math.round(Math.min(maxDy, Math.max(minDy, rawDy)));
+        const leadInit =
+          drag.initialPositions.find(p => p.id === drag.leadId) || drag.initialPositions[0];
+
+        let dx: number;
+        let dy: number;
+        if (snapActive && leadInit) {
+          const snappedLeadX = snapClampedToGrid(
+            leadInit.x + rawDx,
+            leadInit.x + minDx,
+            leadInit.x + maxDx,
+            step,
+            true
+          );
+          const snappedLeadY = snapClampedToGrid(
+            leadInit.y + rawDy,
+            leadInit.y + minDy,
+            leadInit.y + maxDy,
+            step,
+            true
+          );
+          dx = snappedLeadX - leadInit.x;
+          dy = snappedLeadY - leadInit.y;
+        } else {
+          dx = Math.round(Math.min(maxDx, Math.max(minDx, rawDx)));
+          dy = Math.round(Math.min(maxDy, Math.max(minDy, rawDy)));
+        }
 
         const nextPosMap = new Map(
           drag.initialPositions.map(p => [p.id, { x: p.x + dx, y: p.y + dy }])
@@ -799,6 +1114,200 @@ export const NetworkTopologySimulator: React.FC = () => {
             return nextPos ? { ...d, x: nextPos.x, y: nextPos.y } : d;
           })
         );
+
+        if (leadInit) {
+          const leadX = leadInit.x + dx;
+          const leadY = leadInit.y + dy;
+          const draggedIds = new Set(drag.initialPositions.map(p => p.id));
+          const otherDevices = devicesRef.current.filter(d => !draggedIds.has(d.id));
+          const alignTol = snapActive ? 0 : 2;
+          const matchedX = otherDevices.find(d => Math.abs(d.x - leadX) <= alignTol)?.x;
+          const matchedY = otherDevices.find(d => Math.abs(d.y - leadY) <= alignTol)?.y;
+          setActiveSnapGuides({
+            x: matchedX,
+            y: matchedY,
+            readout: { x: leadX, y: leadY - 34, text: `${leadX}, ${leadY}` }
+          });
+        }
+        return;
+      }
+
+      const rot = rotateStateRef.current;
+      if (rot) {
+        rot.moved = true;
+        const curr = clientToCanvas(e.clientX, e.clientY, rect);
+        const currAngleDeg =
+          Math.atan2(curr.y - rot.pivotY, curr.x - rot.pivotX) * (180 / Math.PI);
+
+        let deltaDeg = currAngleDeg - rot.startPointerAngleDeg;
+        while (deltaDeg > 180) deltaDeg -= 360;
+        while (deltaDeg < -180) deltaDeg += 360;
+
+        const normalizeDeg = (deg: number) => ((Math.round(deg) % 360) + 360) % 360;
+        const snapCardinal = (deg: number) => {
+          const n = normalizeDeg(deg);
+          for (const cardinal of [0, 90, 180, 270, 360]) {
+            if (Math.abs(n - cardinal) <= 2) {
+              return cardinal === 360 ? 0 : cardinal;
+            }
+          }
+          return n;
+        };
+
+        const nextRotMap = new Map<string, number>();
+        let singleDisplayDeg = 0;
+
+        rot.initialRotations.forEach((item, idx) => {
+          let nextVal: number;
+          if (e.shiftKey) {
+            nextVal = normalizeDeg(Math.round((item.rotation + deltaDeg) / 15) * 15);
+          } else {
+            nextVal = snapCardinal(item.rotation + deltaDeg);
+          }
+          nextRotMap.set(item.id, nextVal);
+          if (idx === 0) singleDisplayDeg = nextVal;
+        });
+
+        setDevices(prev =>
+          prev.map(d => {
+            const nextRot = nextRotMap.get(d.id);
+            return nextRot !== undefined ? { ...d, rotation: nextRot } : d;
+          })
+        );
+
+        const deltaRounded = Math.round(e.shiftKey ? Math.round(deltaDeg / 15) * 15 : deltaDeg);
+        setActiveRotationInfo({
+          x: rot.pivotX,
+          y: rot.pivotY,
+          label: rot.isGroup
+            ? `${deltaRounded >= 0 ? '+' : ''}${deltaRounded}°`
+            : `${singleDisplayDeg}°`
+        });
+        return;
+      }
+
+      const shapeResize = shapeResizeStateRef.current;
+      if (shapeResize) {
+        shapeResize.moved = true;
+        const curr = clientToCanvas(e.clientX, e.clientY, rect);
+        const dx = curr.x - shapeResize.startCanvasX;
+        const dy = curr.y - shapeResize.startCanvasY;
+        const minW = 64;
+        const minH = 48;
+
+        const initLeft = shapeResize.initX;
+        const initTop = shapeResize.initY;
+        const initRight = shapeResize.initX + shapeResize.initW;
+        const initBottom = shapeResize.initY + shapeResize.initH;
+
+        let left = initLeft;
+        let top = initTop;
+        let right = initRight;
+        let bottom = initBottom;
+
+        if (shapeResize.handle.includes('w')) {
+          left = snapClampedToGrid(initLeft + dx, 4, initRight - minW, step, snapActive);
+        }
+        if (shapeResize.handle.includes('e')) {
+          right = snapClampedToGrid(initRight + dx, initLeft + minW, 996, step, snapActive);
+        }
+        if (shapeResize.handle.includes('n')) {
+          top = snapClampedToGrid(initTop + dy, 4, initBottom - minH, step, snapActive);
+        }
+        if (shapeResize.handle.includes('s')) {
+          bottom = snapClampedToGrid(initBottom + dy, initTop + minH, 576, step, snapActive);
+        }
+
+        if (
+          e.shiftKey &&
+          (shapeResize.handle === 'nw' ||
+            shapeResize.handle === 'ne' ||
+            shapeResize.handle === 'se' ||
+            shapeResize.handle === 'sw')
+        ) {
+          const ratio = shapeResize.initW / Math.max(1, shapeResize.initH);
+          const nextW = right - left;
+          const nextH = bottom - top;
+          if (nextW / Math.max(1, nextH) > ratio) {
+            const adjH = Math.max(minH, nextW / ratio);
+            if (shapeResize.handle.includes('n')) {
+              top = Math.max(4, bottom - adjH);
+            } else {
+              bottom = Math.min(576, top + adjH);
+            }
+          } else {
+            const adjW = Math.max(minW, nextH * ratio);
+            if (shapeResize.handle.includes('w')) {
+              left = Math.max(4, right - adjW);
+            } else {
+              right = Math.min(996, left + adjW);
+            }
+          }
+        }
+
+        const nextX = Math.round(left);
+        const nextY = Math.round(top);
+        const nextW = Math.round(right - left);
+        const nextH = Math.round(bottom - top);
+
+        setShapes(prev =>
+          prev.map(s =>
+            s.id === shapeResize.shapeId
+              ? { ...s, x: nextX, y: nextY, width: nextW, height: nextH }
+              : s
+          )
+        );
+        setActiveShapeResizeInfo({
+          x: nextX + nextW / 2,
+          y: nextY,
+          label: `${nextW} × ${nextH}`
+        });
+        return;
+      }
+
+      const shapeDrag = shapeDragStateRef.current;
+      if (shapeDrag) {
+        const dist = Math.hypot(
+          e.clientX - shapeDrag.startClientX,
+          e.clientY - shapeDrag.startClientY
+        );
+        if (dist > 3) {
+          shapeDrag.moved = true;
+        }
+        const curr = clientToCanvas(e.clientX, e.clientY, rect);
+        const rawDx = curr.x - shapeDrag.startCanvasX;
+        const rawDy = curr.y - shapeDrag.startCanvasY;
+        const nextX = snapClampedToGrid(
+          shapeDrag.initX + rawDx,
+          4,
+          996 - shapeDrag.width,
+          step,
+          snapActive
+        );
+        const nextY = snapClampedToGrid(
+          shapeDrag.initY + rawDy,
+          4,
+          576 - shapeDrag.height,
+          step,
+          snapActive
+        );
+        setShapes(prev =>
+          prev.map(s => (s.id === shapeDrag.shapeId ? { ...s, x: nextX, y: nextY } : s))
+        );
+
+        const otherShapes = shapesRef.current.filter(s => s.id !== shapeDrag.shapeId);
+        const tol = snapActive ? 0 : 2;
+        const matchedX = otherShapes.find(s => Math.abs(s.x - nextX) <= tol)?.x;
+        const matchedY = otherShapes.find(s => Math.abs(s.y - nextY) <= tol)?.y;
+        setActiveSnapGuides({
+          x: matchedX,
+          y: matchedY,
+          readout: {
+            x: nextX + shapeDrag.width / 2,
+            y: nextY,
+            text: `${nextX}, ${nextY}`
+          }
+        });
         return;
       }
 
@@ -839,6 +1348,7 @@ export const NetworkTopologySimulator: React.FC = () => {
 
         setSelectedDeviceIds(nextIds);
         setSelectedLinkId(null);
+        setSelectedShapeId(null);
         setSelectedDeviceId(prev =>
           prev && nextIds.includes(prev) ? prev : nextIds[0] || null
         );
@@ -846,12 +1356,41 @@ export const NetworkTopologySimulator: React.FC = () => {
     };
 
     const handlePointerUp = () => {
-      if (marqueeStateRef.current?.moved) {
+      if (dragStateRef.current?.holdTimerId != null) {
+        window.clearTimeout(dragStateRef.current.holdTimerId);
+      }
+      if (dragStateRef.current?.moved) {
+        suppressDeviceClickAfterDragRef.current = true;
+        window.setTimeout(() => {
+          suppressDeviceClickAfterDragRef.current = false;
+        }, 0);
+      }
+      if (
+        marqueeStateRef.current?.moved ||
+        rotateStateRef.current?.moved ||
+        shapeDragStateRef.current?.moved ||
+        shapeResizeStateRef.current?.moved ||
+        labelDragStateRef.current?.moved ||
+        diagramLabelDragStateRef.current?.moved
+      ) {
         suppressCanvasClickRef.current = true;
+        window.setTimeout(() => {
+          suppressCanvasClickRef.current = false;
+        }, 0);
       }
       dragStateRef.current = null;
       marqueeStateRef.current = null;
+      rotateStateRef.current = null;
+      shapeDragStateRef.current = null;
+      shapeResizeStateRef.current = null;
+      labelDragStateRef.current = null;
+      diagramLabelDragStateRef.current = null;
+      setLongPressMoveDeviceId(null);
+      setDraggingLabelDeviceId(null);
       setSelectionBox(null);
+      setActiveRotationInfo(null);
+      setActiveShapeResizeInfo(null);
+      setActiveSnapGuides(null);
     };
 
     window.addEventListener('pointermove', handlePointerMove);
@@ -860,6 +1399,71 @@ export const NetworkTopologySimulator: React.FC = () => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
+  }, []);
+
+  const startRotationDrag = useCallback(
+    (
+      e: React.PointerEvent,
+      targetIds: string[],
+      pivotX: number,
+      pivotY: number
+    ) => {
+      if (tool !== 'select' || e.button !== 0 || targetIds.length === 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      const startCanvasX = Math.min(
+        1000,
+        Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000)
+      );
+      const startCanvasY = Math.min(
+        580,
+        Math.max(0, ((e.clientY - rect.top) / rect.height) * 580)
+      );
+      const startPointerAngleDeg =
+        Math.atan2(startCanvasY - pivotY, startCanvasX - pivotX) * (180 / Math.PI);
+
+      const targetSet = new Set(targetIds);
+      const initialRotations = devicesRef.current
+        .filter(d => targetSet.has(d.id))
+        .map(d => ({
+          id: d.id,
+          rotation: typeof d.rotation === 'number' && Number.isFinite(d.rotation) ? d.rotation : 0
+        }));
+
+      if (initialRotations.length === 0) return;
+
+      rotateStateRef.current = {
+        pivotX,
+        pivotY,
+        startPointerAngleDeg,
+        initialRotations,
+        isGroup: initialRotations.length > 1,
+        moved: false
+      };
+
+      setActiveRotationInfo({
+        x: pivotX,
+        y: pivotY,
+        label: initialRotations.length > 1 ? '0°' : `${initialRotations[0].rotation}°`
+      });
+    },
+    [tool]
+  );
+
+  const handleResetRotation = useCallback((targetIds: string[]) => {
+    if (targetIds.length === 0) return;
+    const targetSet = new Set(targetIds);
+    setDevices(prev =>
+      prev.map(d => (targetSet.has(d.id) ? { ...d, rotation: 0 } : d))
+    );
+    flashBanner(
+      `Reset orientation to 0° for ${targetIds.length} device${targetIds.length === 1 ? '' : 's'}`
+    );
   }, []);
 
   const flashBanner = (msg: string) => {
@@ -877,14 +1481,20 @@ export const NetworkTopologySimulator: React.FC = () => {
     setActivePresetId(preset.id);
     setDevices(built.devices);
     setLinks(built.links);
+    setShapes([]);
+    setDiagramLabels([]);
     const firstId = built.devices[0]?.id || null;
     setSelectedDeviceId(firstId);
     setSelectedDeviceIds(firstId ? [firstId] : []);
+    setConsoleDeviceId(null);
     setSelectedLinkId(null);
+    setSelectedShapeId(null);
+    setSelectedDiagramLabelId(null);
+    setEditingDiagramLabelId(null);
     setPendingCableSource(null);
     setPendingCableTarget(null);
     setLastPingResult(null);
-    setInspectorTab(preset.objectives.length > 0 ? 'objectives' : 'config');
+    setInspectorTab('objectives');
     flashBanner(`Loaded "${preset.title}"`);
   };
 
@@ -907,8 +1517,8 @@ export const NetworkTopologySimulator: React.FC = () => {
     [autoLayoutMode, devices.length, links]
   );
 
-  // Add device to canvas
-  const handleAddDevice = (type: SimDeviceType) => {
+  // Add device to canvas (via palette click or drag-and-drop)
+  const handleAddDevice = (type: SimDeviceType, dropX?: number, dropY?: number) => {
     const prefixMap: Record<SimDeviceType, string> = {
       router: 'R',
       switch: 'SW',
@@ -918,19 +1528,166 @@ export const NetworkTopologySimulator: React.FC = () => {
     const sameTypeCount = devices.filter(d => d.type === type).length + 1;
     const name = `${prefixMap[type]}-${sameTypeCount}`;
     const offset = (devices.length % 6) * 42;
+    const rawX = dropX !== undefined ? dropX : 240 + (devices.length % 4) * 165;
+    const rawY = dropY !== undefined ? dropY : 140 + offset;
     const newDev = createDefaultDevice(
       type,
       name,
-      240 + (devices.length % 4) * 165,
-      140 + offset
+      snapClampedToGrid(rawX, 60, 940, gridSize, snapToGrid),
+      snapClampedToGrid(rawY, 60, 520, gridSize, snapToGrid)
     );
     setDevices(prev => [...prev, newDev]);
-    setSelectedDeviceId(newDev.id);
-    setSelectedDeviceIds([newDev.id]);
+    setSelectedDeviceId(null);
+    setSelectedDeviceIds([]);
+    setConsoleDeviceId(null);
+    setSelectedLinkId(null);
+    setSelectedShapeId(null);
+    setSelectedDiagramLabelId(null);
+    setEditingDiagramLabelId(null);
+    setTool('select');
+    setInspectorTab('objectives');
+  };
+
+  const handleAddShape = (kind: SimShapeKind) => {
+    let x = snapClampedToGrid(280 + ((shapes.length * 36) % 240), 4, 720, gridSize, snapToGrid);
+    let y = snapClampedToGrid(140 + ((shapes.length * 28) % 180), 4, 360, gridSize, snapToGrid);
+    let width = snapClampedToGrid(kind === 'circle' ? 210 : 260, 80, 400, gridSize, snapToGrid);
+    let height = snapClampedToGrid(kind === 'circle' ? 210 : 160, 80, 400, gridSize, snapToGrid);
+
+    if (selectedDeviceIds.length > 0) {
+      const selectedSet = new Set(selectedDeviceIds);
+      const selectedDevs = devices.filter(d => selectedSet.has(d.id));
+      if (selectedDevs.length > 0) {
+        const minX = Math.min(...selectedDevs.map(d => d.x));
+        const maxX = Math.max(...selectedDevs.map(d => d.x));
+        const minY = Math.min(...selectedDevs.map(d => d.y));
+        const maxY = Math.max(...selectedDevs.map(d => d.y));
+        const padX = kind === 'circle' ? 85 : 70;
+        const padTop = kind === 'circle' ? 75 : 62;
+        const padBottom = kind === 'circle' ? 85 : 68;
+        x = snapClampedToGrid(minX - padX, 8, 840, gridSize, snapToGrid);
+        y = snapClampedToGrid(minY - padTop, 8, 440, gridSize, snapToGrid);
+        width = snapClampedToGrid(maxX - minX + padX * 2, 140, 992 - x, gridSize, snapToGrid);
+        height = snapClampedToGrid(maxY - minY + padTop + padBottom, 120, 572 - y, gridSize, snapToGrid);
+      }
+    }
+
+    const newShape: SimTopologyShape = {
+      id: `shape-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      kind,
+      x,
+      y,
+      width,
+      height,
+      fillColor: kind === 'rectangle' ? '#ddd6fe' : '#ccfbf1',
+      fillOpacity: 0.34,
+      borderColor: '#64748b',
+      lineStyle: 'dashed',
+      borderWidth: 2,
+      label: `Group ${shapes.length + 1}`
+    };
+
+    setShapes(prev => [...prev, newShape]);
+    setSelectedShapeId(newShape.id);
+    setSelectedDiagramLabelId(null);
+    setSelectedDeviceIds([]);
+    setSelectedDeviceId(null);
     setSelectedLinkId(null);
     setTool('select');
-    setInspectorTab(type === 'router' || type === 'switch' ? 'cli' : 'config');
+    flashBanner(`Added ${kind === 'circle' ? 'Circle' : 'Rectangle'} grouping zone — drag corners to resize`);
   };
+
+  const updateSelectedShape = useCallback(
+    (updater: (shape: SimTopologyShape) => SimTopologyShape) => {
+      if (!selectedShapeId) return;
+      setShapes(prev => prev.map(s => (s.id === selectedShapeId ? updater(s) : s)));
+    },
+    [selectedShapeId]
+  );
+
+  const handleDeleteShape = useCallback((shapeId: string) => {
+    setShapes(prev => prev.filter(s => s.id !== shapeId));
+    setSelectedShapeId(prev => (prev === shapeId ? null : prev));
+  }, []);
+
+  const handleDuplicateSelectedShape = useCallback(() => {
+    if (!selectedShape) return;
+    const copy: SimTopologyShape = {
+      ...selectedShape,
+      id: `shape-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      x: Math.min(992 - selectedShape.width, selectedShape.x + 28),
+      y: Math.min(572 - selectedShape.height, selectedShape.y + 24),
+      label: selectedShape.label ? `${selectedShape.label} Copy` : undefined
+    };
+    setShapes(prev => [...prev, copy]);
+    setSelectedShapeId(copy.id);
+  }, [selectedShape]);
+
+  const handleAddDiagramLabel = () => {
+    const newId = `label-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const x = 360 + ((diagramLabels.length * 42) % 280);
+    const y = 160 + ((diagramLabels.length * 32) % 220);
+    const newLabel: SimDiagramLabel = {
+      id: newId,
+      text: 'Label',
+      x,
+      y,
+      color: '#7c3aed',
+      bgColor: 'transparent',
+      fontSize: 12,
+      bold: true
+    };
+    setDiagramLabels(prev => [...prev, newLabel]);
+    setSelectedDiagramLabelId(newId);
+    setEditingDiagramLabelId(newId);
+    setEditingDiagramLabelDraft('Label');
+    setSelectedShapeId(null);
+    setSelectedDeviceIds([]);
+    setSelectedDeviceId(null);
+    setSelectedLinkId(null);
+    setTool('select');
+  };
+
+  const updateSelectedDiagramLabel = useCallback(
+    (updater: (label: SimDiagramLabel) => SimDiagramLabel) => {
+      if (!selectedDiagramLabelId) return;
+      setDiagramLabels(prev =>
+        prev.map(l => (l.id === selectedDiagramLabelId ? updater(l) : l))
+      );
+    },
+    [selectedDiagramLabelId]
+  );
+
+  const commitDiagramLabelEdit = useCallback((labelId: string, rawText: string) => {
+    const cleaned = rawText.replace(/\r/g, '').slice(0, 160);
+    if (!cleaned.trim()) {
+      setDiagramLabels(prev => prev.filter(l => l.id !== labelId));
+      setSelectedDiagramLabelId(prev => (prev === labelId ? null : prev));
+    } else {
+      setDiagramLabels(prev =>
+        prev.map(l => (l.id === labelId ? { ...l, text: cleaned } : l))
+      );
+    }
+    setEditingDiagramLabelId(prev => (prev === labelId ? null : prev));
+  }, []);
+
+  const handleDeleteDiagramLabel = useCallback((labelId: string) => {
+    setDiagramLabels(prev => prev.filter(l => l.id !== labelId));
+    setSelectedDiagramLabelId(prev => (prev === labelId ? null : prev));
+    setEditingDiagramLabelId(prev => (prev === labelId ? null : prev));
+  }, []);
+
+  const handleDuplicateSelectedDiagramLabel = useCallback(() => {
+    if (!selectedDiagramLabel) return;
+    const copy: SimDiagramLabel = {
+      ...selectedDiagramLabel,
+      id: `label-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      x: Math.min(975, selectedDiagramLabel.x + 28),
+      y: Math.min(560, selectedDiagramLabel.y + 24)
+    };
+    setDiagramLabels(prev => [...prev, copy]);
+    setSelectedDiagramLabelId(copy.id);
+  }, [selectedDiagramLabel]);
 
   const handleDeleteDevice = useCallback(
     (deviceId: string) => {
@@ -939,6 +1696,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       const remaining = selectedDeviceIds.filter(id => id !== deviceId);
       setSelectedDeviceIds(remaining);
       setSelectedDeviceId(cur => (cur === deviceId ? remaining[0] || null : cur));
+      setConsoleDeviceId(cur => (cur === deviceId ? null : cur));
       setPendingCableSource(prev => (prev?.deviceId === deviceId ? null : prev));
       setPendingCableTarget(prev => (prev?.deviceId === deviceId ? null : prev));
     },
@@ -955,6 +1713,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     );
     setSelectedDeviceIds([]);
     setSelectedDeviceId(null);
+    setConsoleDeviceId(cur => (cur && deleteSet.has(cur) ? null : cur));
     setPendingCableSource(prev => (prev && deleteSet.has(prev.deviceId) ? null : prev));
     setPendingCableTarget(prev => (prev && deleteSet.has(prev.deviceId) ? null : prev));
     flashBanner(`Removed ${count} selected device${count === 1 ? '' : 's'} and attached cables`);
@@ -965,7 +1724,25 @@ export const NetworkTopologySimulator: React.FC = () => {
     setSelectedLinkId(prev => (prev === linkId ? null : prev));
   }, []);
 
-  // Keyboard shortcuts for canvas multi-select (Delete / Backspace, Ctrl/Cmd+A, Escape)
+  const commitDeviceRename = useCallback((deviceId: string, rawName: string) => {
+    const trimmed = rawName.trim().slice(0, 64);
+    if (trimmed) {
+      setDevices(prev => prev.map(d => (d.id === deviceId ? { ...d, name: trimmed } : d)));
+    }
+    setEditingDeviceLabelId(prev => (prev === deviceId ? null : prev));
+    setIsRenamingInspectorHeader(false);
+  }, []);
+
+  const startCanvasLabelEdit = useCallback((dev: SimDevice) => {
+    setSelectedDeviceIds([dev.id]);
+    setSelectedDeviceId(dev.id);
+    setSelectedLinkId(null);
+    setSelectedShapeId(null);
+    setEditingDeviceLabelId(dev.id);
+    setEditingDeviceLabelDraft(dev.name);
+  }, []);
+
+  // Keyboard shortcuts for canvas multi-select & rename (Delete / Backspace, Ctrl/Cmd+A, F2, Escape)
   useEffect(() => {
     if (workspaceView !== 'editor' || isSavePromptOpen || isTemplatesModalOpen) return;
 
@@ -976,12 +1753,22 @@ export const NetworkTopologySimulator: React.FC = () => {
         return;
       }
 
+      if (e.key === 'F2' && tool === 'select' && selectedDeviceIds.length === 1) {
+        const target = devices.find(d => d.id === selectedDeviceIds[0]);
+        if (target) {
+          e.preventDefault();
+          startCanvasLabelEdit(target);
+        }
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && tool === 'select') {
         if (devices.length === 0) return;
         e.preventDefault();
         setSelectedDeviceIds(devices.map(d => d.id));
         setSelectedDeviceId(prev => prev || devices[0]?.id || null);
         setSelectedLinkId(null);
+        setSelectedShapeId(null);
         return;
       }
 
@@ -989,6 +1776,12 @@ export const NetworkTopologySimulator: React.FC = () => {
         if (selectedDeviceIds.length > 0) {
           e.preventDefault();
           handleDeleteSelectedDevices();
+        } else if (selectedDiagramLabelId) {
+          e.preventDefault();
+          handleDeleteDiagramLabel(selectedDiagramLabelId);
+        } else if (selectedShapeId) {
+          e.preventDefault();
+          handleDeleteShape(selectedShapeId);
         } else if (selectedLinkId) {
           e.preventDefault();
           handleDeleteLink(selectedLinkId);
@@ -997,9 +1790,15 @@ export const NetworkTopologySimulator: React.FC = () => {
       }
 
       if (e.key === 'Escape') {
+        setEditingDeviceLabelId(null);
+        setEditingDiagramLabelId(null);
+        setIsRenamingInspectorHeader(false);
         setSelectedDeviceIds([]);
         setSelectedDeviceId(null);
+        setConsoleDeviceId(null);
         setSelectedLinkId(null);
+        setSelectedShapeId(null);
+        setSelectedDiagramLabelId(null);
         setPendingCableSource(null);
         setPendingCableTarget(null);
       }
@@ -1009,12 +1808,17 @@ export const NetworkTopologySimulator: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     devices,
+    handleDeleteDiagramLabel,
     handleDeleteLink,
     handleDeleteSelectedDevices,
+    handleDeleteShape,
     isSavePromptOpen,
     isTemplatesModalOpen,
-    selectedDeviceIds.length,
+    selectedDeviceIds,
+    selectedDiagramLabelId,
     selectedLinkId,
+    selectedShapeId,
+    startCanvasLabelEdit,
     tool,
     workspaceView
   ]);
@@ -1063,7 +1867,10 @@ export const NetworkTopologySimulator: React.FC = () => {
   };
 
   const handleDeviceClick = (device: SimDevice, e?: React.MouseEvent) => {
-    if (dragStateRef.current?.moved) return;
+    if (suppressDeviceClickAfterDragRef.current || dragStateRef.current?.moved) {
+      suppressDeviceClickAfterDragRef.current = false;
+      return;
+    }
 
     if (tool === 'delete') {
       handleDeleteDevice(device.id);
@@ -1071,6 +1878,90 @@ export const NetworkTopologySimulator: React.FC = () => {
     }
 
     if (tool === 'cable') {
+      if (cableToolMode === 'auto') {
+        if (!pendingCableSource) {
+          setPendingCableSource({ deviceId: device.id });
+          setPendingCableTarget(null);
+          return;
+        }
+        if (pendingCableSource.deviceId === device.id) {
+          setPendingCableSource(null);
+          setPendingCableTarget(null);
+          return;
+        }
+        const sourceDev = devices.find(d => d.id === pendingCableSource.deviceId);
+        if (!sourceDev) {
+          setPendingCableSource(null);
+          return;
+        }
+
+        const candidateOrder: SimCableType[] = (() => {
+          const pair = new Set([sourceDev.type, device.type]);
+          if (sourceDev.type === 'switch' && device.type === 'switch') {
+            return ['crossover', 'fiber', 'straight'];
+          }
+          if (pair.has('switch')) {
+            return ['straight', 'fiber', 'crossover'];
+          }
+          if (sourceDev.type === 'router' && device.type === 'router') {
+            return ['crossover', 'serial', 'fiber', 'straight'];
+          }
+          return ['crossover', 'straight', 'fiber'];
+        })();
+
+        let chosenType: SimCableType | null = null;
+        let chosenFromPort: string | null = null;
+        let chosenToPort: string | null = null;
+
+        for (const ct of candidateOrder) {
+          const fromIface = sourceDev.interfaces.find(
+            i =>
+              i.kind !== 'subinterface' &&
+              !isPortInUse(sourceDev.id, i.name) &&
+              isPortCompatibleWithCable(i, ct)
+          );
+          const toIface = device.interfaces.find(
+            i =>
+              i.kind !== 'subinterface' &&
+              !isPortInUse(device.id, i.name) &&
+              isPortCompatibleWithCable(i, ct)
+          );
+          if (fromIface && toIface) {
+            chosenType = ct;
+            chosenFromPort = fromIface.name;
+            chosenToPort = toIface.name;
+            break;
+          }
+        }
+
+        if (!chosenType || !chosenFromPort || !chosenToPort) {
+          flashBanner(`No free compatible ports between ${sourceDev.name} and ${device.name}`);
+          setPendingCableSource(null);
+          setPendingCableTarget(null);
+          return;
+        }
+
+        const newLink: SimLink = {
+          id: `link-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          cableType: chosenType,
+          fromDeviceId: sourceDev.id,
+          fromPort: chosenFromPort,
+          toDeviceId: device.id,
+          toPort: chosenToPort
+        };
+        const status = evaluateLinkStatus(newLink, devices);
+        setLinks(prev => [...prev, newLink]);
+        setSelectedLinkId(newLink.id);
+        setPendingCableSource(null);
+        setPendingCableTarget(null);
+        flashBanner(
+          status.isUp
+            ? `Auto-connected ${sourceDev.name} ↔ ${device.name} (${CABLE_META[chosenType].short})`
+            : `Auto-attached ${CABLE_META[chosenType].short} cable (${status.reason})`
+        );
+        return;
+      }
+
       if (!pendingCableSource) {
         setPendingCableSource({ deviceId: device.id });
         setPendingCableTarget(null);
@@ -1101,16 +1992,21 @@ export const NetworkTopologySimulator: React.FC = () => {
         if (cur === device.id) return next[next.length - 1] || null;
         return cur;
       });
+      setConsoleDeviceId(null);
       setSelectedLinkId(null);
+      setSelectedShapeId(null);
+      setSelectedDiagramLabelId(null);
       return;
     }
 
     setSelectedDeviceIds([device.id]);
     setSelectedDeviceId(device.id);
-    setSelectedLinkId(null);
-    if (inspectorTab === 'objectives') {
-      setInspectorTab(device.type === 'pc' || device.type === 'server' ? 'config' : 'cli');
+    if (consoleDeviceId !== device.id) {
+      setConsoleDeviceId(null);
     }
+    setSelectedLinkId(null);
+    setSelectedShapeId(null);
+    setSelectedDiagramLabelId(null);
   };
 
   // Run CLI command on selected device
@@ -1181,16 +2077,22 @@ export const NetworkTopologySimulator: React.FC = () => {
     setActivePresetId(blankPreset.id);
     setDevices([]);
     setLinks([]);
+    setShapes([]);
+    setDiagramLabels([]);
     setActiveSavedLabId(null);
     setSelectedDeviceId(null);
     setSelectedDeviceIds([]);
+    setConsoleDeviceId(null);
     setSelectedLinkId(null);
+    setSelectedShapeId(null);
+    setSelectedDiagramLabelId(null);
+    setEditingDiagramLabelId(null);
     setPendingCableSource(null);
     setPendingCableTarget(null);
     setLastPingResult(null);
     setRecentlySavedProjectId(null);
     setIsSavePromptOpen(false);
-    setInspectorTab('config');
+    setInspectorTab('objectives');
     setWorkspaceView('editor');
     flashBanner('Started a new Blank Lab Project');
   };
@@ -1207,7 +2109,9 @@ export const NetworkTopologySimulator: React.FC = () => {
       presetId: record?.presetId || activePresetId,
       exportedAt: new Date().toISOString(),
       devices: record ? record.devices : devices,
-      links: record ? record.links : links
+      links: record ? record.links : links,
+      shapes: record ? record.shapes || [] : shapes,
+      labels: record ? record.labels || [] : diagramLabels
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1220,8 +2124,8 @@ export const NetworkTopologySimulator: React.FC = () => {
   };
 
   const handleExportImage = async (format: 'png' | 'svg') => {
-    if (devices.length === 0) {
-      flashBanner('Place at least one device on the canvas before exporting a topology image');
+    if (devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0) {
+      flashBanner('Place at least one device, zone, or label before exporting a topology image');
       return;
     }
 
@@ -1236,6 +2140,8 @@ export const NetworkTopologySimulator: React.FC = () => {
       title,
       devices,
       links,
+      shapes,
+      labels: diagramLabels,
       isDark: isDarkTheme
     };
 
@@ -1267,11 +2173,16 @@ export const NetworkTopologySimulator: React.FC = () => {
           setActivePresetId(typeof parsed.presetId === 'string' ? parsed.presetId : 'blank-sandbox');
           setDevices(parsed.devices);
           setLinks(parsed.links);
+          setShapes(Array.isArray(parsed.shapes) ? sanitizeShapesForStorage(parsed.shapes) : []);
+          setDiagramLabels(Array.isArray(parsed.labels) ? sanitizeLabelsForStorage(parsed.labels) : []);
           setActiveSavedLabId(null);
           const firstImportedId = parsed.devices[0]?.id || null;
           setSelectedDeviceId(firstImportedId);
           setSelectedDeviceIds(firstImportedId ? [firstImportedId] : []);
+          setConsoleDeviceId(null);
           setSelectedLinkId(null);
+          setSelectedShapeId(null);
+          setSelectedDiagramLabelId(null);
           if (typeof parsed.title === 'string' && parsed.title.trim()) {
             setSaveTitleInput(parsed.title.trim());
           }
@@ -1312,6 +2223,8 @@ export const NetworkTopologySimulator: React.FC = () => {
 
     const cleanDevices = sanitizeDevicesForStorage(devices);
     const cleanLinks = sanitizeLinksForStorage(links);
+    const cleanShapes = sanitizeShapesForStorage(shapes);
+    const cleanLabels = sanitizeLabelsForStorage(diagramLabels);
 
     const record: SavedLabRecord = {
       id: targetId,
@@ -1320,6 +2233,8 @@ export const NetworkTopologySimulator: React.FC = () => {
       presetId: activePresetId,
       devices: cleanDevices,
       links: cleanLinks,
+      shapes: cleanShapes,
+      labels: cleanLabels,
       deviceCount: cleanDevices.length,
       linkCount: cleanLinks.length,
       objectivesPassed: objectiveProgress.passedCount,
@@ -1360,10 +2275,13 @@ export const NetworkTopologySimulator: React.FC = () => {
         setActivePresetId('blank-sandbox');
         setDevices([]);
         setLinks([]);
+        setShapes([]);
         setActiveSavedLabId(null);
         setSelectedDeviceId(null);
         setSelectedDeviceIds([]);
+        setConsoleDeviceId(null);
         setSelectedLinkId(null);
+        setSelectedShapeId(null);
         setPendingCableSource(null);
         setPendingCableTarget(null);
         setLastPingResult(null);
@@ -1393,12 +2311,18 @@ export const NetworkTopologySimulator: React.FC = () => {
     setActivePresetId(record.presetId);
     setDevices(record.devices);
     setLinks(record.links);
+    setShapes(Array.isArray(record.shapes) ? record.shapes : []);
+    setDiagramLabels(Array.isArray(record.labels) ? record.labels : []);
     setActiveSavedLabId(record.id);
     setSaveTitleInput(record.title);
     const firstId = record.devices[0]?.id || null;
     setSelectedDeviceId(firstId);
     setSelectedDeviceIds(firstId ? [firstId] : []);
+    setConsoleDeviceId(null);
     setSelectedLinkId(null);
+    setSelectedShapeId(null);
+    setSelectedDiagramLabelId(null);
+    setEditingDiagramLabelId(null);
     setPendingCableSource(null);
     setPendingCableTarget(null);
     setLastPingResult(null);
@@ -1492,7 +2416,7 @@ export const NetworkTopologySimulator: React.FC = () => {
 
   // Port picker modal data when cabling
   const portPickerDevice = useMemo(() => {
-    if (tool !== 'cable') return null;
+    if (tool !== 'cable' || cableToolMode === 'auto') return null;
     if (pendingCableTarget) {
       return {
         role: 'destination' as const,
@@ -1535,6 +2459,38 @@ export const NetworkTopologySimulator: React.FC = () => {
     () => (selectedDevice?.type === 'router' ? computeRoutingTable(selectedDevice, devices, links) : []),
     [devices, links, selectedDevice]
   );
+
+  const selectedGroupBounds = useMemo(() => {
+    if (tool !== 'select' || selectedDeviceIds.length < 2) return null;
+    const selectedSet = new Set(selectedDeviceIds);
+    const items = devices.filter(d => selectedSet.has(d.id));
+    if (items.length < 2) return null;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    items.forEach(d => {
+      if (d.x < minX) minX = d.x;
+      if (d.x > maxX) maxX = d.x;
+      if (d.y < minY) minY = d.y;
+      if (d.y > maxY) maxY = d.y;
+    });
+    return {
+      ids: items.map(d => d.id),
+      pivotX: (minX + maxX) / 2,
+      pivotY: (minY + maxY) / 2,
+      left: Math.max(8, minX - 48),
+      right: Math.min(992, maxX + 48),
+      top: Math.max(8, minY - 46),
+      bottom: Math.min(572, maxY + 52)
+    };
+  }, [devices, selectedDeviceIds, tool]);
+
+  const hasRotatedSelection = useMemo(() => {
+    if (selectedDeviceIds.length === 0) return false;
+    const selectedSet = new Set(selectedDeviceIds);
+    return devices.some(d => selectedSet.has(d.id) && (d.rotation || 0) !== 0);
+  }, [devices, selectedDeviceIds]);
 
   return (
     <div className="space-y-4 w-full min-w-0">
@@ -1693,7 +2649,7 @@ export const NetworkTopologySimulator: React.FC = () => {
 
               <button
                 type="button"
-                disabled={devices.length === 0 || isExportingImage}
+                disabled={(devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0) || isExportingImage}
                 onClick={() => handleExportImage('png')}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-45 disabled:pointer-events-none transition-colors whitespace-nowrap shrink-0"
                 title="Export high-resolution PNG image (2000×1380)"
@@ -1704,7 +2660,7 @@ export const NetworkTopologySimulator: React.FC = () => {
 
               <button
                 type="button"
-                disabled={devices.length === 0}
+                disabled={devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0}
                 onClick={() => handleExportImage('svg')}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-45 disabled:pointer-events-none transition-colors whitespace-nowrap shrink-0"
                 title="Export scalable SVG vector diagram"
@@ -1891,54 +2847,207 @@ export const NetworkTopologySimulator: React.FC = () => {
       {workspaceView === 'editor' ? (
         <>
           {/* Design Palette & Cabling Toolbar */}
-          <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-3">
-        {/* Add Devices */}
+          <div className="p-2.5 sm:p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-3">
+        {/* Icon-Only Device Palette + Un-Collapsed Cable Symbols + Group Zones & Label */}
         <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <div
+            role="group"
+            aria-label="Network devices and cables"
+            className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+          >
+            {/* Device Symbols (Drag onto canvas or click to add) */}
+            {(
+              [
+                { type: 'router' as const, label: 'Router', iconClass: 'w-7 h-5' },
+                { type: 'switch' as const, label: 'Switch', iconClass: 'w-7 h-5' },
+                { type: 'pc' as const, label: 'Workstation', iconClass: 'w-7 h-5' },
+                { type: 'server' as const, label: 'Server', iconClass: 'w-6 h-5' }
+              ] as const
+            ).map(item => (
+              <button
+                key={item.type}
+                type="button"
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('application/x-netlab-device', item.type);
+                  e.dataTransfer.setData('text/plain', item.type);
+                  e.dataTransfer.effectAllowed = 'copy';
+                  draggedPaletteTypeRef.current = item.type;
+                }}
+                onDragEnd={() => {
+                  draggedPaletteTypeRef.current = null;
+                  setPaletteDropPreview(null);
+                }}
+                onClick={() => handleAddDevice(item.type)}
+                title={`Drag onto workspace or click to add ${item.label}`}
+                aria-label={`Add ${item.label}`}
+                className="relative inline-flex items-center justify-center w-10 h-9 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 hover:border-sky-400 dark:hover:border-cyan-400 hover:bg-sky-50 dark:hover:bg-sky-950/60 cursor-grab active:cursor-grabbing transition-colors shrink-0"
+              >
+                <CiscoDeviceIcon type={item.type} className={item.iconClass} />
+              </button>
+            ))}
+
+            <span className="h-5 w-px bg-slate-300 dark:bg-slate-600 mx-0.5" aria-hidden="true" />
+
+            {/* Un-collapsed Cable Symbols (Packet Tracer style) */}
+            {(
+              [
+                {
+                  mode: 'auto' as const,
+                  title: 'Automatically Choose Connection Type',
+                  renderIcon: () => (
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" aria-hidden="true">
+                      <path
+                        d="M13.5 3L6.5 13h5l-1 8 7-10h-5l1-8z"
+                        fill="#facc15"
+                        stroke="#ef4444"
+                        strokeWidth="1.4"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )
+                },
+                {
+                  mode: 'straight' as const,
+                  title: 'Copper Straight-Through (Switch ↔ Router, PC, Server)',
+                  renderIcon: () => (
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" aria-hidden="true">
+                      <line
+                        x1="5"
+                        y1="19"
+                        x2="19"
+                        y2="5"
+                        stroke="currentColor"
+                        strokeWidth="2.8"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  )
+                },
+                {
+                  mode: 'crossover' as const,
+                  title: 'Copper Crossover (Router ↔ Router, Switch ↔ Switch, PC ↔ Router)',
+                  renderIcon: () => (
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" aria-hidden="true">
+                      <line
+                        x1="5"
+                        y1="19"
+                        x2="19"
+                        y2="5"
+                        stroke="currentColor"
+                        strokeWidth="2.8"
+                        strokeDasharray="3.5 4.2"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  )
+                },
+                {
+                  mode: 'fiber' as const,
+                  title: 'Optical Fiber (Fiber SFP / Gig ports)',
+                  renderIcon: () => (
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" aria-hidden="true">
+                      <line
+                        x1="5"
+                        y1="19"
+                        x2="19"
+                        y2="5"
+                        stroke="#f97316"
+                        strokeWidth="2.8"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  )
+                },
+                {
+                  mode: 'serial' as const,
+                  title: 'Serial DCE/DTE WAN (Router Serial0/0/x ↔ Serial0/0/x)',
+                  renderIcon: () => (
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" aria-hidden="true">
+                      <path
+                        d="M5 18l5-6-3-2 7-5-2 6 3 2-5 5"
+                        fill="none"
+                        stroke="#ef4444"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )
+                }
+              ] as const
+            ).map(item => {
+              const isActive = tool === 'cable' && cableToolMode === item.mode;
+              return (
+                <button
+                  key={item.mode}
+                  type="button"
+                  aria-label={item.title}
+                  aria-pressed={isActive}
+                  title={item.title}
+                  onClick={() => {
+                    if (isActive) {
+                      setTool('select');
+                    } else {
+                      setTool('cable');
+                      setCableToolMode(item.mode);
+                      if (item.mode !== 'auto') {
+                        setSelectedCableType(item.mode);
+                      }
+                    }
+                    setPendingCableSource(null);
+                    setPendingCableTarget(null);
+                  }}
+                  className={`inline-flex items-center justify-center w-10 h-9 rounded-lg border transition-colors shrink-0 ${
+                    isActive
+                      ? 'bg-blue-600 border-blue-500 text-white shadow-sm ring-2 ring-blue-500/30'
+                      : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-700 text-slate-900 dark:text-slate-100 hover:border-blue-400 dark:hover:border-cyan-400 hover:bg-blue-50/70 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {item.renderIcon()}
+                </button>
+              );
+            })}
+          </div>
+
+          <span className="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5 hidden sm:inline-block" aria-hidden="true" />
+
           <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 px-1">
-            Add Device:
+            Group Zone:
           </span>
+
           <button
             type="button"
-            onClick={() => handleAddDevice('router')}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-xs font-semibold text-sky-800 dark:text-cyan-200 hover:bg-sky-100 dark:hover:bg-sky-900/60 transition-colors whitespace-nowrap shrink-0"
+            onClick={() => handleAddShape('rectangle')}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-violet-50 dark:bg-violet-950/50 border border-violet-200 dark:border-violet-800 text-xs font-semibold text-violet-800 dark:text-violet-200 hover:bg-violet-100 dark:hover:bg-violet-900/50 transition-colors whitespace-nowrap shrink-0"
+            title="Add a resizable Rectangle grouping box (auto-wraps selected devices)"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <CiscoDeviceIcon type="router" className="w-5 h-4 shrink-0" />
-            <span>Cisco Router</span>
+            <Square className="w-3.5 h-3.5" />
+            <span>Rectangle</span>
           </button>
 
           <button
             type="button"
-            onClick={() => handleAddDevice('switch')}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-xs font-semibold text-sky-800 dark:text-cyan-200 hover:bg-sky-100 dark:hover:bg-sky-900/60 transition-colors whitespace-nowrap shrink-0"
+            onClick={() => handleAddShape('circle')}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-teal-50 dark:bg-teal-950/50 border border-teal-200 dark:border-teal-800 text-xs font-semibold text-teal-800 dark:text-teal-200 hover:bg-teal-100 dark:hover:bg-teal-900/50 transition-colors whitespace-nowrap shrink-0"
+            title="Add a resizable Circle / Oval grouping zone (auto-wraps selected devices)"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <CiscoDeviceIcon type="switch" className="w-5 h-4 shrink-0" />
-            <span>Cisco Switch</span>
+            <Circle className="w-3.5 h-3.5" />
+            <span>Circle</span>
           </button>
 
           <button
             type="button"
-            onClick={() => handleAddDevice('pc')}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-xs font-semibold text-sky-800 dark:text-cyan-200 hover:bg-sky-100 dark:hover:bg-sky-900/60 transition-colors whitespace-nowrap shrink-0"
+            onClick={handleAddDiagramLabel}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-xs font-semibold text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors whitespace-nowrap shrink-0"
+            title="Add a movable text label anywhere on the topology diagram (e.g. OSPF, VLAN 10, 10.0.0.0/24)"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <CiscoDeviceIcon type="pc" className="w-5 h-4 shrink-0" />
-            <span>Workstation</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleAddDevice('server')}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-xs font-semibold text-sky-800 dark:text-cyan-200 hover:bg-sky-100 dark:hover:bg-sky-900/60 transition-colors whitespace-nowrap shrink-0"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <CiscoDeviceIcon type="server" className="w-4 h-4 shrink-0" />
-            <span>Server</span>
+            <Type className="w-3.5 h-3.5" />
+            <span>Label</span>
           </button>
         </div>
 
-        {/* Canvas Tools & Cable Type Selector */}
+        {/* Canvas Tools & Auto-Layout */}
         <div className="flex flex-wrap items-center gap-2 min-w-0">
           <div className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 max-w-full">
             <button
@@ -1961,23 +3070,6 @@ export const NetworkTopologySimulator: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                setTool('cable');
-                setPendingCableSource(null);
-                setPendingCableTarget(null);
-              }}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                tool === 'cable'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              <Cable className="w-3.5 h-3.5" />
-              <span>Connect Cable</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
                 setTool('delete');
                 setPendingCableSource(null);
                 setPendingCableTarget(null);
@@ -1991,6 +3083,35 @@ export const NetworkTopologySimulator: React.FC = () => {
               <Trash2 className="w-3.5 h-3.5" />
               <span>Remove</span>
             </button>
+          </div>
+
+          <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+            <button
+              type="button"
+              aria-pressed={snapToGrid}
+              onClick={() => setSnapToGrid(prev => !prev)}
+              title="Toggle Snap-to-Grid alignment while dragging devices and shapes (hold Alt to temporarily bypass)"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                snapToGrid
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Magnet className="w-3.5 h-3.5" />
+              <span>Snap</span>
+            </button>
+
+            <select
+              aria-label="Grid Snap Size"
+              value={gridSize}
+              onChange={(e) => setGridSize(Number(e.target.value) as SnapGridStep)}
+              title="Grid snap increment (logical canvas units)"
+              className="px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono tabular-nums font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value={10}>10px</option>
+              <option value={20}>20px</option>
+              <option value={40}>40px</option>
+            </select>
           </div>
 
           <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
@@ -2017,25 +3138,6 @@ export const NetworkTopologySimulator: React.FC = () => {
               <span>Auto-Layout</span>
             </button>
           </div>
-
-          {tool === 'cable' && (
-            <select
-              aria-label="Cable Type"
-              value={selectedCableType}
-              onChange={(e) => {
-                setSelectedCableType(e.target.value as SimCableType);
-                setPendingCableSource(null);
-                setPendingCableTarget(null);
-              }}
-              className="px-2.5 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-xs font-semibold text-blue-800 dark:text-cyan-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {(Object.keys(CABLE_META) as SimCableType[]).map(ct => (
-                <option key={ct} value={ct}>
-                  {CABLE_META[ct].label}
-                </option>
-              ))}
-            </select>
-          )}
         </div>
       </div>
 
@@ -2053,12 +3155,14 @@ export const NetworkTopologySimulator: React.FC = () => {
                 <span aria-hidden="true">·</span>
                 <span className="font-mono tabular-nums">
                   {devices.length} devices, {links.length} cables
+                  {shapes.length > 0 ? `, ${shapes.length} zones` : ''}
+                  {diagramLabels.length > 0 ? `, ${diagramLabels.length} labels` : ''}
                 </span>
                 {tool === 'select' && devices.length > 0 && selectedDeviceIds.length === 0 && (
                   <>
                     <span aria-hidden="true">·</span>
                     <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Drag box or Ctrl+Click to multi-select
+                      Click: select · Long-click: move · Double-click: console
                     </span>
                   </>
                 )}
@@ -2067,7 +3171,54 @@ export const NetworkTopologySimulator: React.FC = () => {
                     <span aria-hidden="true">·</span>
                     <span className="font-mono tabular-nums font-semibold text-blue-600 dark:text-cyan-400">
                       {selectedDeviceIds.length} selected
+                      {selectedDeviceIds.length === 1 && selectedDevice && (selectedDevice.rotation || 0) !== 0
+                        ? ` (${selectedDevice.rotation}°)`
+                        : ''}
                     </span>
+                    {selectedDeviceIds.length === 1 && selectedDevice && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => startCanvasLabelEdit(selectedDevice)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-500 transition-colors whitespace-nowrap"
+                          title="Rename device label (F2 or double-click label on canvas)"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          <span>Rename</span>
+                        </button>
+                        {((selectedDevice.labelOffsetX || 0) !== 0 ||
+                          (selectedDevice.labelOffsetY || 0) !== 0) && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDevices(prev =>
+                                prev.map(d =>
+                                  d.id === selectedDevice.id
+                                    ? { ...d, labelOffsetX: 0, labelOffsetY: 0 }
+                                    : d
+                                )
+                              )
+                            }
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-500 transition-colors whitespace-nowrap"
+                            title="Snap device label back underneath the device icon"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            <span>Reset Label</span>
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {hasRotatedSelection && (
+                      <button
+                        type="button"
+                        onClick={() => handleResetRotation(selectedDeviceIds)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-500 transition-colors whitespace-nowrap"
+                        title="Reset orientation to 0°"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Reset 0°</span>
+                      </button>
+                    )}
                     {selectedDeviceIds.length < devices.length && (
                       <button
                         type="button"
@@ -2108,7 +3259,11 @@ export const NetworkTopologySimulator: React.FC = () => {
                   <>
                     <span aria-hidden="true">·</span>
                     <span className="text-blue-600 dark:text-cyan-400 font-medium truncate">
-                      {pendingCableSource?.portName
+                      {cableToolMode === 'auto'
+                        ? pendingCableSource
+                          ? `Auto-cable from ${devices.find(d => d.id === pendingCableSource.deviceId)?.name} — click target device`
+                          : 'Auto-Choose Cable: click source device, then target device'
+                        : pendingCableSource?.portName
                         ? `Source ${devices.find(d => d.id === pendingCableSource.deviceId)?.name} (${pendingCableSource.portName}) — click target device`
                         : `Click first device to attach ${CABLE_META[selectedCableType].short} cable (${CABLE_META[selectedCableType].hint})`}
                     </span>
@@ -2118,7 +3273,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                   <>
                     <span aria-hidden="true">·</span>
                     <span className="text-red-600 dark:text-red-400 font-medium">
-                      Click any device or cable to remove it
+                      Click any device, cable, zone, or label to remove it
                     </span>
                   </>
                 )}
@@ -2144,6 +3299,66 @@ export const NetworkTopologySimulator: React.FC = () => {
             {/* Interactive Blueprint Stage */}
             <div
               ref={canvasRef}
+              onDragOver={(e) => {
+                const transferType = e.dataTransfer.getData('application/x-netlab-device') as SimDeviceType;
+                const activeType = draggedPaletteTypeRef.current || transferType;
+                if (
+                  activeType === 'router' ||
+                  activeType === 'switch' ||
+                  activeType === 'pc' ||
+                  activeType === 'server'
+                ) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'copy';
+                  const canvas = canvasRef.current;
+                  if (!canvas) return;
+                  const rect = canvas.getBoundingClientRect();
+                  if (rect.width <= 0 || rect.height <= 0) return;
+                  const rawX = ((e.clientX - rect.left) / rect.width) * 1000;
+                  const rawY = ((e.clientY - rect.top) / rect.height) * 580;
+                  const x = snapClampedToGrid(rawX, 60, 940, gridSize, snapToGrid);
+                  const y = snapClampedToGrid(rawY, 60, 520, gridSize, snapToGrid);
+                  setPaletteDropPreview(prev =>
+                    prev && prev.type === activeType && prev.x === x && prev.y === y
+                      ? prev
+                      : { type: activeType, x, y }
+                  );
+                }
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                  setPaletteDropPreview(null);
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const transferType = (e.dataTransfer.getData('application/x-netlab-device') ||
+                  e.dataTransfer.getData('text/plain')) as SimDeviceType;
+                const dropType = draggedPaletteTypeRef.current || transferType;
+                draggedPaletteTypeRef.current = null;
+                setPaletteDropPreview(null);
+                if (
+                  dropType !== 'router' &&
+                  dropType !== 'switch' &&
+                  dropType !== 'pc' &&
+                  dropType !== 'server'
+                ) {
+                  return;
+                }
+                const canvas = canvasRef.current;
+                if (!canvas) {
+                  handleAddDevice(dropType);
+                  return;
+                }
+                const rect = canvas.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) {
+                  handleAddDevice(dropType);
+                  return;
+                }
+                const rawX = ((e.clientX - rect.left) / rect.width) * 1000;
+                const rawY = ((e.clientY - rect.top) / rect.height) * 580;
+                handleAddDevice(dropType, rawX, rawY);
+              }}
               onPointerDown={(e) => {
                 if (tool !== 'select' || e.button !== 0) return;
                 if (e.target !== e.currentTarget) return;
@@ -2172,6 +3387,9 @@ export const NetworkTopologySimulator: React.FC = () => {
                 }
                 if (e.target === e.currentTarget) {
                   setSelectedLinkId(null);
+                  setSelectedShapeId(null);
+                  setSelectedDiagramLabelId(null);
+                  setConsoleDeviceId(null);
                   if (tool === 'select' && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
                     setSelectedDeviceIds([]);
                     setSelectedDeviceId(null);
@@ -2179,12 +3397,324 @@ export const NetworkTopologySimulator: React.FC = () => {
                 }
               }}
               className="relative w-full aspect-[1000/580] min-h-[260px] sm:min-h-[380px] bg-slate-50 dark:bg-[#090f1d] select-none overflow-hidden"
-              style={{
-                backgroundImage:
-                  'radial-gradient(circle, rgba(148,163,184,0.22) 1px, transparent 1px)',
-                backgroundSize: '24px 24px'
-              }}
             >
+              {/* True-Coordinate Logical SVG Grid Backdrop */}
+              <svg
+                viewBox="0 0 1000 580"
+                className="absolute inset-0 w-full h-full pointer-events-none z-0"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <defs>
+                  <pattern
+                    id="sim-snap-grid-pattern"
+                    width={gridSize}
+                    height={gridSize}
+                    patternUnits="userSpaceOnUse"
+                  >
+                    {snapToGrid ? (
+                      <path
+                        d={`M ${gridSize} 0 L 0 0 0 ${gridSize}`}
+                        fill="none"
+                        stroke="rgba(148,163,184,0.18)"
+                        strokeWidth="0.7"
+                      />
+                    ) : (
+                      <circle
+                        cx={gridSize / 2}
+                        cy={gridSize / 2}
+                        r="0.9"
+                        fill="rgba(148,163,184,0.22)"
+                      />
+                    )}
+                  </pattern>
+                </defs>
+                <rect width="1000" height="580" fill="url(#sim-snap-grid-pattern)" />
+                {activeSnapGuides?.x !== undefined && (
+                  <line
+                    x1={activeSnapGuides.x}
+                    y1={0}
+                    x2={activeSnapGuides.x}
+                    y2={580}
+                    stroke="#0ea5e9"
+                    strokeWidth={1.1}
+                    strokeDasharray="4 4"
+                    strokeOpacity={0.75}
+                  />
+                )}
+                {activeSnapGuides?.y !== undefined && (
+                  <line
+                    x1={0}
+                    y1={activeSnapGuides.y}
+                    x2={1000}
+                    y2={activeSnapGuides.y}
+                    stroke="#0ea5e9"
+                    strokeWidth={1.1}
+                    strokeDasharray="4 4"
+                    strokeOpacity={0.75}
+                  />
+                )}
+              </svg>
+              {/* SVG Grouping Shapes Layer (Rendered Behind Cables & Devices) */}
+              {shapes.length > 0 && (
+                <svg
+                  viewBox="0 0 1000 580"
+                  className="absolute inset-0 w-full h-full pointer-events-none z-[1]"
+                  preserveAspectRatio="none"
+                >
+                  {shapes.map(shape => {
+                    const isShapeSelected = selectedShapeId === shape.id;
+                    const isFillNone =
+                      !shape.fillColor ||
+                      shape.fillColor === 'transparent' ||
+                      shape.fillColor === 'none';
+                    const dash =
+                      shape.lineStyle === 'dashed'
+                        ? '7 5'
+                        : shape.lineStyle === 'dotted'
+                        ? '2.5 4.5'
+                        : undefined;
+                    const strokeW = shape.borderWidth || 2;
+                    const labelText = shape.label?.trim();
+                    const labelColor = shape.labelColor || shape.borderColor || '#64748b';
+
+                    const handleShapePointerDown = (e: React.PointerEvent) => {
+                      if (e.button !== 0) return;
+                      e.stopPropagation();
+
+                      if (tool === 'delete') {
+                        handleDeleteShape(shape.id);
+                        return;
+                      }
+                      if (tool !== 'select') return;
+
+                      const canvas = canvasRef.current;
+                      if (!canvas) return;
+                      const rect = canvas.getBoundingClientRect();
+                      if (rect.width <= 0 || rect.height <= 0) return;
+
+                      const startCanvasX = Math.min(
+                        1000,
+                        Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000)
+                      );
+                      const startCanvasY = Math.min(
+                        580,
+                        Math.max(0, ((e.clientY - rect.top) / rect.height) * 580)
+                      );
+
+                      setSelectedShapeId(shape.id);
+                      setSelectedDeviceIds([]);
+                      setSelectedDeviceId(null);
+                      setSelectedLinkId(null);
+                      setSelectedDiagramLabelId(null);
+
+                      shapeDragStateRef.current = {
+                        shapeId: shape.id,
+                        startClientX: e.clientX,
+                        startClientY: e.clientY,
+                        startCanvasX,
+                        startCanvasY,
+                        initX: shape.x,
+                        initY: shape.y,
+                        width: shape.width,
+                        height: shape.height,
+                        moved: false
+                      };
+                    };
+
+                    return (
+                      <g key={shape.id}>
+                        {shape.kind === 'circle' ? (
+                          <>
+                            <ellipse
+                              cx={shape.x + shape.width / 2}
+                              cy={shape.y + shape.height / 2}
+                              rx={shape.width / 2}
+                              ry={shape.height / 2}
+                              fill={isFillNone ? 'none' : shape.fillColor}
+                              fillOpacity={isFillNone ? 0 : shape.fillOpacity}
+                              stroke={isShapeSelected ? '#2563eb' : shape.borderColor}
+                              strokeWidth={isShapeSelected ? Math.max(strokeW, 2.5) : strokeW}
+                              strokeDasharray={dash}
+                              className={
+                                isFillNone && tool !== 'delete'
+                                  ? 'pointer-events-none'
+                                  : 'pointer-events-auto cursor-move'
+                              }
+                              onPointerDown={handleShapePointerDown}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            {/* Wide stroke hit area so outline-only shapes are always easy to select & drag */}
+                            <ellipse
+                              cx={shape.x + shape.width / 2}
+                              cy={shape.y + shape.height / 2}
+                              rx={shape.width / 2}
+                              ry={shape.height / 2}
+                              fill="none"
+                              stroke="transparent"
+                              strokeWidth={14}
+                              className="pointer-events-auto cursor-move"
+                              onPointerDown={handleShapePointerDown}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <rect
+                              x={shape.x}
+                              y={shape.y}
+                              width={shape.width}
+                              height={shape.height}
+                              rx={14}
+                              fill={isFillNone ? 'none' : shape.fillColor}
+                              fillOpacity={isFillNone ? 0 : shape.fillOpacity}
+                              stroke={isShapeSelected ? '#2563eb' : shape.borderColor}
+                              strokeWidth={isShapeSelected ? Math.max(strokeW, 2.5) : strokeW}
+                              strokeDasharray={dash}
+                              className={
+                                isFillNone && tool !== 'delete'
+                                  ? 'pointer-events-none'
+                                  : 'pointer-events-auto cursor-move'
+                              }
+                              onPointerDown={handleShapePointerDown}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            <rect
+                              x={shape.x}
+                              y={shape.y}
+                              width={shape.width}
+                              height={shape.height}
+                              rx={14}
+                              fill="none"
+                              stroke="transparent"
+                              strokeWidth={14}
+                              className="pointer-events-auto cursor-move"
+                              onPointerDown={handleShapePointerDown}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </>
+                        )}
+
+                        {labelText && (
+                          <text
+                            x={shape.kind === 'circle' ? shape.x + shape.width / 2 : shape.x + 12}
+                            y={
+                              shape.kind === 'circle'
+                                ? shape.y + Math.min(26, Math.max(16, shape.height * 0.16))
+                                : shape.y + 19
+                            }
+                            textAnchor={shape.kind === 'circle' ? 'middle' : 'start'}
+                            fontSize="12"
+                            fontWeight="700"
+                            fill={labelColor}
+                            className="pointer-events-auto cursor-move select-none"
+                            onPointerDown={handleShapePointerDown}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {labelText}
+                          </text>
+                        )}
+                      </g>
+                    );
+                  })}
+                </svg>
+              )}
+
+              {/* Selected Shape 8-Handle Resize Box */}
+              {selectedShape && tool === 'select' && (
+                <div
+                  className="absolute border border-blue-500/80 dark:border-cyan-400/80 pointer-events-none z-[5]"
+                  style={{
+                    left: `${(selectedShape.x / 1000) * 100}%`,
+                    top: `${(selectedShape.y / 580) * 100}%`,
+                    width: `${(selectedShape.width / 1000) * 100}%`,
+                    height: `${(selectedShape.height / 580) * 100}%`
+                  }}
+                >
+                  {(
+                    [
+                      { id: 'nw', pos: '-top-1.5 -left-1.5', cursor: 'cursor-nwse-resize' },
+                      { id: 'n', pos: '-top-1.5 left-1/2 -translate-x-1/2', cursor: 'cursor-ns-resize' },
+                      { id: 'ne', pos: '-top-1.5 -right-1.5', cursor: 'cursor-nesw-resize' },
+                      { id: 'e', pos: 'top-1/2 -right-1.5 -translate-y-1/2', cursor: 'cursor-ew-resize' },
+                      { id: 'se', pos: '-bottom-1.5 -right-1.5', cursor: 'cursor-nwse-resize' },
+                      { id: 's', pos: '-bottom-1.5 left-1/2 -translate-x-1/2', cursor: 'cursor-ns-resize' },
+                      { id: 'sw', pos: '-bottom-1.5 -left-1.5', cursor: 'cursor-nesw-resize' },
+                      { id: 'w', pos: 'top-1/2 -left-1.5 -translate-y-1/2', cursor: 'cursor-ew-resize' }
+                    ] as Array<{ id: ShapeResizeHandle; pos: string; cursor: string }>
+                  ).map(h => (
+                    <button
+                      key={h.id}
+                      type="button"
+                      aria-label={`Resize ${h.id}`}
+                      title="Drag to resize grouping zone (hold Shift on corners to lock aspect ratio)"
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        const canvas = canvasRef.current;
+                        if (!canvas) return;
+                        const rect = canvas.getBoundingClientRect();
+                        if (rect.width <= 0 || rect.height <= 0) return;
+
+                        const startCanvasX = Math.min(
+                          1000,
+                          Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000)
+                        );
+                        const startCanvasY = Math.min(
+                          580,
+                          Math.max(0, ((e.clientY - rect.top) / rect.height) * 580)
+                        );
+
+                        shapeResizeStateRef.current = {
+                          shapeId: selectedShape.id,
+                          handle: h.id,
+                          startCanvasX,
+                          startCanvasY,
+                          initX: selectedShape.x,
+                          initY: selectedShape.y,
+                          initW: selectedShape.width,
+                          initH: selectedShape.height,
+                          moved: false
+                        };
+                        setActiveShapeResizeInfo({
+                          x: selectedShape.x + selectedShape.width / 2,
+                          y: selectedShape.y,
+                          label: `${selectedShape.width} × ${selectedShape.height}`
+                        });
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className={`absolute ${h.pos} w-3 h-3 rounded-xs bg-white dark:bg-slate-900 border-2 border-blue-600 dark:border-cyan-400 shadow-sm pointer-events-auto z-30 ${h.cursor} hover:scale-125 transition-transform`}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Live Shape Resize Readout */}
+              {activeShapeResizeInfo && (
+                <div
+                  style={{
+                    left: `${(activeShapeResizeInfo.x / 1000) * 100}%`,
+                    top: `${Math.max(4, ((activeShapeResizeInfo.y - 12) / 580) * 100)}%`
+                  }}
+                  className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[11px] font-mono font-bold tabular-nums shadow-md pointer-events-none z-40 whitespace-nowrap"
+                >
+                  {activeShapeResizeInfo.label}
+                </div>
+              )}
+
+              {/* Live Snap-to-Grid Drag Coordinate Readout */}
+              {activeSnapGuides?.readout && (
+                <div
+                  style={{
+                    left: `${(activeSnapGuides.readout.x / 1000) * 100}%`,
+                    top: `${Math.max(5, (activeSnapGuides.readout.y / 580) * 100)}%`
+                  }}
+                  className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 text-[10px] font-mono font-bold tabular-nums shadow-md pointer-events-none z-40 whitespace-nowrap"
+                >
+                  {activeSnapGuides.readout.text}
+                </div>
+              )}
+
               {/* Marquee Drag Selection Box */}
               {selectionBox && (
                 <div
@@ -2197,8 +3727,63 @@ export const NetworkTopologySimulator: React.FC = () => {
                   }}
                 />
               )}
+
+              {/* Multi-Select Group Bounding Box & Group Rotation Handle */}
+              {selectedGroupBounds && (
+                <div
+                  className="absolute border border-dashed border-blue-500/80 dark:border-cyan-400/80 bg-blue-500/[0.03] dark:bg-cyan-400/[0.04] rounded-2xl pointer-events-none z-20"
+                  style={{
+                    left: `${(selectedGroupBounds.left / 1000) * 100}%`,
+                    top: `${(selectedGroupBounds.top / 580) * 100}%`,
+                    width: `${((selectedGroupBounds.right - selectedGroupBounds.left) / 1000) * 100}%`,
+                    height: `${((selectedGroupBounds.bottom - selectedGroupBounds.top) / 580) * 100}%`
+                  }}
+                >
+                  <div
+                    className={`absolute left-1/2 -translate-x-1/2 flex items-center pointer-events-auto z-30 ${
+                      selectedGroupBounds.top < 36 ? '-bottom-7 flex-col-reverse' : '-top-7 flex-col'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      aria-label="Rotate selected devices"
+                      title="Drag to rotate selected devices together (Shift snaps 15° · double-click resets 0°)"
+                      onPointerDown={(e) =>
+                        startRotationDrag(
+                          e,
+                          selectedGroupBounds.ids,
+                          selectedGroupBounds.pivotX,
+                          selectedGroupBounds.pivotY
+                        )
+                      }
+                      onClick={(e) => e.stopPropagation()}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        handleResetRotation(selectedGroupBounds.ids);
+                      }}
+                      className="w-6 h-6 rounded-full bg-white dark:bg-slate-900 border-2 border-blue-600 dark:border-cyan-400 text-blue-600 dark:text-cyan-400 shadow-md flex items-center justify-center cursor-grab active:cursor-grabbing hover:scale-110 transition-transform"
+                    >
+                      <RotateCw className="w-3 h-3" />
+                    </button>
+                    <div className="w-px h-2.5 bg-blue-500 dark:bg-cyan-400" />
+                  </div>
+                </div>
+              )}
+
+              {/* Live Rotation Degree Readout */}
+              {activeRotationInfo && (
+                <div
+                  style={{
+                    left: `${(activeRotationInfo.x / 1000) * 100}%`,
+                    top: `${Math.max(4, ((activeRotationInfo.y - 54) / 580) * 100)}%`
+                  }}
+                  className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[11px] font-mono font-bold tabular-nums shadow-md pointer-events-none z-40 whitespace-nowrap"
+                >
+                  {activeRotationInfo.label}
+                </div>
+              )}
               {/* Empty Canvas Guide */}
-              {devices.length === 0 && (
+              {devices.length === 0 && shapes.length === 0 && (
                 <div className="absolute inset-0 flex items-center justify-center p-6 pointer-events-none">
                   <div className="max-w-sm text-center space-y-2 p-5 rounded-2xl bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 shadow-sm">
                     <Network className="w-8 h-8 mx-auto text-blue-600 dark:text-cyan-400" />
@@ -2215,7 +3800,7 @@ export const NetworkTopologySimulator: React.FC = () => {
               {/* SVG Links & Packet Flow Layer */}
               <svg
                 viewBox="0 0 1000 580"
-                className="absolute inset-0 w-full h-full pointer-events-none"
+                className="absolute inset-0 w-full h-full pointer-events-none z-[2]"
                 preserveAspectRatio="none"
               >
                 {links.map(link => {
@@ -2258,6 +3843,8 @@ export const NetworkTopologySimulator: React.FC = () => {
                             setSelectedLinkId(link.id);
                             setSelectedDeviceId(null);
                             setSelectedDeviceIds([]);
+                            setSelectedShapeId(null);
+                            setSelectedDiagramLabelId(null);
                           }
                         }}
                       />
@@ -2354,7 +3941,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                 )}
               </svg>
 
-              {/* Draggable Topology Device Nodes */}
+              {/* Draggable Topology Device Nodes & Movable Labels */}
               {devices.map(dev => {
                 const isSelected = selectedDeviceId === dev.id || selectedDeviceIds.includes(dev.id);
                 const isPendingSrc = pendingCableSource?.deviceId === dev.id;
@@ -2362,82 +3949,447 @@ export const NetworkTopologySimulator: React.FC = () => {
                   animStepIndex !== null &&
                   lastPingResult?.hops[animStepIndex]?.deviceId === dev.id;
                 const primaryIp = dev.interfaces.find(i => isValidIp(i.ip))?.ip;
+                const labelOx =
+                  typeof dev.labelOffsetX === 'number' && Number.isFinite(dev.labelOffsetX)
+                    ? dev.labelOffsetX
+                    : 0;
+                const labelOy =
+                  typeof dev.labelOffsetY === 'number' && Number.isFinite(dev.labelOffsetY)
+                    ? dev.labelOffsetY
+                    : 0;
+                const hasCustomLabelOffset = labelOx !== 0 || labelOy !== 0;
 
                 return (
-                  <div
-                    key={dev.id}
-                    style={{
-                      left: `${(dev.x / 1000) * 100}%`,
-                      top: `${(dev.y / 580) * 100}%`
-                    }}
-                    onPointerDown={(e) => {
-                      if (tool !== 'select' || e.button !== 0) return;
-                      e.stopPropagation();
-                      const isModifier = e.ctrlKey || e.metaKey || e.shiftKey;
-                      if (isModifier) return;
+                  <React.Fragment key={dev.id}>
+                    {/* Dashed association line when dragging or viewing a custom-positioned label */}
+                    {(draggingLabelDeviceId === dev.id || (isSelected && hasCustomLabelOffset)) && (
+                      <svg
+                        viewBox="0 0 1000 580"
+                        preserveAspectRatio="none"
+                        className="absolute inset-0 w-full h-full pointer-events-none z-[9]"
+                      >
+                        <line
+                          x1={dev.x}
+                          y1={dev.y}
+                          x2={dev.x + labelOx}
+                          y2={dev.y + 34 + labelOy + 12}
+                          stroke={draggingLabelDeviceId === dev.id ? '#38bdf8' : '#94a3b8'}
+                          strokeWidth={1.2}
+                          strokeDasharray="3 3"
+                          strokeOpacity={0.75}
+                        />
+                      </svg>
+                    )}
 
-                      const canvas = canvasRef.current;
-                      if (!canvas) return;
-                      const rect = canvas.getBoundingClientRect();
-                      if (rect.width <= 0 || rect.height <= 0) return;
+                    {/* Device Icon Node */}
+                    <div
+                      style={{
+                        left: `${(dev.x / 1000) * 100}%`,
+                        top: `${(dev.y / 580) * 100}%`
+                      }}
+                      title={
+                        tool === 'select'
+                          ? 'Click: select · Long-click & drag: move · Double-click: open console'
+                          : undefined
+                      }
+                      onPointerDown={(e) => {
+                        if (tool !== 'select' || e.button !== 0) return;
+                        e.stopPropagation();
+                        const isModifier = e.ctrlKey || e.metaKey || e.shiftKey;
+                        if (isModifier) return;
 
-                      const startCanvasX = Math.min(1000, Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000));
-                      const startCanvasY = Math.min(580, Math.max(0, ((e.clientY - rect.top) / rect.height) * 580));
+                        const canvas = canvasRef.current;
+                        if (!canvas) return;
+                        const rect = canvas.getBoundingClientRect();
+                        if (rect.width <= 0 || rect.height <= 0) return;
 
-                      const activeGroupIds = selectedDeviceIds.includes(dev.id)
-                        ? selectedDeviceIds
-                        : [dev.id];
+                        const startCanvasX = Math.min(1000, Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000));
+                        const startCanvasY = Math.min(580, Math.max(0, ((e.clientY - rect.top) / rect.height) * 580));
 
-                      if (!selectedDeviceIds.includes(dev.id)) {
+                        const activeGroupIds = selectedDeviceIds.includes(dev.id)
+                          ? selectedDeviceIds
+                          : [dev.id];
+
+                        const initialPositions = devices
+                          .filter(d => activeGroupIds.includes(d.id))
+                          .map(d => ({ id: d.id, x: d.x, y: d.y }));
+
+                        if (dragStateRef.current?.holdTimerId != null) {
+                          window.clearTimeout(dragStateRef.current.holdTimerId);
+                        }
+
+                        const holdTimerId = window.setTimeout(() => {
+                          if (!dragStateRef.current || dragStateRef.current.holdTimerId !== holdTimerId) {
+                            return;
+                          }
+                          dragStateRef.current.isLongPressReady = true;
+                          setLongPressMoveDeviceId(dev.id);
+                          setSelectedDeviceIds(activeGroupIds);
+                          setSelectedDeviceId(dev.id);
+                          setSelectedLinkId(null);
+                          setSelectedShapeId(null);
+                          setSelectedDiagramLabelId(null);
+                          setActiveSnapGuides({
+                            readout: { x: dev.x, y: dev.y - 34, text: `${dev.x}, ${dev.y}` }
+                          });
+                        }, 220);
+
+                        dragStateRef.current = {
+                          leadId: dev.id,
+                          startClientX: e.clientX,
+                          startClientY: e.clientY,
+                          startCanvasX,
+                          startCanvasY,
+                          initialPositions,
+                          isLongPressReady: false,
+                          holdTimerId,
+                          moved: false
+                        };
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeviceClick(dev, e);
+                      }}
+                      onDoubleClick={(e) => {
+                        if (tool !== 'select') return;
+                        e.stopPropagation();
+                        if (dragStateRef.current?.holdTimerId != null) {
+                          window.clearTimeout(dragStateRef.current.holdTimerId);
+                        }
+                        dragStateRef.current = null;
+                        setLongPressMoveDeviceId(null);
+                        setActiveSnapGuides(null);
                         setSelectedDeviceIds([dev.id]);
                         setSelectedDeviceId(dev.id);
                         setSelectedLinkId(null);
-                      }
-
-                      const initialPositions = devices
-                        .filter(d => activeGroupIds.includes(d.id))
-                        .map(d => ({ id: d.id, x: d.x, y: d.y }));
-
-                      dragStateRef.current = {
-                        startClientX: e.clientX,
-                        startClientY: e.clientY,
-                        startCanvasX,
-                        startCanvasY,
-                        initialPositions,
-                        moved: false
-                      };
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeviceClick(dev, e);
-                    }}
-                    className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 cursor-pointer group z-10"
-                  >
-                    <div
-                      className={`p-1 rounded-2xl flex items-center justify-center transition-transform duration-150 group-hover:scale-105 ${
-                        isActiveHop
-                          ? 'ring-3 ring-emerald-400 bg-emerald-500/15 scale-110'
-                          : isSelected || isPendingSrc
-                          ? 'ring-2 ring-blue-500 dark:ring-cyan-400 bg-blue-500/10 dark:bg-cyan-400/10'
-                          : ''
-                      } ${tool === 'delete' ? 'hover:ring-2 hover:ring-red-500 hover:bg-red-500/10' : ''}`}
+                        setSelectedShapeId(null);
+                        setSelectedDiagramLabelId(null);
+                        setConsoleDeviceId(dev.id);
+                        setInspectorTab(dev.type === 'pc' || dev.type === 'server' ? 'config' : 'cli');
+                      }}
+                      className={`absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group ${
+                        longPressMoveDeviceId === dev.id ? 'cursor-grabbing z-30' : 'cursor-pointer'
+                      } ${isSelected ? 'z-20' : 'z-10'}`}
                     >
-                      <CiscoDeviceIcon
-                        type={dev.type}
-                        className="w-12 h-11 sm:w-14 sm:h-12 drop-shadow-[0_2px_4px_rgba(15,23,42,0.28)]"
-                      />
+                      <div
+                        className={`relative p-1 rounded-2xl flex items-center justify-center transition-transform duration-150 ${
+                          longPressMoveDeviceId === dev.id
+                            ? 'ring-2 ring-cyan-400 bg-cyan-500/15 scale-105 shadow-md'
+                            : isActiveHop
+                            ? 'ring-3 ring-emerald-400 bg-emerald-500/15 scale-110'
+                            : isSelected || isPendingSrc
+                            ? 'ring-2 ring-blue-500 dark:ring-cyan-400 bg-blue-500/10 dark:bg-cyan-400/10'
+                            : ''
+                        } ${tool === 'delete' ? 'hover:ring-2 hover:ring-red-500 hover:bg-red-500/10' : ''}`}
+                      >
+                        <div
+                          style={{
+                            transform: dev.rotation ? `rotate(${dev.rotation}deg)` : undefined
+                          }}
+                          className="relative flex items-center justify-center"
+                        >
+                          <CiscoDeviceIcon
+                            type={dev.type}
+                            className="w-12 h-11 sm:w-14 sm:h-12 drop-shadow-[0_2px_4px_rgba(15,23,42,0.28)] transition-transform duration-150 group-hover:scale-105"
+                          />
+
+                          {/* Single-Device Rotation Handle (orbits around device center) */}
+                          {tool === 'select' &&
+                            longPressMoveDeviceId !== dev.id &&
+                            selectedDeviceIds.length === 1 &&
+                            selectedDeviceIds[0] === dev.id && (
+                              <div className="absolute -top-7 left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-auto z-30">
+                                <button
+                                  type="button"
+                                  aria-label={`Rotate ${dev.name}`}
+                                  title="Drag to rotate device (Shift snaps 15° · double-click resets 0°)"
+                                  onPointerDown={(e) => startRotationDrag(e, [dev.id], dev.x, dev.y)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onDoubleClick={(e) => {
+                                    e.stopPropagation();
+                                    handleResetRotation([dev.id]);
+                                  }}
+                                  className="w-5 h-5 rounded-full bg-white dark:bg-slate-900 border-2 border-blue-600 dark:border-cyan-400 text-blue-600 dark:text-cyan-400 shadow-md flex items-center justify-center cursor-grab active:cursor-grabbing hover:scale-110 transition-transform"
+                                >
+                                  <RotateCw className="w-2.5 h-2.5" />
+                                </button>
+                                <div className="w-px h-2 bg-blue-500 dark:bg-cyan-400" />
+                              </div>
+                            )}
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="px-2 py-0.5 rounded-lg bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 shadow-xs text-center whitespace-nowrap">
-                      <div className="text-[11px] font-bold text-slate-900 dark:text-white leading-tight">
-                        {dev.name}
-                      </div>
-                      {primaryIp && (
-                        <div className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-cyan-300 leading-tight">
-                          {primaryIp}
+                    {/* Independently Movable & Editable Device Label Pill */}
+                    <div
+                      style={{
+                        left: `${((dev.x + labelOx) / 1000) * 100}%`,
+                        top: `${((dev.y + 34 + labelOy) / 580) * 100}%`
+                      }}
+                      className={`absolute -translate-x-1/2 ${
+                        editingDeviceLabelId === dev.id || draggingLabelDeviceId === dev.id
+                          ? 'z-30'
+                          : isSelected
+                          ? 'z-20'
+                          : 'z-[15]'
+                      }`}
+                    >
+                      {editingDeviceLabelId === dev.id ? (
+                        <div
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                          className="px-1.5 py-0.5 rounded-lg bg-white dark:bg-slate-900 border-2 border-blue-500 dark:border-cyan-400 shadow-md"
+                        >
+                          <input
+                            type="text"
+                            autoFocus
+                            maxLength={64}
+                            aria-label={`Edit label for ${dev.name}`}
+                            value={editingDeviceLabelDraft}
+                            onFocus={(e) => e.currentTarget.select()}
+                            onChange={(e) => setEditingDeviceLabelDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              e.stopPropagation();
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                commitDeviceRename(dev.id, editingDeviceLabelDraft);
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                setEditingDeviceLabelId(null);
+                              }
+                            }}
+                            onBlur={() => commitDeviceRename(dev.id, editingDeviceLabelDraft)}
+                            className="w-24 sm:w-28 bg-transparent text-center text-[11px] font-bold text-slate-900 dark:text-white focus:outline-none"
+                          />
+                        </div>
+                      ) : (
+                        <div
+                          onPointerDown={(e) => {
+                            if (tool !== 'select' || e.button !== 0) return;
+                            e.stopPropagation();
+                            const canvas = canvasRef.current;
+                            if (!canvas) return;
+                            const rect = canvas.getBoundingClientRect();
+                            if (rect.width <= 0 || rect.height <= 0) return;
+
+                            const startCanvasX = Math.min(1000, Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000));
+                            const startCanvasY = Math.min(580, Math.max(0, ((e.clientY - rect.top) / rect.height) * 580));
+
+                            setSelectedDeviceIds([dev.id]);
+                            setSelectedDeviceId(dev.id);
+                            if (consoleDeviceId !== dev.id) {
+                              setConsoleDeviceId(null);
+                            }
+                            setSelectedLinkId(null);
+                            setSelectedShapeId(null);
+                            setSelectedDiagramLabelId(null);
+                            setDraggingLabelDeviceId(dev.id);
+
+                            labelDragStateRef.current = {
+                              deviceId: dev.id,
+                              startClientX: e.clientX,
+                              startClientY: e.clientY,
+                              startCanvasX,
+                              startCanvasY,
+                              devX: dev.x,
+                              devY: dev.y,
+                              initOffsetX: labelOx,
+                              initOffsetY: labelOy,
+                              moved: false
+                            };
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (labelDragStateRef.current?.moved) return;
+                            handleDeviceClick(dev, e);
+                          }}
+                          onDoubleClick={(e) => {
+                            if (tool !== 'select') return;
+                            e.stopPropagation();
+                            startCanvasLabelEdit(dev);
+                          }}
+                          title={
+                            tool === 'select'
+                              ? 'Drag to reposition label · Double-click to rename'
+                              : undefined
+                          }
+                          className={`px-2 py-0.5 rounded-lg bg-white/95 dark:bg-slate-900/95 border shadow-xs text-center whitespace-nowrap select-none transition-colors ${
+                            draggingLabelDeviceId === dev.id
+                              ? 'border-blue-500 dark:border-cyan-400 ring-2 ring-blue-500/30 cursor-grabbing'
+                              : tool === 'select'
+                              ? 'border-slate-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-cyan-400 cursor-grab'
+                              : 'border-slate-200 dark:border-slate-700 cursor-pointer'
+                          }`}
+                        >
+                          <div className="inline-flex items-center justify-center gap-1 text-[11px] font-bold text-slate-900 dark:text-white leading-tight">
+                            <span>{dev.name}</span>
+                            {tool === 'select' && isSelected && selectedDeviceIds.length === 1 && (
+                              <button
+                                type="button"
+                                aria-label={`Rename ${dev.name}`}
+                                title="Rename device label (F2)"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  startCanvasLabelEdit(dev);
+                                }}
+                                className="p-0.5 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 transition-colors"
+                              >
+                                <Pencil className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </div>
+                          {primaryIp && (
+                            <div className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-cyan-300 leading-tight">
+                              {primaryIp}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
+                  </React.Fragment>
+                );
+              })}
+
+              {/* Palette Drag-and-Drop Ghost Preview */}
+              {paletteDropPreview && (
+                <div
+                  style={{
+                    left: `${(paletteDropPreview.x / 1000) * 100}%`,
+                    top: `${(paletteDropPreview.y / 580) * 100}%`
+                  }}
+                  className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none z-40"
+                >
+                  <div className="p-1.5 rounded-2xl border-2 border-dashed border-sky-500 bg-sky-500/15 shadow-lg">
+                    <CiscoDeviceIcon
+                      type={paletteDropPreview.type}
+                      className="w-12 h-11 sm:w-14 sm:h-12 opacity-85"
+                    />
+                  </div>
+                  <span className="mt-1 px-1.5 py-0.5 rounded bg-slate-900/90 text-white text-[10px] font-mono tabular-nums">
+                    {paletteDropPreview.x}, {paletteDropPreview.y}
+                  </span>
+                </div>
+              )}
+
+              {/* Freeform Diagram Informational Labels */}
+              {diagramLabels.map(lbl => {
+                const isLblSelected = selectedDiagramLabelId === lbl.id;
+                const isEditing = editingDiagramLabelId === lbl.id;
+                const hasBg = Boolean(lbl.bgColor && lbl.bgColor !== 'transparent');
+                const fontSize = Math.min(20, Math.max(10, Number(lbl.fontSize) || 12));
+
+                return (
+                  <div
+                    key={lbl.id}
+                    style={{
+                      left: `${(lbl.x / 1000) * 100}%`,
+                      top: `${(lbl.y / 580) * 100}%`
+                    }}
+                    className={`absolute -translate-x-1/2 -translate-y-1/2 ${
+                      isEditing || isLblSelected ? 'z-[26]' : 'z-[24]'
+                    }`}
+                  >
+                    {isEditing ? (
+                      <div
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-1 rounded-lg bg-white dark:bg-slate-900 border-2 border-blue-500 dark:border-cyan-400 shadow-lg"
+                      >
+                        <textarea
+                          autoFocus
+                          rows={Math.min(4, Math.max(1, editingDiagramLabelDraft.split('\n').length))}
+                          maxLength={160}
+                          aria-label="Edit diagram label text"
+                          value={editingDiagramLabelDraft}
+                          onFocus={(e) => e.currentTarget.select()}
+                          onChange={(e) => setEditingDiagramLabelDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              commitDiagramLabelEdit(lbl.id, editingDiagramLabelDraft);
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setEditingDiagramLabelId(null);
+                            }
+                          }}
+                          onBlur={() => commitDiagramLabelEdit(lbl.id, editingDiagramLabelDraft)}
+                          className="w-36 sm:w-44 bg-transparent text-center text-xs font-bold text-slate-900 dark:text-white focus:outline-none resize-none leading-snug"
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        onPointerDown={(e) => {
+                          if (e.button !== 0) return;
+                          e.stopPropagation();
+                          if (tool === 'delete') {
+                            handleDeleteDiagramLabel(lbl.id);
+                            return;
+                          }
+                          if (tool !== 'select') return;
+                          const canvas = canvasRef.current;
+                          if (!canvas) return;
+                          const rect = canvas.getBoundingClientRect();
+                          if (rect.width <= 0 || rect.height <= 0) return;
+
+                          const startCanvasX = Math.min(1000, Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000));
+                          const startCanvasY = Math.min(580, Math.max(0, ((e.clientY - rect.top) / rect.height) * 580));
+
+                          setSelectedDiagramLabelId(lbl.id);
+                          setSelectedShapeId(null);
+                          setSelectedDeviceIds([]);
+                          setSelectedDeviceId(null);
+                          setSelectedLinkId(null);
+
+                          diagramLabelDragStateRef.current = {
+                            labelId: lbl.id,
+                            startClientX: e.clientX,
+                            startClientY: e.clientY,
+                            startCanvasX,
+                            startCanvasY,
+                            initX: lbl.x,
+                            initY: lbl.y,
+                            moved: false
+                          };
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        onDoubleClick={(e) => {
+                          if (tool !== 'select') return;
+                          e.stopPropagation();
+                          setSelectedDiagramLabelId(lbl.id);
+                          setEditingDiagramLabelId(lbl.id);
+                          setEditingDiagramLabelDraft(lbl.text);
+                        }}
+                        title={
+                          tool === 'delete'
+                            ? 'Click to delete label'
+                            : 'Drag to move label · Double-click to edit text'
+                        }
+                        style={{
+                          color: lbl.color || undefined,
+                          backgroundColor: hasBg ? lbl.bgColor : undefined,
+                          fontSize: `${fontSize}px`
+                        }}
+                        className={`px-2 py-0.5 rounded-md whitespace-pre-wrap text-center leading-snug select-none transition-all ${
+                          lbl.bold !== false ? 'font-bold' : 'font-medium'
+                        } ${lbl.italic ? 'italic' : ''} ${
+                          !lbl.color ? 'text-slate-800 dark:text-slate-100' : ''
+                        } ${
+                          hasBg
+                            ? 'border border-slate-200/80 dark:border-slate-700/80 shadow-xs'
+                            : ''
+                        } ${
+                          isLblSelected
+                            ? 'ring-2 ring-blue-500 dark:ring-cyan-400 bg-white/75 dark:bg-slate-900/75'
+                            : tool === 'delete'
+                            ? 'hover:ring-2 hover:ring-red-500 cursor-pointer'
+                            : 'cursor-move hover:ring-1 hover:ring-blue-400/60'
+                        }`}
+                      >
+                        {lbl.text}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -2509,6 +4461,443 @@ export const NetworkTopologySimulator: React.FC = () => {
                 </div>
               )}
             </div>
+
+            {/* Selected Shape Styling Bar */}
+            {selectedShape && (
+              <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/95 space-y-2.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="font-bold text-slate-900 dark:text-white">
+                      Group Zone
+                    </span>
+                    <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-slate-200/80 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateSelectedShape(s => ({ ...s, kind: 'rectangle' }))
+                        }
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold transition-colors ${
+                          selectedShape.kind === 'rectangle'
+                            ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                            : 'text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        <Square className="w-3 h-3" />
+                        <span>Rectangle</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateSelectedShape(s => ({ ...s, kind: 'circle' }))
+                        }
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold transition-colors ${
+                          selectedShape.kind === 'circle'
+                            ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                            : 'text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        <Circle className="w-3 h-3" />
+                        <span>Circle</span>
+                      </button>
+                    </div>
+
+                    <input
+                      type="text"
+                      aria-label="Group zone label"
+                      value={selectedShape.label || ''}
+                      maxLength={80}
+                      placeholder="Zone label (e.g. AS-100, VLAN 10)..."
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        updateSelectedShape(s => ({ ...s, label: val }));
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white w-44 sm:w-52 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+
+                    <span className="font-mono tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
+                      {selectedShape.width}×{selectedShape.height}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleDuplicateSelectedShape}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:border-blue-500 whitespace-nowrap"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Duplicate</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteShape(selectedShape.id)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 font-semibold hover:bg-red-100 whitespace-nowrap"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Delete Zone</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  {/* Fill Color Swatches */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                      Fill:
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {SHAPE_FILL_PRESETS.map(swatch => {
+                        const active = selectedShape.fillColor === swatch.value;
+                        return (
+                          <button
+                            key={swatch.value}
+                            type="button"
+                            title={swatch.label}
+                            aria-label={`Fill ${swatch.label}`}
+                            onClick={() =>
+                              updateSelectedShape(s => ({ ...s, fillColor: swatch.value }))
+                            }
+                            className={`w-5 h-5 rounded-md border transition-transform ${
+                              active
+                                ? 'ring-2 ring-blue-600 dark:ring-cyan-400 scale-110 border-slate-900 dark:border-white'
+                                : 'border-slate-300 dark:border-slate-600 hover:scale-105'
+                            }`}
+                            style={{
+                              backgroundColor:
+                                swatch.value === 'transparent' ? undefined : swatch.value,
+                              backgroundImage:
+                                swatch.value === 'transparent'
+                                  ? 'linear-gradient(135deg, transparent 45%, #ef4444 45%, #ef4444 55%, transparent 55%)'
+                                  : undefined
+                            }}
+                          />
+                        );
+                      })}
+                      <label
+                        className="w-5 h-5 rounded-md border border-slate-300 dark:border-slate-600 overflow-hidden cursor-pointer relative"
+                        title="Custom fill color"
+                      >
+                        <input
+                          type="color"
+                          aria-label="Custom fill color"
+                          value={
+                            selectedShape.fillColor === 'transparent'
+                              ? '#ddd6fe'
+                              : selectedShape.fillColor
+                          }
+                          onChange={(e) =>
+                            updateSelectedShape(s => ({ ...s, fillColor: e.target.value }))
+                          }
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        />
+                        <span
+                          className="block w-full h-full"
+                          style={{
+                            background:
+                              'conic-gradient(#ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)'
+                          }}
+                        />
+                      </label>
+                    </div>
+                    {selectedShape.fillColor !== 'transparent' && (
+                      <input
+                        type="range"
+                        aria-label="Fill opacity"
+                        min={10}
+                        max={85}
+                        step={5}
+                        value={Math.round((selectedShape.fillOpacity ?? 0.34) * 100)}
+                        onChange={(e) =>
+                          updateSelectedShape(s => ({
+                            ...s,
+                            fillOpacity: Number(e.target.value) / 100
+                          }))
+                        }
+                        className="w-16 accent-blue-600 dark:accent-cyan-400 cursor-pointer"
+                        title={`Fill opacity ${Math.round((selectedShape.fillOpacity ?? 0.34) * 100)}%`}
+                      />
+                    )}
+                  </div>
+
+                  {/* Border Color Swatches */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                      Border:
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {SHAPE_BORDER_PRESETS.map(swatch => {
+                        const active = selectedShape.borderColor === swatch.value;
+                        return (
+                          <button
+                            key={swatch.value}
+                            type="button"
+                            title={swatch.label}
+                            aria-label={`Border ${swatch.label}`}
+                            onClick={() =>
+                              updateSelectedShape(s => ({ ...s, borderColor: swatch.value }))
+                            }
+                            className={`w-5 h-5 rounded-md border transition-transform ${
+                              active
+                                ? 'ring-2 ring-blue-600 dark:ring-cyan-400 scale-110 border-slate-900 dark:border-white'
+                                : 'border-slate-300 dark:border-slate-600 hover:scale-105'
+                            }`}
+                            style={{ backgroundColor: swatch.value }}
+                          />
+                        );
+                      })}
+                      <label
+                        className="w-5 h-5 rounded-md border border-slate-300 dark:border-slate-600 overflow-hidden cursor-pointer relative"
+                        title="Custom border color"
+                      >
+                        <input
+                          type="color"
+                          aria-label="Custom border color"
+                          value={selectedShape.borderColor}
+                          onChange={(e) =>
+                            updateSelectedShape(s => ({ ...s, borderColor: e.target.value }))
+                          }
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        />
+                        <span
+                          className="block w-full h-full"
+                          style={{
+                            background:
+                              'conic-gradient(#64748b, #7c3aed, #2563eb, #059669, #d97706, #dc2626, #64748b)'
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Line Style & Width */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                      Line:
+                    </span>
+                    <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-slate-200/80 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                      {(
+                        [
+                          { id: 'dashed', label: 'Dashed' },
+                          { id: 'dotted', label: 'Dotted' },
+                          { id: 'solid', label: 'Solid' }
+                        ] as Array<{ id: SimShapeLineStyle; label: string }>
+                      ).map(opt => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() =>
+                            updateSelectedShape(s => ({ ...s, lineStyle: opt.id }))
+                          }
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition-colors ${
+                            selectedShape.lineStyle === opt.id
+                              ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                              : 'text-slate-600 dark:text-slate-400'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <select
+                      aria-label="Border width"
+                      value={selectedShape.borderWidth || 2}
+                      onChange={(e) =>
+                        updateSelectedShape(s => ({
+                          ...s,
+                          borderWidth: Number(e.target.value)
+                        }))
+                      }
+                      className="px-1.5 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-200"
+                    >
+                      <option value={1}>1px</option>
+                      <option value={2}>2px</option>
+                      <option value={3}>3px</option>
+                      <option value={4}>4px</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Selected Freeform Label Styling Bar */}
+            {selectedDiagramLabel && (
+              <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/95 space-y-2.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+                    <span className="font-bold text-slate-900 dark:text-white shrink-0">
+                      Diagram Label
+                    </span>
+                    <input
+                      type="text"
+                      aria-label="Diagram label text"
+                      value={selectedDiagramLabel.text.replace(/\n/g, ' | ')}
+                      maxLength={160}
+                      placeholder="Type annotation (e.g. OSPF, AS-100, 10.0.16.0/24)..."
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        updateSelectedDiagramLabel(l => ({ ...l, text: val || 'Label' }));
+                      }}
+                      className="flex-1 min-w-[180px] max-w-sm px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleDuplicateSelectedDiagramLabel}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold hover:border-blue-500 whitespace-nowrap"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Duplicate</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteDiagramLabel(selectedDiagramLabel.id)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 font-semibold hover:bg-red-100 whitespace-nowrap"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Delete Label</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  {/* Text Color Swatches */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                      Color:
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {DIAGRAM_LABEL_COLORS.map(swatch => {
+                        const active = (selectedDiagramLabel.color || '#7c3aed') === swatch.value;
+                        return (
+                          <button
+                            key={swatch.value}
+                            type="button"
+                            title={swatch.label}
+                            aria-label={`Label color ${swatch.label}`}
+                            onClick={() =>
+                              updateSelectedDiagramLabel(l => ({ ...l, color: swatch.value }))
+                            }
+                            className={`w-5 h-5 rounded-md border transition-transform ${
+                              active
+                                ? 'ring-2 ring-blue-600 dark:ring-cyan-400 scale-110 border-slate-900 dark:border-white'
+                                : 'border-slate-300 dark:border-slate-600 hover:scale-105'
+                            }`}
+                            style={{ backgroundColor: swatch.value }}
+                          />
+                        );
+                      })}
+                      <label
+                        className="w-5 h-5 rounded-md border border-slate-300 dark:border-slate-600 overflow-hidden cursor-pointer relative"
+                        title="Custom text color"
+                      >
+                        <input
+                          type="color"
+                          aria-label="Custom label color"
+                          value={selectedDiagramLabel.color || '#7c3aed'}
+                          onChange={(e) =>
+                            updateSelectedDiagramLabel(l => ({ ...l, color: e.target.value }))
+                          }
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        />
+                        <span
+                          className="block w-full h-full"
+                          style={{
+                            background:
+                              'conic-gradient(#7c3aed, #2563eb, #059669, #d97706, #dc2626, #7c3aed)'
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Background Pill Option */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                      Backdrop:
+                    </span>
+                    <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-slate-200/80 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                      {[
+                        { label: 'None', value: 'transparent' },
+                        { label: 'Light Pill', value: '#ffffff' },
+                        { label: 'Dark Pill', value: '#0f172a' }
+                      ].map(opt => {
+                        const active = (selectedDiagramLabel.bgColor || 'transparent') === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() =>
+                              updateSelectedDiagramLabel(l => ({ ...l, bgColor: opt.value }))
+                            }
+                            className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition-colors ${
+                              active
+                                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                                : 'text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Size & Style */}
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      aria-label="Label font size"
+                      value={selectedDiagramLabel.fontSize || 12}
+                      onChange={(e) =>
+                        updateSelectedDiagramLabel(l => ({
+                          ...l,
+                          fontSize: Number(e.target.value)
+                        }))
+                      }
+                      className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-200"
+                    >
+                      <option value={10}>10px</option>
+                      <option value={12}>12px</option>
+                      <option value={14}>14px</option>
+                      <option value={16}>16px</option>
+                      <option value={18}>18px</option>
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateSelectedDiagramLabel(l => ({ ...l, bold: l.bold === false }))
+                      }
+                      className={`px-2 py-0.5 rounded-lg border text-[11px] font-bold transition-colors ${
+                        selectedDiagramLabel.bold !== false
+                          ? 'bg-blue-600 border-blue-500 text-white'
+                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                      }`}
+                      title="Toggle bold"
+                    >
+                      B
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateSelectedDiagramLabel(l => ({ ...l, italic: !l.italic }))
+                      }
+                      className={`px-2 py-0.5 rounded-lg border text-[11px] italic font-semibold transition-colors ${
+                        selectedDiagramLabel.italic
+                          ? 'bg-blue-600 border-blue-500 text-white'
+                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                      }`}
+                      title="Toggle italic"
+                    >
+                      I
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Selected Link Inspector Bar */}
             {selectedLink && (
@@ -2603,20 +4992,90 @@ export const NetworkTopologySimulator: React.FC = () => {
           {/* Inspector Header */}
           <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900 space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <h2 className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                  {selectedDeviceIds.length > 1
-                    ? `${selectedDeviceIds.length} Devices Selected`
-                    : selectedDevice
-                    ? `${selectedDevice.name} · ${selectedDevice.model}`
-                    : 'Lab Verification & Packet Trace'}
-                </h2>
+              <div className="min-w-0 flex-1">
+                {selectedDeviceIds.length === 1 && selectedDevice && isRenamingInspectorHeader ? (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      commitDeviceRename(selectedDevice.id, inspectorNameDraft);
+                    }}
+                    className="flex items-center gap-1.5"
+                  >
+                    <input
+                      type="text"
+                      autoFocus
+                      maxLength={64}
+                      aria-label="Edit device label name"
+                      value={inspectorNameDraft}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onChange={(e) => setInspectorNameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setIsRenamingInspectorHeader(false);
+                        }
+                      }}
+                      className="flex-1 min-w-0 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-blue-500 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <button
+                      type="submit"
+                      aria-label="Save device label"
+                      title="Save label"
+                      className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Cancel rename"
+                      title="Cancel"
+                      onClick={() => setIsRenamingInspectorHeader(false)}
+                      className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors shrink-0"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </form>
+                ) : (
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <h2
+                      onDoubleClick={() => {
+                        if (selectedDeviceIds.length === 1 && selectedDevice) {
+                          setInspectorNameDraft(selectedDevice.name);
+                          setIsRenamingInspectorHeader(true);
+                        }
+                      }}
+                      className="text-sm font-bold text-slate-900 dark:text-white truncate"
+                    >
+                      {selectedDeviceIds.length > 1
+                        ? `${selectedDeviceIds.length} Devices Selected`
+                        : selectedDevice
+                        ? `${selectedDevice.name} · ${selectedDevice.model}`
+                        : 'Lab Verification & Packet Trace'}
+                    </h2>
+                    {selectedDeviceIds.length === 1 && selectedDevice && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInspectorNameDraft(selectedDevice.name);
+                          setIsRenamingInspectorHeader(true);
+                        }}
+                        className="p-1 rounded-md text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 transition-colors shrink-0"
+                        title="Rename device label"
+                        aria-label="Rename device label"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
                   {selectedDeviceIds.length > 1
-                    ? 'Drag any selected node to move the group together, or click Delete Selected'
-                    : selectedDevice
+                    ? 'Long-click any selected node to drag together, or click Delete Selected'
+                    : isConsoleActive
                     ? 'Configure interfaces, routing, VLANs, or run CLI commands below'
-                    : 'Click any device or drag a selection box on the canvas to begin'}
+                    : selectedDevice
+                    ? 'Device selected — double-click on canvas to open console & configuration'
+                    : 'Drag devices onto the workspace, click to select, long-click to move, double-click for console'}
                 </p>
               </div>
 
@@ -2645,81 +5104,80 @@ export const NetworkTopologySimulator: React.FC = () => {
               )}
             </div>
 
-            {/* Segmented Inspector Tabs */}
-            <div
-              role="tablist"
-              aria-label="Device inspector panels"
-              className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={inspectorTab === 'cli'}
-                disabled={!selectedDevice}
-                onClick={() => setInspectorTab('cli')}
-                className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap disabled:opacity-40 ${
-                  inspectorTab === 'cli'
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
+            {/* Segmented Inspector Tabs (shown only when a user double-clicks a device to start console) */}
+            {isConsoleActive && (
+              <div
+                role="tablist"
+                aria-label="Device inspector panels"
+                className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
               >
-                <TerminalIcon className="w-3.5 h-3.5 shrink-0" />
-                <span>CLI</span>
-              </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inspectorTab === 'cli'}
+                  onClick={() => setInspectorTab('cli')}
+                  className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                    inspectorTab === 'cli'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <TerminalIcon className="w-3.5 h-3.5 shrink-0" />
+                  <span>CLI</span>
+                </button>
 
-              <button
-                type="button"
-                role="tab"
-                aria-selected={inspectorTab === 'config'}
-                disabled={!selectedDevice}
-                onClick={() => setInspectorTab('config')}
-                className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap disabled:opacity-40 ${
-                  inspectorTab === 'config'
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <Sliders className="w-3.5 h-3.5 shrink-0" />
-                <span>Config</span>
-              </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inspectorTab === 'config'}
+                  onClick={() => setInspectorTab('config')}
+                  className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                    inspectorTab === 'config'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Sliders className="w-3.5 h-3.5 shrink-0" />
+                  <span>Config</span>
+                </button>
 
-              <button
-                type="button"
-                role="tab"
-                aria-selected={inspectorTab === 'tables'}
-                disabled={!selectedDevice}
-                onClick={() => setInspectorTab('tables')}
-                className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap disabled:opacity-40 ${
-                  inspectorTab === 'tables'
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <Table2 className="w-3.5 h-3.5 shrink-0" />
-                <span>Tables</span>
-              </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inspectorTab === 'tables'}
+                  onClick={() => setInspectorTab('tables')}
+                  className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                    inspectorTab === 'tables'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Table2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>Tables</span>
+                </button>
 
-              <button
-                type="button"
-                role="tab"
-                aria-selected={inspectorTab === 'objectives'}
-                onClick={() => setInspectorTab('objectives')}
-                className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
-                  inspectorTab === 'objectives'
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <CheckSquare className="w-3.5 h-3.5 shrink-0" />
-                <span>Verify</span>
-              </button>
-            </div>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inspectorTab === 'objectives'}
+                  onClick={() => setInspectorTab('objectives')}
+                  className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                    inspectorTab === 'objectives'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <CheckSquare className="w-3.5 h-3.5 shrink-0" />
+                  <span>Verify</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Inspector Body */}
           <div className="flex-1 flex flex-col min-h-0">
             {/* TAB 1: Per-Device CLI Terminal */}
-            {inspectorTab === 'cli' && selectedDevice && (
+            {inspectorTab === 'cli' && isConsoleActive && selectedDevice && (
               <div className="flex-1 flex flex-col bg-slate-950 text-slate-100 font-mono">
                 <div
                   onClick={() => cliInputRef.current?.focus()}
@@ -2799,22 +5257,122 @@ export const NetworkTopologySimulator: React.FC = () => {
             )}
 
             {/* TAB 2: Visual GUI Configuration */}
-            {inspectorTab === 'config' && selectedDevice && (
+            {inspectorTab === 'config' && isConsoleActive && selectedDevice && (
               <div className="p-4 space-y-4 overflow-y-auto max-h-[480px]">
-                {/* Hostname Editor */}
+                {/* Device Label / Hostname Editor */}
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Device Hostname
-                  </label>
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor="device-label-hostname-input"
+                      className="text-xs font-semibold text-slate-700 dark:text-slate-300"
+                    >
+                      Device Label / Hostname
+                    </label>
+                    {((selectedDevice.labelOffsetX || 0) !== 0 ||
+                      (selectedDevice.labelOffsetY || 0) !== 0) && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateSelectedDevice(d => ({ ...d, labelOffsetX: 0, labelOffsetY: 0 }))
+                        }
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Reset Label Position</span>
+                      </button>
+                    )}
+                  </div>
                   <input
+                    id="device-label-hostname-input"
                     type="text"
+                    maxLength={64}
                     value={selectedDevice.name}
                     onChange={(e) => {
                       const val = e.target.value;
                       updateSelectedDevice(d => ({ ...d, name: val }));
                     }}
+                    onBlur={(e) => {
+                      const trimmed = e.target.value.trim().slice(0, 64);
+                      if (!trimmed) {
+                        const prefixMap: Record<SimDeviceType, string> = {
+                          router: 'R',
+                          switch: 'SW',
+                          pc: 'PC',
+                          server: 'Server'
+                        };
+                        updateSelectedDevice(d => ({ ...d, name: prefixMap[d.type] }));
+                      } else if (trimmed !== selectedDevice.name) {
+                        updateSelectedDevice(d => ({ ...d, name: trimmed }));
+                      }
+                    }}
+                    placeholder="Enter device label (e.g. R1-HQ, Core-SW)..."
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
+                </div>
+
+                {/* Diagram Orientation Control */}
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor="device-orientation-slider"
+                      className="text-xs font-semibold text-slate-700 dark:text-slate-300"
+                    >
+                      Diagram Orientation
+                    </label>
+                    <span className="font-mono tabular-nums text-xs font-bold text-blue-600 dark:text-cyan-400">
+                      {selectedDevice.rotation || 0}°
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="device-orientation-slider"
+                      type="range"
+                      min={0}
+                      max={359}
+                      step={1}
+                      value={selectedDevice.rotation || 0}
+                      onChange={(e) => {
+                        const deg = Number(e.target.value);
+                        updateSelectedDevice(d => ({ ...d, rotation: deg }));
+                      }}
+                      className="flex-1 accent-blue-600 dark:accent-cyan-400 cursor-pointer"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateSelectedDevice(d => ({
+                          ...d,
+                          rotation: (((d.rotation || 0) - 90) % 360 + 360) % 360
+                        }))
+                      }
+                      className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-500 whitespace-nowrap"
+                      title="Rotate 90° counter-clockwise"
+                    >
+                      -90°
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateSelectedDevice(d => ({
+                          ...d,
+                          rotation: ((d.rotation || 0) + 90) % 360
+                        }))
+                      }
+                      className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-500 whitespace-nowrap"
+                      title="Rotate 90° clockwise"
+                    >
+                      +90°
+                    </button>
+                    {(selectedDevice.rotation || 0) !== 0 && (
+                      <button
+                        type="button"
+                        onClick={() => updateSelectedDevice(d => ({ ...d, rotation: 0 }))}
+                        className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 whitespace-nowrap"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* PC / Server IPv4 Desktop Settings */}
@@ -3269,7 +5827,7 @@ export const NetworkTopologySimulator: React.FC = () => {
             )}
 
             {/* TAB 3: Live Tables (Routing Table / VLAN Database / NIC Status) */}
-            {inspectorTab === 'tables' && selectedDevice && (
+            {inspectorTab === 'tables' && isConsoleActive && selectedDevice && (
               <div className="p-4 space-y-4 overflow-y-auto max-h-[480px]">
                 {selectedDevice.type === 'router' && (
                   <div className="space-y-2">
@@ -3363,8 +5921,46 @@ export const NetworkTopologySimulator: React.FC = () => {
             )}
 
             {/* TAB 4: Lab Verification Objectives & Packet Hop Trace */}
-            {(inspectorTab === 'objectives' || !selectedDevice) && (
+            {(inspectorTab === 'objectives' || !isConsoleActive) && (
               <div className="p-4 space-y-4 overflow-y-auto max-h-[480px]">
+                {selectedDevice && !isConsoleActive && selectedDeviceIds.length === 1 ? (
+                  <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/35 border border-blue-200 dark:border-blue-800/80 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                        {selectedDevice.name} selected
+                      </div>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
+                        Double-click on canvas to open console · Long-click &amp; drag to move
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConsoleDeviceId(selectedDevice.id);
+                        setInspectorTab(
+                          selectedDevice.type === 'pc' || selectedDevice.type === 'server'
+                            ? 'config'
+                            : 'cli'
+                        );
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors whitespace-nowrap shrink-0"
+                    >
+                      <TerminalIcon className="w-3.5 h-3.5" />
+                      <span>Open Console</span>
+                    </button>
+                  </div>
+                ) : (
+                  devices.length > 0 && (
+                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 text-xs text-slate-600 dark:text-slate-300 flex items-start gap-2.5">
+                      <TerminalIcon className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0 mt-0.5" />
+                      <span>
+                        {selectedDeviceIds.length > 1
+                          ? 'Multiple devices are selected. Long-click any selected device to move them together, or double-click a single device to open its console.'
+                          : 'One-click a device to select it, long-click & drag to move it, or double-click to start its console for configuration.'}
+                      </span>
+                    </div>
+                  )
+                )}
                 {/* Scenario Objectives */}
                 {activePreset.objectives.length > 0 && (
                   <div className="space-y-2">
