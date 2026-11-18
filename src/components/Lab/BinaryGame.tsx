@@ -1,13 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import confetti from 'canvas-confetti';
 import {
+  ArrowRight,
   Binary,
   CheckCircle2,
   Clock,
+  Delete,
+  Eye,
+  EyeOff,
   Flame,
   Gamepad2,
+  Hash,
   Heart,
   HelpCircle,
+  Keyboard,
+  Layers,
   Pause,
   Play,
   RotateCcw,
@@ -18,10 +25,6 @@ import {
   VolumeX,
   XCircle,
   Zap,
-  ArrowRight,
-  Delete,
-  Eye,
-  EyeOff
 } from 'lucide-react';
 
 type GameState = 'TITLE_MENU' | 'PLAYING' | 'PAUSED' | 'GAME_OVER';
@@ -67,7 +70,7 @@ const DEFAULT_STATS: StoredStats = {
   highScore: 0,
   bestStreak: 0,
   totalSolved: 0,
-  gamesPlayed: 0
+  gamesPlayed: 0,
 };
 
 function loadStats(): StoredStats {
@@ -79,7 +82,7 @@ function loadStats(): StoredStats {
       highScore: typeof parsed.highScore === 'number' ? parsed.highScore : 0,
       bestStreak: typeof parsed.bestStreak === 'number' ? parsed.bestStreak : 0,
       totalSolved: typeof parsed.totalSolved === 'number' ? parsed.totalSolved : 0,
-      gamesPlayed: typeof parsed.gamesPlayed === 'number' ? parsed.gamesPlayed : 0
+      gamesPlayed: typeof parsed.gamesPlayed === 'number' ? parsed.gamesPlayed : 0,
     };
   } catch {
     return DEFAULT_STATS;
@@ -121,7 +124,6 @@ function generateQuestion(
 
   const maxVal = bitCount === 4 ? 15 : 255;
   let targetValue = Math.floor(Math.random() * maxVal) + 1;
-  // Avoid repeating identical target back-to-back
   if (previousTarget !== null && targetValue === previousTarget) {
     targetValue = targetValue === maxVal ? 1 : targetValue + 1;
   }
@@ -140,7 +142,6 @@ function generateQuestion(
   const hexDisplay = `0x${targetValue.toString(16).toUpperCase().padStart(hexChars, '0')}`;
   const binaryAnswer = formatBinaryGrouped(targetValue, bitCount);
 
-  // Ramps smoothly as rounds progress, always generous enough to solve thoughtfully
   const baseTime = bitCount === 4 ? 18 : 26;
   const reduction = Math.min(10, Math.floor((round - 1) / 3) * 1.5);
   const timeLimitSec = Math.max(bitCount === 4 ? 8 : 13, Math.round(baseTime - reduction));
@@ -151,11 +152,11 @@ function generateQuestion(
       kind,
       bitCount,
       targetValue,
-      promptLabel: `Flip bits to build Decimal ${targetValue}`,
+      promptLabel: `Build Decimal ${targetValue} in ${bitCount}-bit binary`,
       targetDisplay: String(targetValue),
       binaryAnswer,
       hexDisplay,
-      timeLimitSec
+      timeLimitSec,
     };
   }
 
@@ -165,11 +166,11 @@ function generateQuestion(
       kind,
       bitCount,
       targetValue,
-      promptLabel: `Flip bits to match Hex ${hexDisplay}`,
+      promptLabel: `Match Hex byte ${hexDisplay} in ${bitCount}-bit binary`,
       targetDisplay: hexDisplay,
       binaryAnswer,
       hexDisplay,
-      timeLimitSec: timeLimitSec + 2
+      timeLimitSec: timeLimitSec + 2,
     };
   }
 
@@ -182,7 +183,7 @@ function generateQuestion(
     targetDisplay: binaryAnswer,
     binaryAnswer,
     hexDisplay,
-    timeLimitSec
+    timeLimitSec,
   };
 }
 
@@ -314,6 +315,16 @@ export const BinaryGame: React.FC = () => {
     return bits.reduce((acc, bit, idx) => acc + (bit === 1 ? weights[idx] : 0), 0);
   }, [bits, weights]);
 
+  const currentBinaryGrouped = useMemo(
+    () => formatBinaryGrouped(currentBitSum, question.bitCount),
+    [currentBitSum, question.bitCount]
+  );
+
+  const currentHexDisplay = useMemo(() => {
+    const chars = question.bitCount === 4 ? 1 : 2;
+    return `0x${currentBitSum.toString(16).toUpperCase().padStart(chars, '0')}`;
+  }, [currentBitSum, question.bitCount]);
+
   const activeAddendsFormula = useMemo(() => {
     const parts = weights.filter((_, idx) => bits[idx] === 1);
     if (parts.length === 0) return '0';
@@ -365,7 +376,7 @@ export const BinaryGame: React.FC = () => {
         highScore: Math.max(currentStats.highScore, finalScore),
         bestStreak: Math.max(currentStats.bestStreak, finalBestStreak),
         totalSolved: currentStats.totalSolved + solvedCount,
-        gamesPlayed: currentStats.gamesPlayed + 1
+        gamesPlayed: currentStats.gamesPlayed + 1,
       };
       saveStats(updated);
       setStats(updated);
@@ -377,7 +388,7 @@ export const BinaryGame: React.FC = () => {
           void confetti({
             particleCount: 70,
             spread: 65,
-            origin: { y: 0.6 }
+            origin: { y: 0.6 },
           });
         } catch {
           // Ignore confetti errors
@@ -411,7 +422,6 @@ export const BinaryGame: React.FC = () => {
     playSound('flip');
   }, [clearAllTimers, gameMode, widthMode, paceMode, playSound]);
 
-  // Focus decoder numeric input smoothly when entering a decoder round
   useEffect(() => {
     if (gameState === 'PLAYING' && question.kind === 'bin-to-dec') {
       const id = window.setTimeout(() => {
@@ -467,7 +477,7 @@ export const BinaryGame: React.FC = () => {
         setFeedback({
           status: 'correct',
           message: `+${pointsEarned} pts${nextStreak >= 3 ? ` · ${roundMultiplier}x Streak` : ''}`,
-          mathNote: `${targetMathBreakdown} (${question.binaryAnswer})`
+          mathNote: `${targetMathBreakdown} (${question.binaryAnswer})`,
         });
       } else {
         nextStreak = 0;
@@ -486,7 +496,7 @@ export const BinaryGame: React.FC = () => {
           mathNote:
             question.kind === 'bin-to-dec'
               ? `Answer: ${question.targetValue} (${targetMathBreakdown})`
-              : `Answer: ${question.binaryAnswer} (${targetMathBreakdown})`
+              : `Answer: ${question.binaryAnswer} (${targetMathBreakdown})`,
         });
       }
 
@@ -504,7 +514,7 @@ export const BinaryGame: React.FC = () => {
         correctAnswer: correctAnswerLabel,
         isCorrect,
         pointsEarned,
-        timeSpentSec: elapsedSec
+        timeSpentSec: elapsedSec,
       };
 
       const nextHistory = [...history, entry];
@@ -533,7 +543,7 @@ export const BinaryGame: React.FC = () => {
       round,
       history,
       finalizeGameOver,
-      prepareRound
+      prepareRound,
     ]
   );
 
@@ -570,7 +580,6 @@ export const BinaryGame: React.FC = () => {
     };
   }, [gameState, paceMode, feedback]);
 
-  // Trigger timeout resolution cleanly when time hits 0
   useEffect(() => {
     if (
       gameState === 'PLAYING' &&
@@ -593,10 +602,9 @@ export const BinaryGame: React.FC = () => {
     question,
     decoderInput,
     currentBitSum,
-    handleRoundResolution
+    handleRoundResolution,
   ]);
 
-  // Toggle bit switch
   const toggleBit = useCallback(
     (index: number) => {
       if (gameState !== 'PLAYING' || feedback !== null || question.kind === 'bin-to-dec') {
@@ -612,7 +620,6 @@ export const BinaryGame: React.FC = () => {
           const nextSum = next.reduce((acc, b, idx) => acc + (b === 1 ? weights[idx] : 0), 0);
           if (nextSum === question.targetValue) {
             const grouped = formatBinaryGrouped(nextSum, question.bitCount);
-            // Resolve on next microtask so bit state paints first
             window.setTimeout(() => {
               handleRoundResolution(true, 'correct', grouped);
             }, 60);
@@ -631,7 +638,7 @@ export const BinaryGame: React.FC = () => {
       playSound,
       autoMatchBuilder,
       weights,
-      handleRoundResolution
+      handleRoundResolution,
     ]
   );
 
@@ -677,7 +684,6 @@ export const BinaryGame: React.FC = () => {
     }
 
     const targetBin = question.targetValue.toString(2).padStart(question.bitCount, '0');
-    // Find first bit from MSB to LSB that doesn't match target
     for (let i = 0; i < question.bitCount; i++) {
       const targetBit = targetBin[i] === '1' ? 1 : 0;
       if (bits[i] !== targetBit) {
@@ -707,7 +713,6 @@ export const BinaryGame: React.FC = () => {
       }
 
       if (question.kind !== 'bin-to-dec') {
-        // Keys 1..8 toggle bits left-to-right (or 1..4 for 4-bit)
         const num = Number.parseInt(e.key, 10);
         if (!Number.isNaN(num) && num >= 1 && num <= question.bitCount) {
           e.preventDefault();
@@ -737,7 +742,7 @@ export const BinaryGame: React.FC = () => {
     toggleBit,
     handleHint,
     handleResetBits,
-    handleSubmitBuilder
+    handleSubmitBuilder,
   ]);
 
   const handleEndSessionEarly = () => {
@@ -766,97 +771,230 @@ export const BinaryGame: React.FC = () => {
     return Math.max(0, Math.min(100, (timeLeftMs / (question.timeLimitSec * 1000)) * 100));
   }, [paceMode, timeLeftMs, question.timeLimitSec]);
 
+  // Live visual preview for the setup screen
+  const previewConfig = useMemo(() => {
+    const bitWidth: 4 | 8 = widthMode === '4bit' ? 4 : 8;
+    const sampleVal = bitWidth === 4 ? 10 : gameMode === 'decoder' ? 172 : gameMode === 'mixed' ? 165 : 192;
+    const sampleWeights = getBitWeights(bitWidth);
+    const sampleBits = sampleVal
+      .toString(2)
+      .padStart(bitWidth, '0')
+      .split('')
+      .map((ch) => Number(ch));
+    const sampleHex = `0x${sampleVal.toString(16).toUpperCase().padStart(bitWidth === 4 ? 1 : 2, '0')}`;
+    return { bitWidth, sampleVal, sampleWeights, sampleBits, sampleHex };
+  }, [widthMode, gameMode]);
+
+  // Helper to render a single tactile bit switch in Bit Builder / Octet Blitz
+  const renderBitSwitch = (weight: number, idx: number) => {
+    const isOn = bits[idx] === 1;
+    const isHinted = highlightedBitIndex === idx;
+    const power = question.bitCount - 1 - idx;
+
+    return (
+      <button
+        key={weight}
+        type="button"
+        onClick={() => toggleBit(idx)}
+        disabled={feedback !== null}
+        aria-pressed={isOn}
+        aria-label={`Bit ${power}, weight ${weight}, currently ${bits[idx]}`}
+        className={`group relative flex flex-col items-center justify-between py-3 px-1.5 sm:px-2 min-h-[104px] sm:min-h-[118px] rounded-2xl border transition-all duration-150 select-none active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          isOn
+            ? 'bg-gradient-to-b from-blue-600 to-indigo-600 dark:from-cyan-500 dark:to-blue-600 border-blue-500 dark:border-cyan-300 text-white shadow-md shadow-blue-500/20'
+            : 'bg-slate-50 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-blue-400 dark:hover:border-cyan-500/60 hover:bg-white dark:hover:bg-slate-800'
+        } ${isHinted ? 'ring-4 ring-amber-400/90 border-amber-400' : ''}`}
+      >
+        {/* Power & Keyboard Shortcut Index */}
+        <div className="w-full flex items-center justify-between px-1 text-[10px] font-mono opacity-80">
+          <span>2^{power}</span>
+          <span className="hidden sm:inline">[{idx + 1}]</span>
+        </div>
+
+        {/* Visual Bit Value + Hardware LED Bar */}
+        <div className="flex flex-col items-center gap-1 my-1">
+          <span className="text-2xl sm:text-3xl font-black font-mono tabular-nums leading-none">
+            {bits[idx]}
+          </span>
+          <span
+            aria-hidden="true"
+            className={`w-6 h-1 rounded-full transition-colors ${
+              isOn
+                ? 'bg-emerald-300 dark:bg-white'
+                : 'bg-slate-300 dark:bg-slate-600'
+            }`}
+          />
+        </div>
+
+        {/* Decimal Bit Weight */}
+        <span
+          className={`text-[11px] sm:text-xs font-bold font-mono tabular-nums px-2 py-0.5 rounded-md ${
+            isOn
+              ? 'bg-white/20 text-white'
+              : 'bg-slate-200/80 dark:bg-slate-900/80 text-slate-600 dark:text-slate-300'
+          }`}
+        >
+          {weight}
+        </span>
+      </button>
+    );
+  };
+
+  // Target Match Progress Ratio for visual Bit Builder bar
+  const matchBarPct =
+    question.targetValue > 0
+      ? Math.min(100, Math.round((currentBitSum / question.targetValue) * 100))
+      : 0;
+  const isSumExact = currentBitSum === question.targetValue;
+  const isSumOver = currentBitSum > question.targetValue;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       {/* Compact Workspace Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-slate-200 dark:border-slate-800">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-200 dark:border-slate-800">
+        <div className="flex items-center gap-3 min-w-0">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-500 text-white flex items-center justify-center shadow-md shadow-blue-500/20 shrink-0">
             <Gamepad2 className="w-5 h-5" />
           </div>
-          <div>
-            <h1 className="text-lg font-extrabold tracking-tight text-slate-900 dark:text-white">
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
               Binary Conversion Arena
             </h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Practice building and decoding 4-bit nibbles, 8-bit IPv4 octets, and hex bytes under time pressure or at your own pace.
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+              Build and decode 4-bit nibbles, 8-bit IPv4 octets, and hex bytes at your own pace or against the clock.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => setSoundEnabled((prev) => !prev)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
-            aria-label={soundEnabled ? 'Mute sound effects' : 'Enable sound effects'}
-          >
-            {soundEnabled ? (
-              <Volume2 className="w-4 h-4 text-blue-600 dark:text-cyan-400" />
-            ) : (
-              <VolumeX className="w-4 h-4 text-slate-400" />
-            )}
-            <span>{soundEnabled ? 'Sound On' : 'Muted'}</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setSoundEnabled((prev) => !prev)}
+          className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+          aria-label={soundEnabled ? 'Mute sound effects' : 'Enable sound effects'}
+        >
+          {soundEnabled ? (
+            <Volume2 className="w-4 h-4 text-blue-600 dark:text-cyan-400" />
+          ) : (
+            <VolumeX className="w-4 h-4 text-slate-400" />
+          )}
+          <span>{soundEnabled ? 'Sound On' : 'Muted'}</span>
+        </button>
       </div>
 
       {/* STATE 1: TITLE MENU */}
       {gameState === 'TITLE_MENU' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Main Configuration & Launch Card */}
-          <div className="lg:col-span-8 bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6 items-start">
+          {/* Main Configuration & Visual Preview Card */}
+          <div className="lg:col-span-8 bg-white dark:bg-[#0c1220] border border-slate-200/90 dark:border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xs space-y-6">
+            {/* Interactive Visual Strip Preview */}
+            <div className="rounded-xl bg-slate-50/90 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 p-3.5 sm:p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-200">
+                  <Binary className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
+                  <span>
+                    {gameMode === 'builder'
+                      ? 'Example: Flip bits to build Decimal'
+                      : gameMode === 'decoder'
+                        ? 'Example: Read bit pattern into Decimal'
+                        : 'Example: Alternate Decimal, Binary & Hex'}
+                  </span>
+                </div>
+                <span className="font-mono text-[11px] font-bold tabular-nums text-blue-600 dark:text-cyan-400">
+                  {previewConfig.bitWidth}-bit · {previewConfig.sampleVal} = {previewConfig.sampleHex}
+                </span>
+              </div>
+
+              <div
+                className={`grid gap-1.5 ${
+                  previewConfig.bitWidth === 4 ? 'grid-cols-4 max-w-xs' : 'grid-cols-4 sm:grid-cols-8'
+                }`}
+              >
+                {previewConfig.sampleWeights.map((w, i) => {
+                  const isOne = previewConfig.sampleBits[i] === 1;
+                  return (
+                    <div
+                      key={w}
+                      className={`py-1.5 px-1 rounded-lg border text-center font-mono tabular-nums transition-colors ${
+                        isOne
+                          ? 'bg-blue-600 border-blue-600 dark:bg-cyan-500/20 dark:border-cyan-500/50 text-white dark:text-cyan-300'
+                          : 'bg-white dark:bg-slate-950/60 border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500'
+                      }`}
+                    >
+                      <div className="text-xs font-extrabold leading-tight">
+                        {previewConfig.sampleBits[i]}
+                      </div>
+                      <div className="text-[10px] opacity-80 leading-tight">{w}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Step 1: Challenge Mode */}
             <div>
-              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">
+              <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100 mb-3">
                 1. Choose Challenge Mode
               </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {[
                   {
                     id: 'builder' as GameMode,
                     title: 'Bit Builder',
-                    desc: 'Given Decimal, flip the 0/1 switches to match.',
-                    example: '192 -> 1100 0000'
+                    desc: 'Flip the 0/1 bit switches to match a target Decimal value.',
+                    example: '192 → 1100 0000',
+                    icon: Binary,
                   },
                   {
                     id: 'decoder' as GameMode,
                     title: 'Bit Decoder',
-                    desc: 'Read the binary pattern and enter its Decimal value.',
-                    example: '1010 1100 -> 172'
+                    desc: 'Read the lit binary pattern and enter its Decimal number.',
+                    example: '1010 1100 → 172',
+                    icon: Hash,
                   },
                   {
                     id: 'mixed' as GameMode,
                     title: 'Octet Blitz',
-                    desc: 'Alternates Bit Builder, Decoder, and Hex bytes.',
-                    example: 'Dec + Bin + 0xHex'
-                  }
+                    desc: 'Cycles through Bit Builder, Bit Decoder, and Hex bytes.',
+                    example: 'Dec · Bin · 0xHex',
+                    icon: Layers,
+                  },
                 ].map((opt) => {
                   const selected = gameMode === opt.id;
+                  const Icon = opt.icon;
                   return (
                     <button
                       key={opt.id}
                       type="button"
                       onClick={() => setGameMode(opt.id)}
-                      className={`text-left p-4 rounded-xl border transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                      className={`text-left p-4 rounded-xl border transition-all duration-150 flex flex-col justify-between gap-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                         selected
-                          ? 'border-blue-600 dark:border-cyan-400 bg-blue-50/70 dark:bg-blue-950/40 ring-1 ring-blue-600/30 dark:ring-cyan-400/30'
-                          : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-900'
+                          ? 'border-blue-600 dark:border-cyan-400 bg-blue-50/70 dark:bg-blue-950/35 ring-1 ring-blue-600/25 dark:ring-cyan-400/25'
+                          : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-900/60'
                       }`}
                     >
-                      <div className="flex items-center justify-between gap-2 mb-1.5">
-                        <span className="font-bold text-sm text-slate-900 dark:text-white">
-                          {opt.title}
-                        </span>
-                        <span
-                          className={`w-2.5 h-2.5 rounded-full ${
-                            selected ? 'bg-blue-600 dark:bg-cyan-400' : 'bg-slate-300 dark:bg-slate-700'
-                          }`}
-                        />
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Icon
+                              className={`w-4 h-4 shrink-0 ${
+                                selected
+                                  ? 'text-blue-600 dark:text-cyan-400'
+                                  : 'text-slate-500 dark:text-slate-400'
+                              }`}
+                            />
+                            <span className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                              {opt.title}
+                            </span>
+                          </div>
+                          {selected && (
+                            <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                          {opt.desc}
+                        </p>
                       </div>
-                      <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed mb-2">
-                        {opt.desc}
-                      </p>
-                      <p className="text-[11px] font-mono text-blue-700 dark:text-cyan-300">
+                      <p className="text-[11px] font-mono tabular-nums text-blue-700 dark:text-cyan-300 font-semibold">
                         {opt.example}
                       </p>
                     </button>
@@ -865,17 +1003,17 @@ export const BinaryGame: React.FC = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              {/* Bit Width */}
+            {/* Step 2 & 3: Bit Width + Session Pace */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div>
-                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2.5">
+                <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100 mb-2.5">
                   2. Bit Width
                 </h2>
                 <div className="grid grid-cols-3 gap-2">
                   {[
                     { id: '4bit' as BitWidthMode, label: '4-Bit', sub: '1–15' },
                     { id: '8bit' as BitWidthMode, label: '8-Bit', sub: '1–255' },
-                    { id: 'progressive' as BitWidthMode, label: 'Ramp', sub: '4 → 8' }
+                    { id: 'progressive' as BitWidthMode, label: 'Ramp', sub: '4 → 8' },
                   ].map((w) => {
                     const active = widthMode === w.id;
                     return (
@@ -883,69 +1021,68 @@ export const BinaryGame: React.FC = () => {
                         key={w.id}
                         type="button"
                         onClick={() => setWidthMode(w.id)}
-                        className={`p-3 rounded-xl border text-center transition-colors ${
+                        className={`p-3 min-h-[58px] rounded-xl border text-center transition-colors flex flex-col items-center justify-center ${
                           active
                             ? 'bg-slate-900 dark:bg-blue-600 text-white border-slate-900 dark:border-blue-500'
                             : 'bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
                         }`}
                       >
-                        <div className="text-xs font-bold">{w.label}</div>
-                        <div
-                          className={`text-[11px] font-mono tabular-nums ${
+                        <span className="text-xs font-bold whitespace-nowrap">{w.label}</span>
+                        <span
+                          className={`text-[11px] font-mono tabular-nums whitespace-nowrap mt-0.5 ${
                             active ? 'text-cyan-200' : 'text-slate-400'
                           }`}
                         >
                           {w.sub}
-                        </div>
+                        </span>
                       </button>
                     );
                   })}
                 </div>
               </div>
 
-              {/* Pace */}
               <div>
-                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2.5">
+                <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100 mb-2.5">
                   3. Session Pace
                 </h2>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
                     onClick={() => setPaceMode('arcade')}
-                    className={`p-3 rounded-xl border text-left transition-colors ${
+                    className={`p-3 min-h-[58px] rounded-xl border text-left transition-colors flex flex-col justify-center ${
                       paceMode === 'arcade'
                         ? 'bg-slate-900 dark:bg-blue-600 text-white border-slate-900 dark:border-blue-500'
                         : 'bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
                     }`}
                   >
-                    <div className="flex items-center gap-1.5 text-xs font-bold">
-                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                    <div className="flex items-center gap-1.5 text-xs font-bold whitespace-nowrap">
+                      <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                       <span>Arcade Timed</span>
                     </div>
                     <div
-                      className={`text-[11px] mt-0.5 ${
+                      className={`text-[11px] mt-0.5 whitespace-nowrap ${
                         paceMode === 'arcade' ? 'text-slate-300' : 'text-slate-400'
                       }`}
                     >
-                      3 lives · Timer bonus
+                      3 lives · Speed bonus
                     </div>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setPaceMode('practice')}
-                    className={`p-3 rounded-xl border text-left transition-colors ${
+                    className={`p-3 min-h-[58px] rounded-xl border text-left transition-colors flex flex-col justify-center ${
                       paceMode === 'practice'
                         ? 'bg-slate-900 dark:bg-blue-600 text-white border-slate-900 dark:border-blue-500'
                         : 'bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
                     }`}
                   >
-                    <div className="flex items-center gap-1.5 text-xs font-bold">
-                      <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                    <div className="flex items-center gap-1.5 text-xs font-bold whitespace-nowrap">
+                      <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
                       <span>Zen Practice</span>
                     </div>
                     <div
-                      className={`text-[11px] mt-0.5 ${
+                      className={`text-[11px] mt-0.5 whitespace-nowrap ${
                         paceMode === 'practice' ? 'text-slate-300' : 'text-slate-400'
                       }`}
                     >
@@ -956,10 +1093,10 @@ export const BinaryGame: React.FC = () => {
               </div>
             </div>
 
-            {/* Assist Toggles */}
-            <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-slate-200 dark:border-slate-800">
-              <div className="flex flex-wrap items-center gap-5">
-                <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+            {/* Assist Toggles & Start CTA */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+              <div className="flex flex-col xs:flex-row sm:flex-row flex-wrap items-start sm:items-center gap-3 sm:gap-5">
+                <label className="inline-flex items-center gap-2.5 min-h-[36px] text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={autoMatchBuilder}
@@ -969,7 +1106,7 @@ export const BinaryGame: React.FC = () => {
                   <span>Auto-clear when bits match</span>
                 </label>
 
-                <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+                <label className="inline-flex items-center gap-2.5 min-h-[36px] text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={showLiveSum}
@@ -983,7 +1120,7 @@ export const BinaryGame: React.FC = () => {
               <button
                 type="button"
                 onClick={startGame}
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-sm font-bold shadow-md shadow-blue-600/20 transition-all whitespace-nowrap shrink-0"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 min-h-[46px] rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-sm font-bold shadow-md shadow-blue-600/20 transition-all whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <Play className="w-4 h-4 fill-current" />
                 <span>Start Game</span>
@@ -991,18 +1128,19 @@ export const BinaryGame: React.FC = () => {
             </div>
           </div>
 
-          {/* Right Panel: Career Stats & Controls Guide */}
-          <div className="lg:col-span-4 space-y-4">
-            <div className="bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Trophy className="w-4 h-4 text-amber-500" />
-                  <span>Your Best Records</span>
+          {/* Right Rail: Career Records & Keyboard Shortcuts (Clean Un-nested Layout) */}
+          <div className="lg:col-span-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-4">
+            {/* Best Records Card (Clean hairline dividers, no cards-within-cards) */}
+            <div className="bg-white dark:bg-[#0c1220] border border-slate-200/90 dark:border-slate-800 rounded-2xl overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-slate-200/80 dark:border-slate-800 flex items-center gap-2">
+                <Trophy className="w-4 h-4 text-amber-500 shrink-0" />
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Your Best Records
                 </h3>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800">
+              <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 dark:divide-slate-800/80">
+                <div className="p-4">
                   <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                     High Score
                   </div>
@@ -1010,7 +1148,7 @@ export const BinaryGame: React.FC = () => {
                     {stats.highScore.toLocaleString()}
                   </div>
                 </div>
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800">
+                <div className="p-4">
                   <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                     Best Streak
                   </div>
@@ -1018,7 +1156,7 @@ export const BinaryGame: React.FC = () => {
                     {stats.bestStreak}
                   </div>
                 </div>
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800">
+                <div className="p-4">
                   <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                     Solved Total
                   </div>
@@ -1026,7 +1164,7 @@ export const BinaryGame: React.FC = () => {
                     {stats.totalSolved}
                   </div>
                 </div>
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800">
+                <div className="p-4">
                   <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                     Sessions
                   </div>
@@ -1037,38 +1175,42 @@ export const BinaryGame: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-2.5">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                Keyboard Shortcuts
-              </h3>
-              <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
+            {/* Keyboard Shortcuts Card */}
+            <div className="bg-white dark:bg-[#0c1220] border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <Keyboard className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Keyboard Shortcuts
+                </h3>
+              </div>
+              <ul className="space-y-2.5 text-xs text-slate-600 dark:text-slate-300">
                 <li className="flex items-center justify-between gap-2">
                   <span>Flip bits (left to right)</span>
-                  <kbd className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[11px]">
+                  <kbd className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[11px] whitespace-nowrap">
                     1 – 8
                   </kbd>
                 </li>
                 <li className="flex items-center justify-between gap-2">
                   <span>Submit answer</span>
-                  <kbd className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[11px]">
+                  <kbd className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[11px] whitespace-nowrap">
                     Enter
                   </kbd>
                 </li>
                 <li className="flex items-center justify-between gap-2">
                   <span>Reveal next helpful bit</span>
-                  <kbd className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[11px]">
+                  <kbd className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[11px] whitespace-nowrap">
                     H
                   </kbd>
                 </li>
                 <li className="flex items-center justify-between gap-2">
                   <span>Clear switches</span>
-                  <kbd className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[11px]">
+                  <kbd className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[11px] whitespace-nowrap">
                     C
                   </kbd>
                 </li>
                 <li className="flex items-center justify-between gap-2">
                   <span>Pause game</span>
-                  <kbd className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[11px]">
+                  <kbd className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[11px] whitespace-nowrap">
                     Esc
                   </kbd>
                 </li>
@@ -1080,15 +1222,15 @@ export const BinaryGame: React.FC = () => {
 
       {/* STATE 2 & 3: PLAYING / PAUSED */}
       {(gameState === 'PLAYING' || gameState === 'PAUSED') && (
-        <div className="relative bg-white dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
-          {/* Top HUD */}
-          <div className="px-5 py-3.5 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-5">
+        <div className="relative bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
+          {/* Responsive Top Arena HUD */}
+          <div className="px-4 sm:px-5 py-3.5 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-4 sm:gap-6">
               <div>
                 <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                   Score
                 </div>
-                <div className="text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
+                <div className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
                   {score.toLocaleString()}
                 </div>
               </div>
@@ -1097,8 +1239,8 @@ export const BinaryGame: React.FC = () => {
                 <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                   Streak
                 </div>
-                <div className="text-lg font-bold font-mono tabular-nums flex items-center gap-1 text-amber-600 dark:text-amber-400">
-                  <Flame className="w-4 h-4" />
+                <div className="text-base sm:text-lg font-bold font-mono tabular-nums flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                  <Flame className="w-4 h-4 shrink-0" />
                   <span>{streak}</span>
                   {multiplier > 1 && (
                     <span className="text-xs font-extrabold text-blue-600 dark:text-cyan-400 ml-0.5">
@@ -1112,19 +1254,22 @@ export const BinaryGame: React.FC = () => {
                 <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                   Round
                 </div>
-                <div className="text-lg font-bold font-mono tabular-nums text-slate-800 dark:text-slate-200">
+                <div className="text-base sm:text-lg font-bold font-mono tabular-nums text-slate-800 dark:text-slate-200">
                   #{round}
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 sm:gap-4 ml-auto">
               {paceMode === 'arcade' ? (
-                <div className="flex items-center gap-1.5" aria-label={`Lives remaining: ${lives}`}>
+                <div
+                  className="flex items-center gap-1"
+                  aria-label={`Lives remaining: ${lives} of 3`}
+                >
                   {[0, 1, 2].map((heartIdx) => (
                     <Heart
                       key={heartIdx}
-                      className={`w-5 h-5 transition-transform duration-200 ${
+                      className={`w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-200 ${
                         heartIdx < lives
                           ? 'text-rose-500 fill-rose-500 scale-100'
                           : 'text-slate-300 dark:text-slate-700 scale-90'
@@ -1133,7 +1278,7 @@ export const BinaryGame: React.FC = () => {
                   ))}
                 </div>
               ) : (
-                <span className="text-xs font-semibold text-cyan-700 dark:text-cyan-300">
+                <span className="text-xs font-semibold text-cyan-700 dark:text-cyan-300 whitespace-nowrap">
                   Zen Practice
                 </span>
               )}
@@ -1144,7 +1289,7 @@ export const BinaryGame: React.FC = () => {
                   onClick={() =>
                     setGameState((prev) => (prev === 'PLAYING' ? 'PAUSED' : 'PLAYING'))
                   }
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[38px] rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0"
                 >
                   <Pause className="w-3.5 h-3.5" />
                   <span>Pause</span>
@@ -1153,7 +1298,7 @@ export const BinaryGame: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleEndSessionEarly}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-300 dark:hover:border-rose-800 transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[38px] rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-300 dark:hover:border-rose-800 transition-colors whitespace-nowrap shrink-0"
                 >
                   <span>Finish</span>
                 </button>
@@ -1163,9 +1308,9 @@ export const BinaryGame: React.FC = () => {
 
           {/* Timer Bar (Arcade Mode) */}
           {paceMode === 'arcade' && (
-            <div className="px-5 pt-3">
-              <div className="flex items-center justify-between text-xs font-mono tabular-nums mb-1">
-                <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
+            <div className="px-4 sm:px-5 pt-3">
+              <div className="flex items-center justify-between text-xs font-mono tabular-nums mb-1.5">
+                <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5" />
                   <span>Time Remaining</span>
                 </span>
@@ -1197,140 +1342,192 @@ export const BinaryGame: React.FC = () => {
           )}
 
           {/* Arena Stage */}
-          <div className="p-5 sm:p-7 space-y-6">
-            {/* Target Prompt */}
-            <div className="text-center space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                {question.promptLabel}
-              </p>
-              <div className="inline-flex items-center justify-center px-6 py-3 rounded-2xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-                <span className="text-3xl sm:text-4xl font-black font-mono tabular-nums tracking-wider text-slate-900 dark:text-white">
-                  {question.targetDisplay}
-                </span>
+          <div className="p-4 sm:p-7 space-y-5 sm:space-y-6">
+            {/* Visual Target Focal Prompt */}
+            <div className="text-center space-y-2.5">
+              <div className="flex items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-medium">
+                <span>{question.promptLabel}</span>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono">{question.bitCount}-bit</span>
               </div>
+
+              {question.kind !== 'bin-to-dec' ? (
+                <div className="inline-flex items-center justify-center px-6 sm:px-8 py-3 sm:py-4 rounded-2xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <span className="text-3xl sm:text-5xl font-black font-mono tabular-nums tracking-wider text-slate-900 dark:text-white">
+                    {question.targetDisplay}
+                  </span>
+                </div>
+              ) : null}
             </div>
 
-            {/* Interactive Mode A: Bit Builder (Decimal/Hex -> Binary) */}
+            {/* Interactive Mode A: Bit Builder (Decimal/Hex -> Binary) with Nibble Grouping */}
             {question.kind !== 'bin-to-dec' && (
-              <div className="space-y-5">
-                <div
-                  className={`grid gap-2.5 sm:gap-3 mx-auto ${
-                    question.bitCount === 4
-                      ? 'grid-cols-4 max-w-md'
-                      : 'grid-cols-4 sm:grid-cols-8 max-w-4xl'
-                  }`}
-                >
-                  {weights.map((weight, idx) => {
-                    const isOn = bits[idx] === 1;
-                    const isHinted = highlightedBitIndex === idx;
-                    const power = question.bitCount - 1 - idx;
+              <div className="space-y-4 sm:space-y-5">
+                {question.bitCount === 4 ? (
+                  <div className="grid grid-cols-4 gap-2 sm:gap-3 max-w-md mx-auto">
+                    {weights.map((weight, idx) => renderBitSwitch(weight, idx))}
+                  </div>
+                ) : (
+                  <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-end gap-3 md:gap-4">
+                    {/* High Nibble (Bits 7..4: 128..16) */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between px-1 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                        <span>High Nibble</span>
+                        <span className="font-mono tabular-nums">128 – 16</span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 sm:gap-2.5">
+                        {weights.slice(0, 4).map((weight, idx) => renderBitSwitch(weight, idx))}
+                      </div>
+                    </div>
 
-                    return (
-                      <button
-                        key={weight}
-                        type="button"
-                        onClick={() => toggleBit(idx)}
-                        disabled={feedback !== null}
-                        aria-pressed={isOn}
-                        aria-label={`Bit ${power}, weight ${weight}, currently ${bits[idx]}`}
-                        className={`relative flex flex-col items-center justify-between py-3 px-2 min-h-[108px] rounded-2xl border-2 transition-all duration-150 select-none active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                          isOn
-                            ? 'bg-gradient-to-b from-blue-600 to-indigo-600 dark:from-cyan-500 dark:to-blue-600 border-blue-500 dark:border-cyan-300 text-white shadow-md shadow-blue-500/20'
-                            : 'bg-slate-50 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-blue-400 dark:hover:border-cyan-500/60'
-                        } ${
-                          isHinted
-                            ? 'ring-4 ring-amber-400/80 border-amber-400'
-                            : ''
-                        }`}
-                      >
-                        <div className="w-full flex items-center justify-between text-[10px] font-mono opacity-75">
-                          <span>2^{power}</span>
-                          <span>[{idx + 1}]</span>
-                        </div>
+                    {/* Visual Nibble Divider */}
+                    <div
+                      aria-hidden="true"
+                      className="hidden md:flex flex-col items-center justify-center h-[118px] px-0.5 text-slate-300 dark:text-slate-700 font-mono text-lg font-bold select-none"
+                    >
+                      ·
+                    </div>
 
-                        <span className="text-3xl font-black font-mono tabular-nums my-1">
-                          {bits[idx]}
-                        </span>
+                    {/* Low Nibble (Bits 3..0: 8..1) */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between px-1 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                        <span>Low Nibble</span>
+                        <span className="font-mono tabular-nums">8 – 1</span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 sm:gap-2.5">
+                        {weights.slice(4).map((weight, offset) => renderBitSwitch(weight, offset + 4))}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
-                        <span
-                          className={`text-xs font-bold font-mono tabular-nums px-2 py-0.5 rounded-md ${
-                            isOn
-                              ? 'bg-white/20 text-white'
-                              : 'bg-slate-200/80 dark:bg-slate-900/70 text-slate-600 dark:text-slate-300'
-                          }`}
-                        >
-                          {weight}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Live Sum & Helper Controls */}
-                <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-                  <div className="flex items-center gap-2 text-xs font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                    <Binary className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
-                    {showLiveSum ? (
-                      <span>
-                        Current Value:{' '}
-                        <strong className="text-sm text-slate-900 dark:text-white">
-                          {activeAddendsFormula}
-                        </strong>
+                {/* Live Binary Readout + Target Sum Contribution Meter */}
+                <div className="max-w-4xl mx-auto rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 p-3.5 sm:p-4 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                      <Binary className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        {currentBinaryGrouped}
                       </span>
-                    ) : (
-                      <span className="text-slate-500 dark:text-slate-400">
-                        Live sum hidden (Pro mode)
-                      </span>
-                    )}
+                      <span className="text-slate-300 dark:text-slate-700">|</span>
+                      {showLiveSum ? (
+                        <span>
+                          <strong className="text-slate-900 dark:text-white">
+                            {activeAddendsFormula}
+                          </strong>
+                          <span className="text-slate-400 ml-2">({currentHexDisplay})</span>
+                        </span>
+                      ) : (
+                        <span className="text-slate-500 dark:text-slate-400 font-sans">
+                          Live sum hidden
+                        </span>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowLiveSum((prev) => !prev)}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition-colors whitespace-nowrap shrink-0"
+                    >
+                      {showLiveSum ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                      <span>{showLiveSum ? 'Hide Sum' : 'Show Sum'}</span>
+                    </button>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setShowLiveSum((prev) => !prev)}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
-                  >
-                    {showLiveSum ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    <span>{showLiveSum ? 'Hide Sum' : 'Show Sum'}</span>
-                  </button>
+                  {/* Visual Sum-to-Target Progress Meter */}
+                  {showLiveSum && (
+                    <div className="space-y-1">
+                      <div className="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-150 ${
+                            isSumExact
+                              ? 'bg-emerald-500'
+                              : isSumOver
+                                ? 'bg-amber-500'
+                                : 'bg-blue-600 dark:bg-cyan-400'
+                          }`}
+                          style={{ width: `${matchBarPct}%` }}
+                        />
+                      </div>
+                      {isSumOver && (
+                        <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                          Current sum ({currentBitSum}) is above target ({question.targetValue}) — toggle off a larger bit.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* Interactive Mode B: Bit Decoder (Binary -> Decimal) */}
+            {/* Interactive Mode B: Bit Decoder (Visual Binary Tiles -> Decimal Input) */}
             {question.kind === 'bin-to-dec' && (
-              <div className="max-w-xl mx-auto space-y-5">
-                {/* Optional Weight Reference Row */}
-                {showDecoderWeights && (
-                  <div
-                    className={`grid gap-1.5 text-center ${
-                      question.bitCount === 4 ? 'grid-cols-4' : 'grid-cols-8'
-                    }`}
-                  >
-                    {weights.map((w, i) => {
-                      const rawBin = question.targetValue
-                        .toString(2)
-                        .padStart(question.bitCount, '0');
-                      const isOne = rawBin[i] === '1';
-                      return (
-                        <div
-                          key={w}
-                          className={`py-2 px-1 rounded-lg border font-mono text-xs tabular-nums ${
-                            isOne
-                              ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-300 dark:border-cyan-500/40 text-blue-700 dark:text-cyan-300 font-bold'
-                              : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-800 text-slate-400'
-                          }`}
-                        >
-                          <div>{rawBin[i]}</div>
-                          <div className="text-[10px] opacity-80">{w}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+              <div className="max-w-2xl mx-auto space-y-5">
+                {/* Visual Binary Bit Pattern Strip */}
+                {(() => {
+                  const rawBin = question.targetValue
+                    .toString(2)
+                    .padStart(question.bitCount, '0');
+                  const renderDecoderTile = (bitChar: string, weight: number, keyIdx: number) => {
+                    const isOne = bitChar === '1';
+                    return (
+                      <div
+                        key={keyIdx}
+                        className={`flex flex-col items-center justify-center py-2.5 sm:py-3 px-1 rounded-xl border font-mono tabular-nums transition-colors ${
+                          isOne
+                            ? 'bg-blue-600/10 dark:bg-cyan-500/15 border-blue-500/50 dark:border-cyan-400/50 text-blue-700 dark:text-cyan-300'
+                            : 'bg-slate-50 dark:bg-slate-900/70 border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500'
+                        }`}
+                      >
+                        <span className="text-xl sm:text-2xl font-black leading-none">
+                          {bitChar}
+                        </span>
+                        {showDecoderWeights && (
+                          <span className="text-[10px] sm:text-[11px] font-bold mt-1.5 opacity-90">
+                            {weight}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  };
 
-                {/* Numeric Entry + Keypad */}
-                <form onSubmit={handleSubmitDecoder} className="space-y-4">
-                  <div className="flex items-center gap-2">
+                  if (question.bitCount === 4) {
+                    return (
+                      <div className="grid grid-cols-4 gap-2 max-w-sm mx-auto">
+                        {weights.map((w, i) => renderDecoderTile(rawBin[i], w, i))}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-2.5 sm:gap-3">
+                      <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+                        {weights
+                          .slice(0, 4)
+                          .map((w, i) => renderDecoderTile(rawBin[i], w, i))}
+                      </div>
+                      <span
+                        aria-hidden="true"
+                        className="hidden sm:inline text-slate-300 dark:text-slate-700 font-mono font-bold text-lg"
+                      >
+                        ·
+                      </span>
+                      <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+                        {weights
+                          .slice(4)
+                          .map((w, offset) => renderDecoderTile(rawBin[offset + 4], w, offset + 4))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Numeric Entry + Responsive Tactile Keypad */}
+                <form onSubmit={handleSubmitDecoder} className="max-w-md mx-auto space-y-3.5">
+                  <div className="flex items-stretch gap-2">
                     <input
                       ref={decoderInputRef}
                       type="text"
@@ -1342,20 +1539,20 @@ export const BinaryGame: React.FC = () => {
                         const digits = e.target.value.replace(/\D/g, '').slice(0, 3);
                         setDecoderInput(digits);
                       }}
-                      placeholder={`Enter Decimal (0–${question.bitCount === 4 ? 15 : 255})`}
-                      className="flex-1 px-4 py-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-center text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder={`Decimal (0–${question.bitCount === 4 ? 15 : 255})`}
+                      className="flex-1 min-w-0 px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-center text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <button
                       type="submit"
                       disabled={feedback !== null || !decoderInput.trim()}
-                      className="px-5 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-bold transition-colors whitespace-nowrap shrink-0"
+                      className="px-5 py-3 min-h-[48px] rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-bold transition-colors whitespace-nowrap shrink-0"
                     >
                       Check
                     </button>
                   </div>
 
-                  {/* Quick Tactile Keypad */}
-                  <div className="grid grid-cols-6 gap-2">
+                  {/* Mobile-Friendly Tactile Keypad */}
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
                     {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map((digit) => (
                       <button
                         key={digit}
@@ -1364,7 +1561,7 @@ export const BinaryGame: React.FC = () => {
                         onClick={() =>
                           setDecoderInput((prev) => (prev.length < 3 ? `${prev}${digit}` : prev))
                         }
-                        className="py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 font-mono text-base font-bold text-slate-800 dark:text-slate-100 active:scale-95 transition-all"
+                        className="py-2.5 min-h-[44px] rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 font-mono text-base font-bold text-slate-800 dark:text-slate-100 active:scale-95 transition-all"
                       >
                         {digit}
                       </button>
@@ -1374,7 +1571,7 @@ export const BinaryGame: React.FC = () => {
                       disabled={feedback !== null}
                       onClick={() => setDecoderInput((prev) => prev.slice(0, -1))}
                       aria-label="Backspace"
-                      className="col-span-2 py-2.5 rounded-xl bg-slate-200/70 dark:bg-slate-800/90 hover:bg-slate-300/70 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center justify-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 active:scale-95 transition-all"
+                      className="col-span-2 py-2.5 min-h-[44px] rounded-xl bg-slate-200/70 dark:bg-slate-800/90 hover:bg-slate-300/70 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center justify-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 active:scale-95 transition-all"
                     >
                       <Delete className="w-4 h-4" />
                       <span>Back</span>
@@ -1385,13 +1582,13 @@ export const BinaryGame: React.FC = () => {
             )}
 
             {/* Action Toolbar */}
-            <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-3 pt-2">
+            <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-3 pt-1">
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={handleHint}
                   disabled={feedback !== null}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border border-amber-300 dark:border-amber-700/70 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] rounded-xl text-xs font-semibold border border-amber-300 dark:border-amber-700/70 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
                 >
                   <HelpCircle className="w-4 h-4" />
                   <span>Hint (H)</span>
@@ -1401,7 +1598,7 @@ export const BinaryGame: React.FC = () => {
                   type="button"
                   onClick={handleResetBits}
                   disabled={feedback !== null}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>Clear</span>
@@ -1413,7 +1610,7 @@ export const BinaryGame: React.FC = () => {
                   type="button"
                   onClick={handleSubmitBuilder}
                   disabled={feedback !== null}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold shadow-sm transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 min-h-[42px] rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold shadow-sm transition-colors whitespace-nowrap shrink-0"
                 >
                   <span>Submit Binary</span>
                   <ArrowRight className="w-4 h-4" />
@@ -1428,7 +1625,7 @@ export const BinaryGame: React.FC = () => {
             </div>
 
             {/* Reserved Feedback Slot (prevents vertical layout shift) */}
-            <div className="max-w-4xl mx-auto min-h-[60px] flex items-center justify-center">
+            <div className="max-w-4xl mx-auto min-h-[56px] flex items-center justify-center">
               {feedback ? (
                 <div
                   role="status"
@@ -1453,8 +1650,8 @@ export const BinaryGame: React.FC = () => {
               ) : (
                 <p className="text-xs text-slate-400 dark:text-slate-500 text-center">
                   {question.kind === 'bin-to-dec'
-                    ? 'Type the decimal value and press Enter to check.'
-                    : `Toggle bit switches above (keys 1–${question.bitCount}) to build the target value.`}
+                    ? 'Enter the decimal value and press Enter to check.'
+                    : `Tap bit switches (or keys 1–${question.bitCount}) to build the target value.`}
                 </p>
               )}
             </div>
@@ -1462,7 +1659,7 @@ export const BinaryGame: React.FC = () => {
 
           {/* PAUSED OVERLAY (masks challenge so timer pause cannot be exploited) */}
           {gameState === 'PAUSED' && (
-            <div className="absolute inset-0 z-20 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-6">
+            <div className="absolute inset-0 z-20 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
               <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 text-center space-y-5 shadow-2xl">
                 <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-cyan-400 flex items-center justify-center mx-auto">
                   <Pause className="w-6 h-6" />
@@ -1479,14 +1676,14 @@ export const BinaryGame: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setGameState('PLAYING')}
-                    className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-colors"
+                    className="w-full py-2.5 px-4 min-h-[44px] rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-colors"
                   >
                     Resume Game
                   </button>
                   <button
                     type="button"
                     onClick={startGame}
-                    className="w-full py-2.5 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-sm font-semibold transition-colors"
+                    className="w-full py-2.5 px-4 min-h-[44px] rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-sm font-semibold transition-colors"
                   >
                     Restart Session
                   </button>
@@ -1496,7 +1693,7 @@ export const BinaryGame: React.FC = () => {
                       clearAllTimers();
                       setGameState('TITLE_MENU');
                     }}
-                    className="w-full py-2 px-4 rounded-xl text-xs font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
+                    className="w-full py-2 px-4 min-h-[40px] rounded-xl text-xs font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
                   >
                     Return to Mode Select
                   </button>
@@ -1510,10 +1707,10 @@ export const BinaryGame: React.FC = () => {
       {/* STATE 4: GAME OVER / SUMMARY */}
       {gameState === 'GAME_OVER' && (
         <div className="space-y-6">
-          <div className="bg-white dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-8 shadow-sm">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6 pb-6 border-b border-slate-200 dark:border-slate-800">
+          <div className="bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
+            <div className="p-5 sm:p-8 flex flex-col md:flex-row md:items-center md:justify-between gap-5 border-b border-slate-200 dark:border-slate-800">
               <div className="space-y-1.5">
-                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-blue-600 dark:text-cyan-400">
+                <div className="flex items-center gap-2 text-xs font-bold text-blue-600 dark:text-cyan-400">
                   {isNewPersonalBest ? (
                     <>
                       <Trophy className="w-4 h-4 text-amber-500" />
@@ -1544,7 +1741,7 @@ export const BinaryGame: React.FC = () => {
                 <button
                   type="button"
                   onClick={startGame}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold shadow-sm transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 min-h-[44px] rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold shadow-sm transition-colors whitespace-nowrap shrink-0"
                 >
                   <RotateCcw className="w-4 h-4" />
                   <span>Play Again</span>
@@ -1552,34 +1749,34 @@ export const BinaryGame: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setGameState('TITLE_MENU')}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-semibold transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-semibold transition-colors whitespace-nowrap shrink-0"
                 >
                   <span>Change Mode</span>
                 </button>
               </div>
             </div>
 
-            {/* Session Metrics */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-6">
-              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800">
+            {/* Session Metrics (Hairline-divided strip, no nested boxes) */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-slate-100 dark:divide-slate-800">
+              <div className="p-4 sm:p-5">
                 <div className="text-xs text-slate-500 dark:text-slate-400">Accuracy</div>
                 <div className="text-2xl font-extrabold font-mono tabular-nums text-emerald-600 dark:text-emerald-400 mt-1">
                   {sessionAccuracy}%
                 </div>
               </div>
-              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800">
+              <div className="p-4 sm:p-5">
                 <div className="text-xs text-slate-500 dark:text-slate-400">Best Streak</div>
                 <div className="text-2xl font-extrabold font-mono tabular-nums text-amber-600 dark:text-amber-400 mt-1">
                   {bestSessionStreak}
                 </div>
               </div>
-              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800">
+              <div className="p-4 sm:p-5">
                 <div className="text-xs text-slate-500 dark:text-slate-400">Avg Speed</div>
                 <div className="text-2xl font-extrabold font-mono tabular-nums text-blue-600 dark:text-cyan-400 mt-1">
                   {averageTimeSec}s
                 </div>
               </div>
-              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800">
+              <div className="p-4 sm:p-5">
                 <div className="text-xs text-slate-500 dark:text-slate-400">All-Time High</div>
                 <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white mt-1">
                   {stats.highScore.toLocaleString()}
@@ -1588,17 +1785,52 @@ export const BinaryGame: React.FC = () => {
             </div>
           </div>
 
-          {/* Round-by-Round Review Table */}
+          {/* Round-by-Round Review (Responsive mobile cards + desktop table) */}
           {history.length > 0 && (
-            <div className="bg-white dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
+            <div className="bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
               <div className="px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                   Conversion Review ({history.filter((h) => h.isCorrect).length}/{history.length} Correct)
                 </h3>
               </div>
-              <div className="overflow-x-auto max-h-80">
+
+              {/* Mobile Stacked Review Rows */}
+              <div className="sm:hidden divide-y divide-slate-100 dark:divide-slate-800/80 max-h-96 overflow-y-auto">
+                {history.map((item) => (
+                  <div key={item.round} className="p-4 space-y-2 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono font-bold text-slate-900 dark:text-white">
+                        #{item.round} · {item.targetDisplay}
+                      </span>
+                      <div className="flex items-center gap-2 font-mono tabular-nums">
+                        <span className="text-slate-400">{item.timeSpentSec.toFixed(1)}s</span>
+                        {item.isCorrect ? (
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                            +{item.pointsEarned}
+                          </span>
+                        ) : (
+                          <span className="font-bold text-rose-600 dark:text-rose-400">
+                            Missed
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-[11px] font-mono tabular-nums">
+                      <span className="text-slate-500 dark:text-slate-400">
+                        You: <strong className="text-slate-700 dark:text-slate-200">{item.userAnswer}</strong>
+                      </span>
+                      <span className="text-blue-600 dark:text-cyan-400 font-semibold">
+                        Ans: {item.correctAnswer}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop / Tablet Table */}
+              <div className="hidden sm:block overflow-x-auto max-h-80">
                 <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-slate-50 dark:bg-slate-950/70 text-slate-500 dark:text-slate-400 uppercase font-semibold sticky top-0">
+                  <thead className="bg-slate-50 dark:bg-slate-950/70 text-slate-500 dark:text-slate-400 font-semibold sticky top-0">
                     <tr>
                       <th className="py-2.5 px-4">#</th>
                       <th className="py-2.5 px-4">Prompt</th>
