@@ -230,5 +230,68 @@ service cloud.firestore {
 
       allow delete: if isValidId(paymentId) && isAdmin();
     }
+
+    function isValidLabTopology(data) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'title', 'presetId', 'devices', 'links',
+          'deviceCount', 'linkCount', 'objectivesPassed', 'objectivesTotal',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerUid', 'title', 'presetId', 'devices', 'links',
+          'deviceCount', 'linkCount', 'objectivesPassed', 'objectivesTotal',
+          'status', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && isValidId(data.presetId)
+        && data.devices is list && data.devices.size() <= 40
+        && (data.devices.size() == 0 || data.devices[0] is map)
+        && data.links is list && data.links.size() <= 80
+        && (data.links.size() == 0 || data.links[0] is map)
+        && data.deviceCount is int && data.deviceCount >= 0 && data.deviceCount <= 40 && data.deviceCount == data.devices.size()
+        && data.linkCount is int && data.linkCount >= 0 && data.linkCount <= 80 && data.linkCount == data.links.size()
+        && data.objectivesPassed is int && data.objectivesPassed >= 0 && data.objectivesPassed <= 50
+        && data.objectivesTotal is int && data.objectivesTotal >= 0 && data.objectivesTotal <= 50 && data.objectivesPassed <= data.objectivesTotal
+        && (!('status' in data) || (data.status is string && data.status in ['in_progress', 'completed']))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /labTopologies/{topologyId} {
+      allow get: if isValidId(topologyId)
+        && isVerified()
+        && isOwner(existing().ownerUid);
+
+      allow list: if isVerified()
+        && resource.data.ownerUid == request.auth.uid;
+
+      allow create: if isValidId(topologyId)
+        && isVerified()
+        && isValidLabTopology(incoming())
+        && incoming().id == topologyId
+        && incoming().ownerUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(topologyId)
+        && isVerified()
+        && isValidLabTopology(incoming())
+        && isOwner(existing().ownerUid)
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'presetId', 'devices', 'links',
+          'deviceCount', 'linkCount', 'objectivesPassed',
+          'objectivesTotal', 'status', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(topologyId)
+        && isVerified()
+        && isOwner(existing().ownerUid);
+    }
   }
 }

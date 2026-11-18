@@ -6,7 +6,7 @@ import { CourseCatalog } from './components/Courses/CourseCatalog';
 import { CoursePlayer } from './components/Courses/CoursePlayer';
 import { MyClassManager } from './components/Courses/MyClassManager';
 import { StudentDashboard } from './components/Dashboard/StudentDashboard';
-import { InteractiveCliTerminal } from './components/Lab/InteractiveCliTerminal';
+import { NetworkTopologySimulator } from './components/Lab/NetworkTopologySimulator';
 import { SubnettingCalculator } from './components/Lab/SubnettingCalculator';
 import { NumberBaseConverter } from './components/Lab/NumberBaseConverter';
 import { BinaryGame } from './components/Lab/BinaryGame';
@@ -20,12 +20,12 @@ import { LoginPage } from './components/Auth/LoginPage';
 import { PaymentGatewayModal } from './components/Billing/PaymentGatewayModal';
 import { CoursePaymentModal } from './components/Billing/CoursePaymentModal';
 import { Course, CoursePaymentRecord } from './types';
-import { WifiOff, Terminal, Network } from 'lucide-react';
+import { WifiOff, Network } from 'lucide-react';
 
 type ManagementSubTab = 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students';
 
 const AcademyApp: React.FC = () => {
-  const { isOffline, toggleManualOfflineSim, courses, isAuthenticated, authReady } = useAcademy();
+  const { currentUser, isOffline, toggleManualOfflineSim, courses, isAuthenticated, authReady } = useAcademy();
 
   const [currentTab, setCurrentTab] = useState<string>('courses');
   const [managementSubTab, setManagementSubTab] = useState<ManagementSubTab>('courses');
@@ -145,7 +145,7 @@ const AcademyApp: React.FC = () => {
         )}
 
         {/* Main Content Area: tighter margins & full width when sidebar is auto-hidden into icon rail */}
-        <main className={`flex-1 w-full transition-all duration-300 ease-in-out ${
+        <main className={`flex-1 w-full min-w-0 transition-all duration-300 ease-in-out ${
           isSidebarPinned || isSidebarOpen
             ? 'max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-7 py-6'
             : 'max-w-none px-3 sm:px-4 lg:px-5 py-5'
@@ -194,26 +194,9 @@ const AcademyApp: React.FC = () => {
           />
         )}
 
-        {/* Standalone Cisco CLI Lab Sandbox */}
+        {/* Standalone Network Topology & Cisco Lab Simulator */}
         {currentTab === 'lab-sandbox' && (
-          <div className="space-y-4">
-            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 text-white flex items-center justify-between">
-              <div>
-                <h1 className="text-base font-bold flex items-center gap-2">
-                  <Terminal className="w-5 h-5 text-cyan-400" />
-                  <span>Standalone Cisco IOS Sandbox & Dynamic Topology</span>
-                </h1>
-                <p className="text-xs text-slate-300">
-                  Full command-line router & switch virtualization. Enter configuration mode, set up OSPF Area 0, or diagnose routing loops.
-                </p>
-              </div>
-            </div>
-
-            <InteractiveCliTerminal
-              module={courses[0].modules[2]}
-              courseId={courses[0].id}
-            />
-          </div>
+          <NetworkTopologySimulator key={currentUser.id} />
         )}
 
         {/* Subnetting & VLSM Calculator */}

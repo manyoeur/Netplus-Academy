@@ -35,6 +35,7 @@ interface InteractiveQuizProps {
   continueLabel?: string;
   previousResult?: QuizResult | null;
   allowRetakes?: boolean;
+  onProgressChange?: (progress: { answeredCount: number; totalCount: number; percent: number }) => void;
   onComplete?: (result: QuizResult) => void;
   onContinue?: () => void;
   onSkip?: () => void;
@@ -57,6 +58,7 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
   continueLabel,
   previousResult,
   allowRetakes = true,
+  onProgressChange,
   onComplete,
   onContinue,
   onSkip,
@@ -96,6 +98,7 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
 
     const overallScore = totalCount > 0 ? Math.round((correctCount / totalCount) * 100) : 0;
     const accuracySoFar = answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0;
+    const completionPercent = totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0;
     const allAnswered = totalCount > 0 && answeredCount === totalCount;
     const passed = overallScore >= passingScore;
 
@@ -104,10 +107,20 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
       correctCount,
       overallScore,
       accuracySoFar,
+      completionPercent,
       allAnswered,
       passed
     };
   }, [answers, passingScore, questions, totalCount]);
+
+  // Report live question completion progress to parent container (e.g., CoursePlayer Quiz Mode)
+  useEffect(() => {
+    onProgressChange?.({
+      answeredCount: metrics.answeredCount,
+      totalCount,
+      percent: metrics.completionPercent
+    });
+  }, [metrics.answeredCount, metrics.completionPercent, onProgressChange, totalCount]);
 
   // In immediate mode, fire completion callback automatically once all questions are answered
   useEffect(() => {
@@ -329,6 +342,54 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Quiz Completion Progress Tracker */}
+        <div className="p-3 rounded-xl bg-white dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700/80 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums">
+            <span className="font-semibold text-slate-700 dark:text-slate-200">
+              Question Progress:{' '}
+              <strong className="text-slate-900 dark:text-white">
+                {metrics.answeredCount} of {totalCount}
+              </strong>{' '}
+              completed
+            </span>
+            <div className="flex items-center gap-2 font-mono text-[11px]">
+              <span className="text-slate-500 dark:text-slate-400">
+                {metrics.allAnswered
+                  ? 'All questions completed'
+                  : `${totalCount - metrics.answeredCount} remaining`}
+              </span>
+              <span aria-hidden="true" className="text-slate-300 dark:text-slate-600">·</span>
+              <span
+                className={`font-bold ${
+                  metrics.allAnswered
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-blue-600 dark:text-cyan-400'
+                }`}
+              >
+                {metrics.completionPercent}%
+              </span>
+            </div>
+          </div>
+
+          <div
+            role="progressbar"
+            aria-valuenow={metrics.answeredCount}
+            aria-valuemin={0}
+            aria-valuemax={totalCount}
+            aria-label={`Quiz progress: ${metrics.answeredCount} of ${totalCount} questions completed`}
+            className="h-2 w-full bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden"
+          >
+            <div
+              className={`h-full rounded-full transition-[width] duration-200 motion-reduce:transition-none ${
+                metrics.allAnswered
+                  ? 'bg-emerald-500 dark:bg-emerald-400'
+                  : 'bg-gradient-to-r from-blue-600 to-cyan-400'
+              }`}
+              style={{ width: `${metrics.completionPercent}%` }}
+            />
           </div>
         </div>
 

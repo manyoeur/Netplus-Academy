@@ -22,6 +22,12 @@ import {
   InvitationStatus,
   SubscriptionTier
 } from './types';
+import {
+  SavedLabRecord,
+  sanitizeDevicesForStorage,
+  sanitizeLabId,
+  sanitizeLinksForStorage
+} from './utils/labPersistence';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -452,5 +458,146 @@ export async function fetchCoursePaymentsFromFirestore(
     return null;
   }
 }
+
+export async function saveLabTopologyToFirestore(
+  record: SavedLabRecord
+): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const safeId = sanitizeLabId(record.id);
+  const safePresetId = sanitizeLabId(record.presetId);
+  const safeTitle = (record.title || 'Untitled Topology').trim().slice(0, 120) || 'Untitled Topology';
+  const safeDevices = sanitizeDevicesForStorage(record.devices);
+  const safeLinks = sanitizeLinksForStorage(record.links);
+  const objectivesTotal = Math.max(0, Math.min(50, Math.trunc(record.objectivesTotal || 0)));
+  const objectivesPassed = Math.max(
+    0,
+    Math.min(objectivesTotal, Math.trunc(record.objectivesPassed || 0))
+  );
+
+  const projectStatus = record.status === 'completed' ? 'completed' : 'in_progress';
+
+  const labPath = `labTopologies/${safeId}`;
+  const ref = doc(db, 'labTopologies', safeId);
+
+  try {
+    if (record.syncStatus === 'cloud') {
+      try {
+        await updateDoc(ref, {
+          title: safeTitle,
+          presetId: safePresetId,
+          devices: safeDevices,
+          links: safeLinks,
+          deviceCount: safeDevices.length,
+          linkCount: safeLinks.length,
+          objectivesPassed,
+          objectivesTotal,
+          status: projectStatus,
+          updatedAt: serverTimestamp()
+        });
+        return true;
+      } catch (updateErr) {
+        const msg = updateErr instanceof Error ? updateErr.message.toLowerCase() : '';
+        if (!msg.includes('not-found') && !msg.includes('no document to update')) {
+          throw updateErr;
+        }
+      }
+    }
+
+    await setDoc(ref, {
+      id: safeId,
+      ownerUid: auth.currentUser.uid,
+      title: safeTitle,
+      presetId: safePresetId,
+      devices: safeDevices,
+      links: safeLinks,
+      deviceCount: safeDevices.length,
+      linkCount: safeLinks.length,
+      objectivesPassed,
+      objectivesTotal,
+      status: projectStatus,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.WRITE, labPath);
+    }
+    return false;
+  }
+}
+
+export async function fetchLabTopologiesFromFirestore(): Promise<SavedLabRecord[] | null> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return null;
+  const currentUid = auth.currentUser.uid;
+  const path = 'labTopologies';
+  try {
+    const q = query(
+      collection(db, path),
+      where('ownerUid', '==', currentUid)
+    );
+    const snap = await getDocs(q);
+    return snap.docs
+      .filter(d => d.data()?.ownerUid === currentUid)
+      .map(d => {
+        const data = d.data() as Record<string, any>;
+        const createdAtIso =
+          data.createdAt && typeof data.createdAt.toDate === 'function'
+            ? data.createdAt.toDate().toISOString()
+            : typeof data.createdAt === 'string'
+            ? data.createdAt
+            : new Date().toISOString();
+        const updatedAtIso =
+          data.updatedAt && typeof data.updatedAt.toDate === 'function'
+            ? data.updatedAt.toDate().toISOString()
+            : typeof data.updatedAt === 'string'
+            ? data.updatedAt
+            : createdAtIso;
+
+        const devices = Array.isArray(data.devices) ? data.devices : [];
+        const links = Array.isArray(data.links) ? data.links : [];
+
+        return {
+          id: String(data.id || d.id),
+          userId: currentUid,
+          title: String(data.title || 'Saved Lab'),
+          presetId: String(data.presetId || 'blank-sandbox'),
+          devices,
+          links,
+          deviceCount: Number(data.deviceCount ?? devices.length),
+          linkCount: Number(data.linkCount ?? links.length),
+          objectivesPassed: Number(data.objectivesPassed ?? 0),
+          objectivesTotal: Number(data.objectivesTotal ?? 0),
+          status: data.status === 'completed' ? ('completed' as const) : ('in_progress' as const),
+          createdAt: createdAtIso,
+          updatedAt: updatedAtIso,
+          syncStatus: 'cloud' as const
+        };
+      });
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+    return null;
+  }
+}
+
+export async function deleteLabTopologyFromFirestore(
+  topologyId: string
+): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const safeId = sanitizeLabId(topologyId);
+  const labPath = `labTopologies/${safeId}`;
+  try {
+    await deleteDoc(doc(db, 'labTopologies', safeId));
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.DELETE, labPath);
+    }
+    return false;
+  }
+}
+
 
 

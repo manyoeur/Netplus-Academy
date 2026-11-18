@@ -331,6 +331,93 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "LabTopology": {
+      "title": "LabTopology",
+      "description": "Saved student network topology layout, device configurations, cabling, and objective progress from the Network Lab Simulator.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Saved lab topology document ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the student who owns this saved lab",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Student-defined title for the saved lab layout",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "presetId": {
+          "type": "string",
+          "description": "Base lab preset identifier",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "devices": {
+          "type": "array",
+          "description": "Configured simulated routers, switches, PCs, and servers"
+        },
+        "links": {
+          "type": "array",
+          "description": "Configured Ethernet, Fiber, and Serial cable connections"
+        },
+        "deviceCount": {
+          "type": "number",
+          "description": "Number of devices in the saved topology (0-40)"
+        },
+        "linkCount": {
+          "type": "number",
+          "description": "Number of cable links in the saved topology (0-80)"
+        },
+        "objectivesPassed": {
+          "type": "number",
+          "description": "Number of completed lab objectives"
+        },
+        "objectivesTotal": {
+          "type": "number",
+          "description": "Total number of lab objectives in the preset"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["in_progress", "completed"],
+          "description": "Project completion status (in_progress or completed)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "title",
+        "presetId",
+        "devices",
+        "links",
+        "deviceCount",
+        "linkCount",
+        "objectivesPassed",
+        "objectivesTotal",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -345,6 +432,10 @@
     "/coursePayments/{paymentId}": {
       "schema": { "$ref": "#/entities/CoursePayment" },
       "description": "Student course enrollment payment receipts and transaction records."
+    },
+    "/labTopologies/{topologyId}": {
+      "schema": { "$ref": "#/entities/LabTopology" },
+      "description": "Owner-isolated saved network topology layouts and lab progress snapshots."
     }
   }
 }

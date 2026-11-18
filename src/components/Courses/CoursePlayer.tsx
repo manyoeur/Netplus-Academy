@@ -202,6 +202,12 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const [checkpointStore, setCheckpointStore] = useState<CheckpointStore>(() =>
     readCheckpointStore(currentUser.id)
   );
+  const [liveQuizProgress, setLiveQuizProgress] = useState<{
+    quizKey: string;
+    answeredCount: number;
+    totalCount: number;
+    percent: number;
+  } | null>(null);
 
   // Reading scroll progress state
   const moduleContentRef = useRef<HTMLDivElement>(null);
@@ -223,6 +229,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     setCheckpointStore(readCheckpointStore(currentUser.id));
     setPlayerMode('study');
     setQuizOrigin('manual');
+    setLiveQuizProgress(null);
     const lastModId = freshStore[course.id]?.lastModuleId;
     const foundIdx = lastModId ? course.modules.findIndex(m => m.id === lastModId) : -1;
     setActiveModuleIndex(foundIdx >= 0 ? foundIdx : 0);
@@ -476,6 +483,42 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   );
 
   const activeModuleQuiz = moduleQuizzes[activeModuleIndex] || null;
+  const activeQuizKey =
+    activeModule && activeModuleQuiz
+      ? `quiz-mode:${course.id}:${activeModule.id}:${activeModuleQuiz.id}`
+      : '';
+
+  const handleActiveQuizProgressChange = useCallback(
+    (progress: { answeredCount: number; totalCount: number; percent: number }) => {
+      if (!activeQuizKey) return;
+      setLiveQuizProgress(prev => {
+        if (
+          prev &&
+          prev.quizKey === activeQuizKey &&
+          prev.answeredCount === progress.answeredCount &&
+          prev.totalCount === progress.totalCount &&
+          prev.percent === progress.percent
+        ) {
+          return prev;
+        }
+        return {
+          quizKey: activeQuizKey,
+          answeredCount: progress.answeredCount,
+          totalCount: progress.totalCount,
+          percent: progress.percent
+        };
+      });
+    },
+    [activeQuizKey]
+  );
+
+  const activeQuizTotal = activeModuleQuiz?.questions.length ?? 0;
+  const activeQuizCompleted =
+    liveQuizProgress && liveQuizProgress.quizKey === activeQuizKey
+      ? liveQuizProgress.answeredCount
+      : 0;
+  const activeQuizPercent =
+    activeQuizTotal > 0 ? Math.round((activeQuizCompleted / activeQuizTotal) * 100) : 0;
 
   const quizMastery = useMemo(() => {
     const courseResults = checkpointStore[course.id] || {};
@@ -646,7 +689,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
               {playerMode === 'quiz' && activeModuleQuiz
-                ? `Quiz Mode · Module ${activeModuleIndex + 1} of ${course.modules.length}: ${activeModule.title}`
+                ? `Quiz Mode · Module ${activeModuleIndex + 1} of ${course.modules.length}: ${activeModule.title} · ${activeQuizCompleted} of ${activeQuizTotal} questions completed`
                 : activeBreadcrumb
                 ? `${activeBreadcrumb.chapterNumber} ${activeBreadcrumb.chapterTitle} › ${activeBreadcrumb.sectionNumber} ${activeBreadcrumb.mainContentTitle} › ${activeBreadcrumb.itemNumber} ${activeModule.title} · Scroll ${currentReadingPercent}%`
                 : `Module ${activeModuleIndex + 1} of ${course.modules.length}: ${activeModule.title} · Scroll ${currentReadingPercent}%`}
@@ -1266,6 +1309,45 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                   </button>
                 </div>
 
+                {/* Active Quiz Progress Tracker */}
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums">
+                    <span className="font-semibold text-slate-700 dark:text-slate-200">
+                      Active Quiz Progress:{' '}
+                      <strong className="text-slate-900 dark:text-white">
+                        {activeQuizCompleted} of {activeQuizTotal}
+                      </strong>{' '}
+                      questions completed
+                    </span>
+                    <span
+                      className={`font-mono text-[11px] font-bold ${
+                        activeQuizTotal > 0 && activeQuizCompleted === activeQuizTotal
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-blue-600 dark:text-cyan-400'
+                      }`}
+                    >
+                      {activeQuizPercent}%
+                    </span>
+                  </div>
+                  <div
+                    role="progressbar"
+                    aria-valuenow={activeQuizCompleted}
+                    aria-valuemin={0}
+                    aria-valuemax={activeQuizTotal}
+                    aria-label={`Active module quiz progress: ${activeQuizCompleted} of ${activeQuizTotal} questions completed`}
+                    className="h-1.5 w-full bg-slate-200 dark:bg-slate-900 rounded-full overflow-hidden"
+                  >
+                    <div
+                      className={`h-full rounded-full transition-[width] duration-200 motion-reduce:transition-none ${
+                        activeQuizTotal > 0 && activeQuizCompleted === activeQuizTotal
+                          ? 'bg-emerald-500 dark:bg-emerald-400'
+                          : 'bg-gradient-to-r from-blue-600 to-cyan-400'
+                      }`}
+                      style={{ width: `${activeQuizPercent}%` }}
+                    />
+                  </div>
+                </div>
+
                 {/* Module-by-Module Quiz Switcher */}
                 <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
                   {course.modules.map((mod, idx) => {
@@ -1312,7 +1394,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               </div>
 
               <InteractiveQuiz
-                quizKey={`quiz-mode:${course.id}:${activeModule.id}:${activeModuleQuiz.id}`}
+                quizKey={activeQuizKey}
                 title={activeModuleQuiz.title}
                 subtitle={activeModuleQuiz.subtitle}
                 questions={activeModuleQuiz.questions}
@@ -1320,6 +1402,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 mode="quiz-mode"
                 allowModeToggle={true}
                 previousModuleTitle={activeModule.title}
+                onProgressChange={handleActiveQuizProgressChange}
                 nextModuleTitle={
                   activeModuleIndex < course.modules.length - 1
                     ? course.modules[activeModuleIndex + 1]?.title

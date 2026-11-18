@@ -8,7 +8,6 @@ import {
   BarChart3,
   Settings,
   CreditCard,
-  Terminal,
   Calculator,
   X,
   Search,
@@ -310,12 +309,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         {
           id: 'lab-sandbox',
-          label: 'Cisco CLI Sandbox',
-          icon: Terminal,
+          label: 'Network Lab Simulator',
+          icon: Network,
           accentText: 'text-cyan-600 dark:text-cyan-400',
           accentBg: 'bg-cyan-50 dark:bg-cyan-950/60',
           accentBar: 'bg-cyan-500',
-          tag: 'IOS'
+          tag: 'SIM'
         },
         {
           id: 'subnet-calc',
@@ -440,7 +439,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const quickJumpItems = [
     { id: 'courses', label: 'Course Catalog & Syllabus', category: 'Curriculum', icon: Layers },
     { id: 'dashboard', label: 'My Enrolled Courses & Progress', category: 'Learning', icon: UserCheck },
-    { id: 'lab-sandbox', label: 'Cisco IOS CLI Terminal Simulator', category: 'Hands-on Labs', icon: Terminal },
+    { id: 'lab-sandbox', label: 'Network Topology & Cisco Lab Simulator', category: 'Hands-on Labs', icon: Network },
     { id: 'subnet-calc', label: 'Subnetting & VLSM Architecture Calculator', category: 'Hands-on Labs', icon: Calculator },
     { id: 'base-converter', label: 'Binary, Decimal & Hexadecimal Converter', category: 'Hands-on Labs', icon: Binary },
     { id: 'binary-game', label: 'Binary Conversion Practice Game', category: 'Hands-on Labs', icon: Gamepad2 },
