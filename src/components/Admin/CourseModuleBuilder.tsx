@@ -60,7 +60,9 @@ type DragPayload =
 type SelectedInspectorTarget =
   | { kind: 'grading' }
   | { kind: 'quiz-module'; moduleId: string }
-  | { kind: 'checkpoint'; fromModuleId: string; toModuleId: string };
+  | { kind: 'checkpoint'; fromModuleId: string; toModuleId: string }
+  | { kind: 'chapter-content'; chapterId: string }
+  | { kind: 'section-content'; chapterId: string; sectionId: string };
 
 const DEFAULT_GRADING_CRITERIA: CourseGradingCriteria = {
   overallPassingScore: 80,
@@ -461,6 +463,39 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     questions: []
   });
 
+  const selectedHierarchyChapter = useMemo(() => {
+    if (
+      inspectorTarget.kind !== 'chapter-content' &&
+      inspectorTarget.kind !== 'section-content'
+    ) {
+      return null;
+    }
+    return (
+      hierarchyTree.find(c => c.id === inspectorTarget.chapterId) ||
+      hierarchyTree[0] ||
+      null
+    );
+  }, [hierarchyTree, inspectorTarget]);
+
+  const selectedHierarchySection = useMemo(() => {
+    if (inspectorTarget.kind !== 'section-content' || !selectedHierarchyChapter) return null;
+    return (
+      selectedHierarchyChapter.mainContents.find(
+        mc => mc.id === inspectorTarget.sectionId
+      ) || null
+    );
+  }, [inspectorTarget, selectedHierarchyChapter]);
+
+  const [hierarchyContentDraft, setHierarchyContentDraft] = useState<{
+    title: string;
+    summary: string;
+    contentMarkdown: string;
+  }>({
+    title: '',
+    summary: '',
+    contentMarkdown: ''
+  });
+
   useEffect(() => {
     if (inspectorTarget.kind === 'quiz-module' && selectedQuizModule) {
       setQuizDraft({
@@ -482,8 +517,32 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
         passingScore: fromMod.checkpointQuiz?.passingScore ?? resolved?.passingScore ?? gradingForm.quizPassingScore,
         questions: sourceQuestions.map(q => ({ ...q, options: [...q.options] }))
       });
+    } else if (inspectorTarget.kind === 'chapter-content' && selectedHierarchyChapter) {
+      setHierarchyContentDraft({
+        title: selectedHierarchyChapter.title,
+        summary: selectedHierarchyChapter.summary || '',
+        contentMarkdown: selectedHierarchyChapter.contentMarkdown || ''
+      });
+    } else if (
+      inspectorTarget.kind === 'section-content' &&
+      selectedHierarchyChapter &&
+      selectedHierarchySection
+    ) {
+      setHierarchyContentDraft({
+        title: selectedHierarchySection.title,
+        summary: selectedHierarchySection.summary || '',
+        contentMarkdown: selectedHierarchySection.contentMarkdown || ''
+      });
     }
-  }, [course, gradingForm.quizPassingScore, inspectorTarget, selectedCheckpointPair, selectedQuizModule]);
+  }, [
+    course,
+    gradingForm.quizPassingScore,
+    inspectorTarget,
+    selectedCheckpointPair,
+    selectedHierarchyChapter,
+    selectedHierarchySection,
+    selectedQuizModule
+  ]);
 
   const weightsTotal =
     gradingForm.weights.quizzes +
@@ -809,6 +868,71 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     }));
   };
 
+  const handleSaveHierarchyContentDraft = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedHierarchyChapter) return;
+    const baseChapters = toChapterConfig();
+    const cleanTitle = hierarchyContentDraft.title.trim();
+    const cleanSummary = hierarchyContentDraft.summary.trim();
+
+    if (inspectorTarget.kind === 'chapter-content') {
+      const targetTitle = cleanTitle || selectedHierarchyChapter.title;
+      const oldTitle = selectedHierarchyChapter.title;
+      const nextChapters = baseChapters.map(ch =>
+        ch.id === selectedHierarchyChapter.id
+          ? {
+              ...ch,
+              title: targetTitle,
+              summary: cleanSummary || undefined,
+              contentMarkdown: hierarchyContentDraft.contentMarkdown
+            }
+          : ch
+      );
+      const updatedModules =
+        oldTitle.toLowerCase() !== targetTitle.toLowerCase()
+          ? course.modules.map(m =>
+              (m.chapterTitle || '').trim().toLowerCase() === oldTitle.toLowerCase()
+                ? { ...m, chapterTitle: targetTitle }
+                : m
+            )
+          : course.modules;
+      updateCourse(course.id, { chapters: nextChapters, modules: updatedModules });
+      onToast(`Saved content for ${selectedHierarchyChapter.chapterNumber} ${targetTitle}`);
+    } else if (inspectorTarget.kind === 'section-content' && selectedHierarchySection) {
+      const targetSecTitle = cleanTitle || selectedHierarchySection.title;
+      const oldSecTitle = selectedHierarchySection.title;
+      const nextChapters = baseChapters.map(ch =>
+        ch.id === selectedHierarchyChapter.id
+          ? {
+              ...ch,
+              mainContents: ch.mainContents.map(mc =>
+                mc.id === selectedHierarchySection.id
+                  ? {
+                      ...mc,
+                      title: targetSecTitle,
+                      summary: cleanSummary || undefined,
+                      contentMarkdown: hierarchyContentDraft.contentMarkdown
+                    }
+                  : mc
+              )
+            }
+          : ch
+      );
+      const updatedModules =
+        oldSecTitle.toLowerCase() !== targetSecTitle.toLowerCase()
+          ? course.modules.map(m =>
+              (m.chapterTitle || '').trim().toLowerCase() ===
+                selectedHierarchyChapter.title.toLowerCase() &&
+              (m.mainContentTitle || '').trim().toLowerCase() === oldSecTitle.toLowerCase()
+                ? { ...m, mainContentTitle: targetSecTitle }
+                : m
+            )
+          : course.modules;
+      updateCourse(course.id, { chapters: nextChapters, modules: updatedModules });
+      onToast(`Saved content for ${selectedHierarchySection.sectionNumber} ${targetSecTitle}`);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Builder Header Bar */}
@@ -1100,6 +1224,23 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                             </button>
                             <button
                               type="button"
+                              onClick={() =>
+                                setInspectorTarget({ kind: 'chapter-content', chapterId: ch.id })
+                              }
+                              className={`p-1 rounded-md transition-colors ${
+                                inspectorTarget.kind === 'chapter-content' &&
+                                inspectorTarget.chapterId === ch.id
+                                  ? 'bg-blue-600 text-white'
+                                  : ch.contentMarkdown?.trim()
+                                  ? 'text-blue-600 dark:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                                  : 'text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 opacity-70 group-hover:opacity-100'
+                              }`}
+                              title="Write chapter content"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => {
                                 setEditingChapterId(ch.id);
                                 setEditingChapterDraft(ch.title);
@@ -1293,6 +1434,31 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                         title="Add course content directly into this section"
                                       >
                                         + Item
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedSection({
+                                            chapterTitle: ch.title,
+                                            mainContentTitle: mc.title
+                                          });
+                                          setInspectorTarget({
+                                            kind: 'section-content',
+                                            chapterId: ch.id,
+                                            sectionId: mc.id
+                                          });
+                                        }}
+                                        className={`p-1 rounded transition-colors ${
+                                          inspectorTarget.kind === 'section-content' &&
+                                          inspectorTarget.sectionId === mc.id
+                                            ? 'bg-blue-600 text-white'
+                                            : mc.contentMarkdown?.trim()
+                                            ? 'text-blue-600 dark:text-cyan-400 hover:bg-white dark:hover:bg-slate-900'
+                                            : 'text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 opacity-60 group-hover/sec:opacity-100'
+                                        }`}
+                                        title="Write section content"
+                                      >
+                                        <FileText className="w-3 h-3" />
                                       </button>
                                       <button
                                         type="button"
@@ -1822,17 +1988,41 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
         {/* Zone 3: Automated Grading Criteria & Inline Assessment Inspector */}
         <aside className="xl:col-span-4 p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
           {/* Inspector Mode Tabs */}
-          <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
             <button
               type="button"
               onClick={() => setInspectorTarget({ kind: 'grading' })}
-              className={`flex-1 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
                 inspectorTarget.kind === 'grading'
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
             >
-              Automated Grading
+              Grading
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const firstCh = hierarchyTree[0];
+                const firstSec = firstCh?.mainContents[0];
+                if (firstCh && firstSec) {
+                  setInspectorTarget({
+                    kind: 'section-content',
+                    chapterId: firstCh.id,
+                    sectionId: firstSec.id
+                  });
+                } else if (firstCh) {
+                  setInspectorTarget({ kind: 'chapter-content', chapterId: firstCh.id });
+                }
+              }}
+              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                inspectorTarget.kind === 'chapter-content' ||
+                inspectorTarget.kind === 'section-content'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              Outline Content
             </button>
             <button
               type="button"
@@ -1848,8 +2038,8 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                   });
                 }
               }}
-              className={`flex-1 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
-                inspectorTarget.kind !== 'grading'
+              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                inspectorTarget.kind === 'quiz-module' || inspectorTarget.kind === 'checkpoint'
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
@@ -2112,6 +2302,80 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
               >
                 <Save className="w-3.5 h-3.5" />
                 <span>Save Automated Grading Criteria</span>
+              </button>
+            </form>
+          ) : (inspectorTarget.kind === 'chapter-content' || inspectorTarget.kind === 'section-content') && selectedHierarchyChapter ? (
+            /* Level 1 Chapter & Level 2 Section Content Editor */
+            <form onSubmit={handleSaveHierarchyContentDraft} className="space-y-3.5 text-xs">
+              <div className="space-y-1">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-blue-600 dark:text-cyan-400 font-bold">
+                  {inspectorTarget.kind === 'section-content'
+                    ? `Second-Level Section · ${selectedHierarchySection?.sectionNumber || ''}`
+                    : `First-Level Chapter · ${selectedHierarchyChapter.chapterNumber}`}
+                </span>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {inspectorTarget.kind === 'section-content' && selectedHierarchySection
+                    ? `Writing content inside "${selectedHierarchyChapter.chapterNumber} ${selectedHierarchyChapter.title} › ${selectedHierarchySection.sectionNumber} ${selectedHierarchySection.title}"`
+                    : `Writing chapter-level overview content for "${selectedHierarchyChapter.chapterNumber} ${selectedHierarchyChapter.title}"`}
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {inspectorTarget.kind === 'section-content' ? 'Section Title' : 'Chapter Title'}
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={hierarchyContentDraft.title}
+                  onChange={(e) =>
+                    setHierarchyContentDraft(prev => ({ ...prev, title: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Summary
+                </label>
+                <input
+                  type="text"
+                  value={hierarchyContentDraft.summary}
+                  onChange={(e) =>
+                    setHierarchyContentDraft(prev => ({ ...prev, summary: e.target.value }))
+                  }
+                  placeholder="Concise summary for learners..."
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Content (Markdown Supported)
+                </label>
+                <textarea
+                  rows={10}
+                  value={hierarchyContentDraft.contentMarkdown}
+                  onChange={(e) =>
+                    setHierarchyContentDraft(prev => ({
+                      ...prev,
+                      contentMarkdown: e.target.value
+                    }))
+                  }
+                  placeholder="Write chapter or section notes, architectural details, and key takeaways..."
+                  className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-700 font-mono text-xs leading-relaxed text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>
+                  Save {inspectorTarget.kind === 'section-content' ? 'Section' : 'Chapter'} Content
+                </span>
               </button>
             </form>
           ) : (

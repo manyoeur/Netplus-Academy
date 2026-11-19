@@ -26,7 +26,8 @@ import {
   BookOpen,
   CheckCircle2,
   Plus,
-  SquareStack
+  SquareStack,
+  Edit3
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course } from '../../types';
@@ -35,6 +36,7 @@ import { CourseThumbnail } from './CourseThumbnail';
 import { InteractiveQuiz, QuizResult } from './InteractiveQuiz';
 import { VideoLecturePlayer } from './VideoLecturePlayer';
 import { PostModuleQuiz } from './PostModuleQuiz';
+import { HierarchyContentWorkspace } from './HierarchyContentWorkspace';
 import { PersonalFlashcardModal } from '../Flashcards/PersonalFlashcardModal';
 import {
   getBetweenModuleQuiz,
@@ -43,7 +45,8 @@ import {
 } from '../../data/checkpointQuizzes';
 import {
   resolveCourseHierarchy,
-  getModuleSectionBreadcrumb
+  getModuleSectionBreadcrumb,
+  toChapterConfigFromHierarchy
 } from '../../utils/courseHierarchy';
 import {
   resolveCourseEnrollment,
@@ -168,7 +171,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     enrollInCourse,
     recordStudyTime,
     personalFlashcards,
-    savePersonalFlashcard
+    savePersonalFlashcard,
+    updateCourse
   } = useAcademy();
   const course = courses.find(c => c.id === courseId) || courses[0];
 
@@ -242,6 +246,12 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
   // Player mode: 'study' (module lessons/labs) or 'quiz' (per-module MCQ Quiz Mode)
   const [playerMode, setPlayerMode] = useState<'study' | 'quiz'>('study');
+  const [selectedOutlineNode, setSelectedOutlineNode] = useState<
+    | { level: 'module' }
+    | { level: 'chapter'; chapterId: string }
+    | { level: 'section'; chapterId: string; sectionId: string }
+  >({ level: 'module' });
+  const [openHierarchyEditorOnSelect, setOpenHierarchyEditorOnSelect] = useState<boolean>(false);
   const [quizOrigin, setQuizOrigin] = useState<'manual' | 'next-step'>('manual');
   const [checkpointStore, setCheckpointStore] = useState<CheckpointStore>(() =>
     readCheckpointStore(currentUser.id)
@@ -282,12 +292,14 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     setPostQuizModalModuleIndex(null);
     setInstructorMasteryBypass(false);
     setPlayerMode('study');
+    setSelectedOutlineNode({ level: 'module' });
+    setOpenHierarchyEditorOnSelect(false);
     setQuizOrigin('manual');
     setLiveQuizProgress(null);
     const lastModId = freshStore[course.id]?.lastModuleId;
     const foundIdx = lastModId ? course.modules.findIndex(m => m.id === lastModId) : -1;
     setActiveModuleIndex(foundIdx >= 0 ? foundIdx : 0);
-  }, [currentUser.id, course.id, course.modules]);
+  }, [currentUser.id, course.id, course.modules.length]);
 
   const computeScrollMetrics = useCallback(() => {
     const el = moduleContentRef.current;
@@ -359,7 +371,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
   // Save active module reference & restore its saved scroll position whenever course or module changes
   useEffect(() => {
-    if (!activeModule || playerMode === 'quiz') return;
+    if (!activeModule || playerMode === 'quiz' || selectedOutlineNode.level !== 'module') return;
 
     isRestoringRef.current = true;
     setResumedFromPercent(null);
@@ -442,7 +454,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
   // Listen for scroll events on the active module and persist reading progress to localStorage
   useEffect(() => {
-    if (!activeModule || playerMode === 'quiz') return;
+    if (!activeModule || playerMode === 'quiz' || selectedOutlineNode.level !== 'module') return;
 
     let pendingMetrics: { scrollY: number; scrollRatio: number; percent: number } | null = null;
 
@@ -499,17 +511,17 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       }
       writePendingToStorage();
     };
-  }, [course.id, activeModule?.id, currentUser.id, playerMode, computeScrollMetrics, persistModuleReading]);
+  }, [course.id, activeModule?.id, currentUser.id, playerMode, selectedOutlineNode.level, computeScrollMetrics, persistModuleReading]);
 
   const flushCurrentModuleProgress = useCallback(() => {
-    if (!activeModule || isRestoringRef.current || playerMode === 'quiz') return;
+    if (!activeModule || isRestoringRef.current || playerMode === 'quiz' || selectedOutlineNode.level !== 'module') return;
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
     const metrics = computeScrollMetrics();
     persistModuleReading(course.id, activeModule.id, metrics);
-  }, [activeModule, playerMode, course.id, computeScrollMetrics, persistModuleReading]);
+  }, [activeModule, playerMode, selectedOutlineNode.level, course.id, computeScrollMetrics, persistModuleReading]);
 
   const handleJumpToTop = () => {
     setResumedFromPercent(null);
@@ -687,8 +699,138 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     [course.id, currentUser.id, moduleQuizzes, updateStudentQuizAverage]
   );
 
+  const activeHierarchyChapter = useMemo(() => {
+    if (selectedOutlineNode.level === 'module') return null;
+    return (
+      hierarchyTree.find(ch => ch.id === selectedOutlineNode.chapterId) ||
+      hierarchyTree[0] ||
+      null
+    );
+  }, [hierarchyTree, selectedOutlineNode]);
+
+  const activeHierarchySection = useMemo(() => {
+    if (selectedOutlineNode.level !== 'section' || !activeHierarchyChapter) return null;
+    return (
+      activeHierarchyChapter.mainContents.find(
+        sec => sec.id === selectedOutlineNode.sectionId
+      ) || null
+    );
+  }, [activeHierarchyChapter, selectedOutlineNode]);
+
+  const isViewingHierarchyContent =
+    playerMode === 'study' &&
+    selectedOutlineNode.level !== 'module' &&
+    Boolean(activeHierarchyChapter);
+
+  const handleSelectHierarchyChapter = (chapterId: string, openEditor = false) => {
+    flushCurrentModuleProgress();
+    setPlayerMode('study');
+    setQuizOrigin('manual');
+    setExpandedChapters(prev => ({ ...prev, [chapterId]: true }));
+    setOpenHierarchyEditorOnSelect(openEditor);
+    setSelectedOutlineNode({ level: 'chapter', chapterId });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSelectHierarchySection = (
+    chapterId: string,
+    sectionId: string,
+    openEditor = false
+  ) => {
+    flushCurrentModuleProgress();
+    setPlayerMode('study');
+    setQuizOrigin('manual');
+    setExpandedChapters(prev => ({ ...prev, [chapterId]: true }));
+    setExpandedSections(prev => ({ ...prev, [sectionId]: true }));
+    setOpenHierarchyEditorOnSelect(openEditor);
+    setSelectedOutlineNode({ level: 'section', chapterId, sectionId });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSaveHierarchyContent = (payload: {
+    level: 'chapter' | 'section';
+    chapterId: string;
+    sectionId?: string;
+    title: string;
+    summary: string;
+    contentMarkdown: string;
+  }) => {
+    const baseChapters = toChapterConfigFromHierarchy(hierarchyTree);
+    let updatedModules = course.modules;
+    let savedLabel = payload.title;
+
+    if (payload.level === 'chapter') {
+      const targetCh = baseChapters.find(ch => ch.id === payload.chapterId);
+      const oldTitle = targetCh?.title;
+      const nextChapters = baseChapters.map(ch =>
+        ch.id === payload.chapterId
+          ? {
+              ...ch,
+              title: payload.title,
+              summary: payload.summary || undefined,
+              contentMarkdown: payload.contentMarkdown
+            }
+          : ch
+      );
+      if (oldTitle && oldTitle.trim().toLowerCase() !== payload.title.trim().toLowerCase()) {
+        updatedModules = course.modules.map(m =>
+          (m.chapterTitle || '').trim().toLowerCase() === oldTitle.trim().toLowerCase()
+            ? { ...m, chapterTitle: payload.title }
+            : m
+        );
+      }
+      updateCourse(course.id, { chapters: nextChapters, modules: updatedModules });
+      const chNum =
+        hierarchyTree.find(c => c.id === payload.chapterId)?.chapterNumber || '';
+      savedLabel = `${chNum ? `${chNum} ` : ''}${payload.title}`;
+    } else if (payload.level === 'section' && payload.sectionId) {
+      const targetCh = baseChapters.find(ch => ch.id === payload.chapterId);
+      const targetSec = targetCh?.mainContents.find(mc => mc.id === payload.sectionId);
+      const oldSecTitle = targetSec?.title;
+      const nextChapters = baseChapters.map(ch =>
+        ch.id === payload.chapterId
+          ? {
+              ...ch,
+              mainContents: ch.mainContents.map(mc =>
+                mc.id === payload.sectionId
+                  ? {
+                      ...mc,
+                      title: payload.title,
+                      summary: payload.summary || undefined,
+                      contentMarkdown: payload.contentMarkdown
+                    }
+                  : mc
+              )
+            }
+          : ch
+      );
+      if (
+        targetCh &&
+        oldSecTitle &&
+        oldSecTitle.trim().toLowerCase() !== payload.title.trim().toLowerCase()
+      ) {
+        updatedModules = course.modules.map(m =>
+          (m.chapterTitle || '').trim().toLowerCase() === targetCh.title.trim().toLowerCase() &&
+          (m.mainContentTitle || '').trim().toLowerCase() === oldSecTitle.trim().toLowerCase()
+            ? { ...m, mainContentTitle: payload.title }
+            : m
+        );
+      }
+      updateCourse(course.id, { chapters: nextChapters, modules: updatedModules });
+      const secNum =
+        hierarchyTree
+          .find(c => c.id === payload.chapterId)
+          ?.mainContents.find(s => s.id === payload.sectionId)?.sectionNumber || '';
+      savedLabel = `${secNum ? `${secNum} ` : ''}${payload.title}`;
+    }
+
+    setFlashcardSavedToast(`Saved content for ${savedLabel}`);
+    window.setTimeout(() => setFlashcardSavedToast(null), 3200);
+  };
+
   const handleOpenModuleQuiz = (moduleIndex: number, origin: 'manual' | 'next-step' = 'manual') => {
     flushCurrentModuleProgress();
+    setSelectedOutlineNode({ level: 'module' });
     setActiveModuleIndex(moduleIndex);
     setQuizOrigin(origin);
     setPlayerMode('quiz');
@@ -696,11 +838,12 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   };
 
   const handleSwitchPlayerMode = (nextMode: 'study' | 'quiz') => {
-    if (nextMode === playerMode) return;
+    if (nextMode === playerMode && selectedOutlineNode.level === 'module') return;
     if (nextMode === 'quiz') {
       handleOpenModuleQuiz(activeModuleIndex, 'manual');
     } else {
       setQuizOrigin('manual');
+      setSelectedOutlineNode({ level: 'module' });
       setPlayerMode('study');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -708,6 +851,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
   const handleSelectModule = (idx: number) => {
     flushCurrentModuleProgress();
+    setSelectedOutlineNode({ level: 'module' });
     setQuizOrigin('manual');
     setActiveModuleIndex(idx);
     if (playerMode === 'quiz') {
@@ -836,6 +980,10 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
               {playerMode === 'quiz' && activeModuleQuiz
                 ? `Quiz Mode · Module ${activeModuleIndex + 1} of ${course.modules.length}: ${activeModule.title} · ${activeQuizCompleted} of ${activeQuizTotal} questions completed`
+                : isViewingHierarchyContent && activeHierarchyChapter
+                ? activeHierarchySection
+                  ? `${activeHierarchyChapter.chapterNumber} ${activeHierarchyChapter.title} › ${activeHierarchySection.sectionNumber} ${activeHierarchySection.title} · Section Content`
+                  : `${activeHierarchyChapter.chapterNumber} ${activeHierarchyChapter.title} · Chapter Content`
                 : activeBreadcrumb
                 ? `${activeBreadcrumb.chapterNumber} ${activeBreadcrumb.chapterTitle} › ${activeBreadcrumb.sectionNumber} ${activeBreadcrumb.mainContentTitle} › ${activeBreadcrumb.itemNumber} ${activeModule.title} · Scroll ${currentReadingPercent}%`
                 : `Module ${activeModuleIndex + 1} of ${course.modules.length}: ${activeModule.title} · Scroll ${currentReadingPercent}%`}
@@ -971,6 +1119,11 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           <div className="divide-y divide-slate-200/80 dark:divide-slate-800">
             {hierarchyTree.map((chapter) => {
               const isChapterOpen = Boolean(expandedChapters[chapter.id]);
+              const isChapterSelected =
+                playerMode === 'study' &&
+                selectedOutlineNode.level === 'chapter' &&
+                selectedOutlineNode.chapterId === chapter.id;
+              const chapterHasContent = Boolean(chapter.contentMarkdown?.trim());
               const chapterModules = chapter.mainContents.flatMap(mc => mc.items);
               const chapterDoneCount = chapterModules.filter(item =>
                 isModuleCompleted(item.module.id)
@@ -978,54 +1131,141 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
               return (
                 <div key={chapter.id} className="py-2.5 first:pt-1 last:pb-1">
-                  {/* Level 1: Chapter Header (e.g. "1.0 Chapter Title   ^") */}
-                  <button
-                    type="button"
-                    onClick={() => toggleChapterAccordion(chapter.id)}
-                    aria-expanded={isChapterOpen}
-                    className="w-full py-1.5 text-left flex items-center justify-between gap-2 group"
+                  {/* Level 1: Chapter Header (click title to read/write chapter content, chevron to expand/collapse) */}
+                  <div
+                    className={`group flex items-start justify-between gap-1.5 px-2 py-1.5 rounded-lg transition-colors ${
+                      isChapterSelected
+                        ? 'bg-slate-100 dark:bg-slate-800/90'
+                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                    }`}
                   >
-                    <span className="text-[13px] font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-cyan-400 leading-snug transition-colors">
-                      <span className="tabular-nums mr-1.5">{chapter.chapterNumber}</span>
-                      {chapter.title}
-                    </span>
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleSelectHierarchyChapter(chapter.id, false)}
+                      className="flex-1 min-w-0 text-left"
+                      title="Open chapter content"
+                    >
+                      <span
+                        className={`text-[13px] font-bold leading-snug transition-colors block ${
+                          isChapterSelected
+                            ? 'text-blue-600 dark:text-cyan-400'
+                            : 'text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-cyan-400'
+                        }`}
+                      >
+                        <span className="tabular-nums mr-1.5">{chapter.chapterNumber}</span>
+                        {chapter.title}
+                      </span>
+                    </button>
+
+                    <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                      {chapterHasContent && (
+                        <FileText
+                          className="w-3 h-3 text-blue-600 dark:text-cyan-400 shrink-0"
+                          aria-label="Chapter has written content"
+                        />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleSelectHierarchyChapter(chapter.id, true)}
+                        className="p-1 rounded-md text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover:opacity-100 transition-opacity"
+                        title={`Write or edit content for ${chapter.chapterNumber} ${chapter.title}`}
+                        aria-label={`Write content for ${chapter.chapterNumber} ${chapter.title}`}
+                      >
+                        <Edit3 className="w-3 h-3" />
+                      </button>
                       <span className="text-[10px] font-mono tabular-nums text-slate-400">
                         {chapterDoneCount}/{chapterModules.length}
                       </span>
-                      {isChapterOpen ? (
-                        <ChevronUp className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => toggleChapterAccordion(chapter.id)}
+                        aria-expanded={isChapterOpen}
+                        aria-label={isChapterOpen ? `Collapse ${chapter.title}` : `Expand ${chapter.title}`}
+                        className="p-0.5 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                      >
+                        {isChapterOpen ? (
+                          <ChevronUp className="w-4 h-4" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
+                      </button>
                     </div>
-                  </button>
+                  </div>
 
                   {/* Level 2: Main Contents List */}
                   {isChapterOpen && (
                     <div className="mt-1 space-y-2">
                       {chapter.mainContents.map((section) => {
                         const isSectionOpen = Boolean(expandedSections[section.id]);
+                        const isSectionSelected =
+                          playerMode === 'study' &&
+                          selectedOutlineNode.level === 'section' &&
+                          selectedOutlineNode.sectionId === section.id;
+                        const sectionHasContent = Boolean(section.contentMarkdown?.trim());
 
                         return (
                           <div key={section.id} className="space-y-1">
-                            {/* Level 2 Subheader (e.g. "1.1 Section Title") */}
-                            <button
-                              type="button"
-                              onClick={() => toggleSectionAccordion(section.id)}
-                              aria-expanded={isSectionOpen}
-                              className="w-full pl-2.5 pr-1 py-1 text-left flex items-center justify-between gap-2 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                            {/* Level 2 Subheader (click title to read/write section content, chevron to expand/collapse) */}
+                            <div
+                              className={`group/sec flex items-start justify-between gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-md transition-colors ${
+                                isSectionSelected
+                                  ? 'bg-slate-100 dark:bg-slate-800/90'
+                                  : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                              }`}
                             >
-                              <span className="text-[12px] font-bold text-slate-800 dark:text-slate-200 leading-snug">
-                                <span className="tabular-nums mr-1.5">{section.sectionNumber}</span>
-                                {section.title}
-                              </span>
-                              {isSectionOpen ? (
-                                <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                              ) : (
-                                <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                              )}
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleSelectHierarchySection(chapter.id, section.id, false)
+                                }
+                                className="flex-1 min-w-0 text-left"
+                                title="Open section content"
+                              >
+                                <span
+                                  className={`text-[12px] font-bold leading-snug transition-colors block ${
+                                    isSectionSelected
+                                      ? 'text-blue-600 dark:text-cyan-400'
+                                      : 'text-slate-800 dark:text-slate-200 group-hover/sec:text-blue-600 dark:group-hover/sec:text-cyan-400'
+                                  }`}
+                                >
+                                  <span className="tabular-nums mr-1.5">{section.sectionNumber}</span>
+                                  {section.title}
+                                </span>
+                              </button>
+
+                              <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                                {sectionHasContent && (
+                                  <FileText
+                                    className="w-3 h-3 text-blue-600 dark:text-cyan-400 shrink-0"
+                                    aria-label="Section has written content"
+                                  />
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleSelectHierarchySection(chapter.id, section.id, true)
+                                  }
+                                  className="p-0.5 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover/sec:opacity-100 transition-opacity"
+                                  title={`Write or edit content for ${section.sectionNumber} ${section.title}`}
+                                  aria-label={`Write content for ${section.sectionNumber} ${section.title}`}
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleSectionAccordion(section.id)}
+                                  aria-expanded={isSectionOpen}
+                                  aria-label={isSectionOpen ? `Collapse ${section.title}` : `Expand ${section.title}`}
+                                  className="p-0.5 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                                >
+                                  {isSectionOpen ? (
+                                    <ChevronUp className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <ChevronDown className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
 
                             {/* Level 3: Course Content Items (e.g. "1.1.1 Steps of Data Profiling") */}
                             {isSectionOpen && (
@@ -1037,7 +1277,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                 ) : (
                                   section.items.map(({ module: m, flatIndex: idx, itemNumber }) => {
                                     const isActive =
-                                      playerMode === 'study' && idx === activeModuleIndex;
+                                      playerMode === 'study' &&
+                                      selectedOutlineNode.level === 'module' &&
+                                      idx === activeModuleIndex;
                                     const isDone = isModuleCompleted(m.id);
                                     const savedModPercent = isActive
                                       ? currentReadingPercent
@@ -1335,8 +1577,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             </div>
           )}
 
-          {/* Reading Progress & Resume Banner (shown in Study Mode for unlocked modules) */}
-          {playerMode === 'study' && !isViewingLockedContent && !isViewingMasteryLocked && (
+          {/* Reading Progress & Resume Banner (shown in Study Mode for unlocked Level 3 modules) */}
+          {playerMode === 'study' && !isViewingHierarchyContent && !isViewingLockedContent && !isViewingMasteryLocked && (
             <div className="px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 min-w-0">
@@ -1395,8 +1637,26 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             </div>
           )}
 
-          {/* Locked Curriculum Payment Gate for Student Mode */}
-          {isViewingLockedContent ? (
+          {/* First-Level Chapter & Second-Level Section Content Reading / Writing Stage */}
+          {isViewingHierarchyContent && activeHierarchyChapter ? (
+            <HierarchyContentWorkspace
+              courseCode={course.code}
+              chapter={activeHierarchyChapter}
+              section={activeHierarchySection}
+              startInEditMode={openHierarchyEditorOnSelect}
+              onConsumeStartInEditMode={() => setOpenHierarchyEditorOnSelect(false)}
+              onSelectChapter={(chapterId, openEditor) =>
+                handleSelectHierarchyChapter(chapterId, Boolean(openEditor))
+              }
+              onSelectSection={(chapterId, sectionId, openEditor) =>
+                handleSelectHierarchySection(chapterId, sectionId, Boolean(openEditor))
+              }
+              onOpenModule={(flatIndex) => handleSelectModule(flatIndex)}
+              onSaveContent={handleSaveHierarchyContent}
+              onBackToActiveModule={() => setSelectedOutlineNode({ level: 'module' })}
+              activeModuleTitle={activeModule?.title}
+            />
+          ) : isViewingLockedContent ? (
             <div className="p-6 sm:p-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm text-center space-y-5">
               <div className="w-14 h-14 mx-auto rounded-2xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-cyan-400 flex items-center justify-center">
                 <Lock className="w-6 h-6" />
@@ -1910,8 +2170,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             </>
           )}
 
-          {/* Bottom Next/Previous Step Bar */}
-          {!isViewingLockedContent && !isViewingMasteryLocked && (
+          {/* Bottom Next/Previous Step Bar (only shown for Level 3 Module views) */}
+          {!isViewingHierarchyContent && !isViewingLockedContent && !isViewingMasteryLocked && (
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"

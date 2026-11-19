@@ -84,12 +84,14 @@ export interface CourseMainContentSection {
   id: string;
   title: string; // Level 2: Main Contents
   summary?: string;
+  contentMarkdown?: string;
 }
 
 export interface CourseChapterSection {
   id: string;
   title: string; // Level 1: Chapter Section
   summary?: string;
+  contentMarkdown?: string;
   mainContents: CourseMainContentSection[];
 }
 

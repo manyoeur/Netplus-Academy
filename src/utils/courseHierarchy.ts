@@ -16,6 +16,7 @@ export interface ResolvedMainContentSection {
   id: string;
   title: string; // Level 2: Main Contents
   summary?: string;
+  contentMarkdown?: string;
   sectionNumber: string; // e.g. "1.1"
   items: ResolvedCourseContentItem[];
 }
@@ -24,6 +25,7 @@ export interface ResolvedChapterSection {
   id: string;
   title: string; // Level 1: Chapter Section
   summary?: string;
+  contentMarkdown?: string;
   chapterIndex: number; // 1-based
   chapterNumber: string; // e.g. "1.0"
   chapterLabel: string; // e.g. "Chapter 1"
@@ -64,16 +66,25 @@ export function resolveCourseHierarchy(course: Course): ResolvedChapterSection[]
   const chaptersOrder: CourseChapterSection[] = [];
   const chapterByNormTitle = new Map<string, CourseChapterSection>();
 
-  const ensureChapter = (title: string, summary?: string): CourseChapterSection => {
+  const ensureChapter = (
+    title: string,
+    summary?: string,
+    contentMarkdown?: string
+  ): CourseChapterSection => {
     const cleanTitle = title.trim() || 'Chapter 1: Core Curriculum';
     const key = normalizeKey(cleanTitle);
     const existing = chapterByNormTitle.get(key);
-    if (existing) return existing;
+    if (existing) {
+      if (summary !== undefined) existing.summary = summary;
+      if (contentMarkdown !== undefined) existing.contentMarkdown = contentMarkdown;
+      return existing;
+    }
 
     const created: CourseChapterSection = {
       id: slugId('chap', cleanTitle, chaptersOrder.length + 1),
       title: cleanTitle,
       summary,
+      contentMarkdown,
       mainContents: []
     };
     chapterByNormTitle.set(key, created);
@@ -84,17 +95,23 @@ export function resolveCourseHierarchy(course: Course): ResolvedChapterSection[]
   const ensureMainContent = (
     chapter: CourseChapterSection,
     mainTitle: string,
-    summary?: string
+    summary?: string,
+    contentMarkdown?: string
   ): CourseMainContentSection => {
     const cleanMain = mainTitle.trim() || 'Core Topics';
     const key = normalizeKey(cleanMain);
     const existing = chapter.mainContents.find(mc => normalizeKey(mc.title) === key);
-    if (existing) return existing;
+    if (existing) {
+      if (summary !== undefined) existing.summary = summary;
+      if (contentMarkdown !== undefined) existing.contentMarkdown = contentMarkdown;
+      return existing;
+    }
 
     const created: CourseMainContentSection = {
       id: slugId('sec', cleanMain, chapter.mainContents.length + 1),
       title: cleanMain,
-      summary
+      summary,
+      contentMarkdown
     };
     chapter.mainContents.push(created);
     return created;
@@ -102,10 +119,10 @@ export function resolveCourseHierarchy(course: Course): ResolvedChapterSection[]
 
   // Seed declared chapters/main-contents first so empty authoring sections remain visible in Builder
   for (const ch of course.chapters || []) {
-    const targetCh = ensureChapter(ch.title, ch.summary);
+    const targetCh = ensureChapter(ch.title, ch.summary, ch.contentMarkdown);
     targetCh.id = ch.id || targetCh.id;
     for (const mc of ch.mainContents || []) {
-      const targetMc = ensureMainContent(targetCh, mc.title, mc.summary);
+      const targetMc = ensureMainContent(targetCh, mc.title, mc.summary, mc.contentMarkdown);
       targetMc.id = mc.id || targetMc.id;
     }
   }
@@ -172,6 +189,7 @@ export function resolveCourseHierarchy(course: Course): ResolvedChapterSection[]
         id: mc.id,
         title: mc.title,
         summary: mc.summary,
+        contentMarkdown: mc.contentMarkdown,
         sectionNumber: secNum,
         items: rawItems.map((entry, itemIdx) => ({
           module: entry.module,
@@ -185,6 +203,7 @@ export function resolveCourseHierarchy(course: Course): ResolvedChapterSection[]
       id: ch.id,
       title: ch.title,
       summary: ch.summary,
+      contentMarkdown: ch.contentMarkdown,
       chapterIndex: chNum,
       chapterNumber: `${chNum}.0`,
       chapterLabel: `Chapter ${chNum}`,
@@ -267,10 +286,12 @@ export function toChapterConfigFromHierarchy(
     id: ch.id,
     title: ch.title,
     summary: ch.summary,
+    contentMarkdown: ch.contentMarkdown,
     mainContents: ch.mainContents.map(mc => ({
       id: mc.id,
       title: mc.title,
-      summary: mc.summary
+      summary: mc.summary,
+      contentMarkdown: mc.contentMarkdown
     }))
   }));
 }
