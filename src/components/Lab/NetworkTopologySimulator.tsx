@@ -3592,114 +3592,124 @@ export const NetworkTopologySimulator: React.FC = () => {
             })}
           </div>
 
-          <span className="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5 hidden sm:inline-block" aria-hidden="true" />
-
-          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 px-1">
-            Group Zone:
-          </span>
-
-          <button
-            type="button"
-            onClick={() => handleAddShape('rectangle')}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-violet-50 dark:bg-violet-950/50 border border-violet-200 dark:border-violet-800 text-xs font-semibold text-violet-800 dark:text-violet-200 hover:bg-violet-100 dark:hover:bg-violet-900/50 transition-colors whitespace-nowrap shrink-0"
-            title="Add a resizable Rectangle grouping box (auto-wraps selected devices)"
+          <div
+            role="group"
+            aria-label="Group zones and diagram labels"
+            className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0"
           >
-            <Square className="w-3.5 h-3.5" />
-            <span>Rectangle</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => handleAddShape('rectangle')}
+              aria-label="Add Rectangle Group Zone"
+              title="Add Rectangle Group Zone (auto-wraps selected devices)"
+              className="inline-flex items-center justify-center w-10 h-9 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 text-violet-600 dark:text-violet-400 hover:border-violet-400 dark:hover:border-violet-400 hover:bg-violet-50/70 dark:hover:bg-violet-950/50 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+            >
+              <Square className="w-4 h-4" aria-hidden="true" />
+            </button>
 
-          <button
-            type="button"
-            onClick={() => handleAddShape('circle')}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-teal-50 dark:bg-teal-950/50 border border-teal-200 dark:border-teal-800 text-xs font-semibold text-teal-800 dark:text-teal-200 hover:bg-teal-100 dark:hover:bg-teal-900/50 transition-colors whitespace-nowrap shrink-0"
-            title="Add a resizable Circle / Oval grouping zone (auto-wraps selected devices)"
-          >
-            <Circle className="w-3.5 h-3.5" />
-            <span>Circle</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => handleAddShape('circle')}
+              aria-label="Add Circle Group Zone"
+              title="Add Circle / Oval Group Zone (auto-wraps selected devices)"
+              className="inline-flex items-center justify-center w-10 h-9 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 text-teal-600 dark:text-teal-400 hover:border-teal-400 dark:hover:border-teal-400 hover:bg-teal-50/70 dark:hover:bg-teal-950/50 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+            >
+              <Circle className="w-4 h-4" aria-hidden="true" />
+            </button>
 
-          <button
-            type="button"
-            onClick={handleAddDiagramLabel}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-xs font-semibold text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors whitespace-nowrap shrink-0"
-            title="Add a movable text label anywhere on the topology diagram (e.g. OSPF, VLAN 10, 10.0.0.0/24)"
-          >
-            <Type className="w-3.5 h-3.5" />
-            <span>Label</span>
-          </button>
+            <button
+              type="button"
+              onClick={handleAddDiagramLabel}
+              aria-label="Add Diagram Text Label"
+              title="Add Movable Text Label (e.g. OSPF, VLAN 10, 10.0.0.0/24)"
+              className="inline-flex items-center justify-center w-10 h-9 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 text-amber-600 dark:text-amber-400 hover:border-amber-400 dark:hover:border-amber-400 hover:bg-amber-50/70 dark:hover:bg-amber-950/50 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            >
+              <Type className="w-4 h-4" aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
         {/* Canvas Tools & Auto-Layout */}
         <div className="flex flex-wrap items-center gap-2 min-w-0">
-          <div className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 max-w-full">
+          <div
+            role="group"
+            aria-label="Canvas interaction tools"
+            className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 max-w-full"
+          >
             <button
               type="button"
+              aria-label="Select and Move"
+              aria-pressed={tool === 'select'}
+              title="Select & Move (Click: select, Drag: move, Double-click: console)"
               onClick={() => {
                 setTool('select');
                 setPendingCableSource(null);
                 setPendingCableTarget(null);
               }}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+              className={`inline-flex items-center justify-center w-10 h-9 rounded-lg border transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                 tool === 'select'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  ? 'bg-blue-600 border-blue-500 text-white shadow-sm ring-2 ring-blue-500/25'
+                  : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-blue-400 dark:hover:border-cyan-400 hover:bg-blue-50/70 dark:hover:bg-slate-800'
               }`}
             >
-              <MousePointer2 className="w-3.5 h-3.5" />
-              <span>Select &amp; Move</span>
+              <MousePointer2 className="w-4 h-4" aria-hidden="true" />
             </button>
 
             <button
               type="button"
+              aria-label="Marquee Select"
+              aria-pressed={tool === 'marquee'}
+              title="Marquee Select (Drag a box to select multiple devices; hold Shift to add)"
               onClick={() => {
                 setTool('marquee');
                 setPendingCableSource(null);
                 setPendingCableTarget(null);
               }}
-              title="Drag a rectangular marquee anywhere on the canvas to select multiple devices and move them as a group (hold Shift to add)"
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+              className={`inline-flex items-center justify-center w-10 h-9 rounded-lg border transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                 tool === 'marquee'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  ? 'bg-blue-600 border-blue-500 text-white shadow-sm ring-2 ring-blue-500/25'
+                  : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-blue-400 dark:hover:border-cyan-400 hover:bg-blue-50/70 dark:hover:bg-slate-800'
               }`}
             >
-              <SquareDashedMousePointer className="w-3.5 h-3.5" />
-              <span>Marquee</span>
+              <SquareDashedMousePointer className="w-4 h-4" aria-hidden="true" />
             </button>
 
             <button
               type="button"
+              aria-label="Pan Canvas"
+              aria-pressed={tool === 'pan'}
+              title="Pan Canvas (Drag to pan, or hold Space + drag / middle-mouse drag)"
               onClick={() => {
                 setTool('pan');
                 setPendingCableSource(null);
                 setPendingCableTarget(null);
               }}
-              title="Drag to pan canvas (or hold Space + drag, or middle-mouse drag)"
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+              className={`inline-flex items-center justify-center w-10 h-9 rounded-lg border transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                 tool === 'pan'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  ? 'bg-blue-600 border-blue-500 text-white shadow-sm ring-2 ring-blue-500/25'
+                  : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-blue-400 dark:hover:border-cyan-400 hover:bg-blue-50/70 dark:hover:bg-slate-800'
               }`}
             >
-              <Hand className="w-3.5 h-3.5" />
-              <span>Pan</span>
+              <Hand className="w-4 h-4" aria-hidden="true" />
             </button>
 
             <button
               type="button"
+              aria-label="Remove Item"
+              aria-pressed={tool === 'delete'}
+              title="Remove Tool (Click any device, cable, group zone, or label to delete)"
               onClick={() => {
                 setTool('delete');
                 setPendingCableSource(null);
                 setPendingCableTarget(null);
               }}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+              className={`inline-flex items-center justify-center w-10 h-9 rounded-lg border transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
                 tool === 'delete'
-                  ? 'bg-red-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  ? 'bg-red-600 border-red-500 text-white shadow-sm ring-2 ring-red-500/25'
+                  : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-red-400 hover:border-red-400 dark:hover:border-red-400 hover:bg-red-50/70 dark:hover:bg-red-950/40'
               }`}
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Remove</span>
+              <Trash2 className="w-4 h-4" aria-hidden="true" />
             </button>
           </div>
 

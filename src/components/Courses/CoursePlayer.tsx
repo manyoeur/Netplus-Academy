@@ -899,7 +899,16 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   };
 
   const handleSelectModule = (idx: number, openEditor = false) => {
+    const wasViewingHierarchy = selectedOutlineNode.level !== 'module';
     flushCurrentModuleProgress();
+    const targetMod = course.modules[idx];
+    if (targetMod) {
+      const targetCrumb = getModuleSectionBreadcrumb(course, targetMod.id);
+      if (targetCrumb) {
+        setExpandedChapters(prev => ({ ...prev, [targetCrumb.chapterId]: true }));
+        setExpandedSections(prev => ({ ...prev, [targetCrumb.mainContentId]: true }));
+      }
+    }
     setSelectedOutlineNode({ level: 'module' });
     setQuizOrigin('manual');
     if (openEditor && canEditCourseContent) {
@@ -909,7 +918,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       setOpenModuleEditorOnSelect(false);
     }
     setActiveModuleIndex(idx);
-    if (playerMode === 'quiz' || openEditor) {
+    if (playerMode === 'quiz' || openEditor || wasViewingHierarchy) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
