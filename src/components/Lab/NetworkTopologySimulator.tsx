@@ -8,8 +8,6 @@ import {
   RotateCw,
   Play,
   Terminal as TerminalIcon,
-  Sliders,
-  Table2,
   CheckCircle2,
   XCircle,
   AlertTriangle,
@@ -42,6 +40,8 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
+  Minimize2,
+  Minus,
   X
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
@@ -84,17 +84,13 @@ import {
 } from './networkSimTypes';
 import {
   computeCableGeometry,
-  computeRoutingTable,
   createDefaultDevice,
   evaluateLinkStatus,
   executeDeviceCommand,
   getCliPrompt,
   getCliTabCompletions,
-  isInterfaceLineProtocolUp,
   isPortCompatibleWithCable,
   isValidIp,
-  isValidMask,
-  maskToPrefix,
   simulatePing
 } from './networkSimEngine';
 import { NETWORK_LAB_PRESETS } from './networkLabPresets';
@@ -102,7 +98,6 @@ import { CiscoDeviceIcon, getCiscoDeviceInnerSvg } from './CiscoDeviceIcon';
 
 type CanvasTool = 'select' | 'marquee' | 'pan' | 'cable' | 'delete';
 type CableToolMode = 'auto' | SimCableType;
-type InspectorTab = 'cli' | 'config' | 'tables' | 'objectives';
 
 interface PendingCableSource {
   deviceId: string;
@@ -536,10 +531,29 @@ export const NetworkTopologySimulator: React.FC = () => {
   const [editingDiagramLabelDraft, setEditingDiagramLabelDraft] = useState<string>('');
   const [editingDeviceLabelId, setEditingDeviceLabelId] = useState<string | null>(null);
   const [editingDeviceLabelDraft, setEditingDeviceLabelDraft] = useState<string>('');
-  const [isRenamingInspectorHeader, setIsRenamingInspectorHeader] = useState<boolean>(false);
-  const [inspectorNameDraft, setInspectorNameDraft] = useState<string>('');
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('objectives');
+  const [consoleTabIds, setConsoleTabIds] = useState<string[]>([]);
   const [consoleDeviceId, setConsoleDeviceId] = useState<string | null>(null);
+  const [isWorkspaceFullscreen, setIsWorkspaceFullscreen] = useState<boolean>(false);
+  const [isConsoleMinimized, setIsConsoleMinimized] = useState<boolean>(false);
+  const [isConsoleExpanded, setIsConsoleExpanded] = useState<boolean>(false);
+  const [isDraggingConsole, setIsDraggingConsole] = useState<boolean>(false);
+  const [consoleOffset, setConsoleOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [consoleSize, setConsoleSize] = useState<{ width: number; height: number } | null>(null);
+  const consoleDialogRef = useRef<HTMLDivElement>(null);
+  const consoleDragRef = useRef<{
+    startClientX: number;
+    startClientY: number;
+    initX: number;
+    initY: number;
+  } | null>(null);
+  const consoleResizeRef = useRef<{
+    startClientX: number;
+    startClientY: number;
+    initWidth: number;
+    initHeight: number;
+    initOffsetX: number;
+    initOffsetY: number;
+  } | null>(null);
   const [longPressMoveDeviceId, setLongPressMoveDeviceId] = useState<string | null>(null);
   const draggedPaletteTypeRef = useRef<SimDeviceType | null>(null);
   const [paletteDropPreview, setPaletteDropPreview] = useState<{
@@ -550,19 +564,89 @@ export const NetworkTopologySimulator: React.FC = () => {
   const suppressDeviceClickAfterDragRef = useRef<boolean>(false);
 
   useEffect(() => {
-    setIsRenamingInspectorHeader(false);
-  }, [selectedDeviceId]);
+    if (workspaceView !== 'editor') {
+      setIsWorkspaceFullscreen(false);
+    }
+  }, [workspaceView]);
+
+  const consoleTabs = useMemo(
+    () =>
+      consoleTabIds
+        .map(id => devices.find(d => d.id === id))
+        .filter((d): d is SimDevice => Boolean(d)),
+    [consoleTabIds, devices]
+  );
 
   useEffect(() => {
-    if (!consoleDeviceId) {
-      setInspectorTab('objectives');
-    } else if (!devices.some(d => d.id === consoleDeviceId)) {
-      setConsoleDeviceId(null);
-    }
-  }, [consoleDeviceId, devices]);
+    setConsoleTabIds(prev => {
+      const validIds = prev.filter(id => devices.some(d => d.id === id));
+      return validIds.length === prev.length ? prev : validIds;
+    });
+  }, [devices]);
 
-  // CLI state
-  const [cliInput, setCliInput] = useState<string>('');
+  useEffect(() => {
+    if (consoleTabs.length === 0) {
+      if (consoleDeviceId !== null) setConsoleDeviceId(null);
+      setIsConsoleMinimized(false);
+      setIsConsoleExpanded(false);
+      setIsDraggingConsole(false);
+      setConsoleOffset({ x: 0, y: 0 });
+      setConsoleSize(null);
+    } else if (!consoleDeviceId || !consoleTabs.some(d => d.id === consoleDeviceId)) {
+      setConsoleDeviceId(consoleTabs[consoleTabs.length - 1].id);
+    }
+  }, [consoleDeviceId, consoleTabs]);
+
+  useEffect(() => {
+    if (!consoleDeviceId || isConsoleExpanded || isConsoleMinimized) return;
+    const reclampToViewport = () => {
+      const viewportEl = viewportRef.current;
+      const dialogEl = consoleDialogRef.current;
+      if (!viewportEl || !dialogEl) return;
+      const vpW = viewportEl.clientWidth;
+      const vpH = viewportEl.clientHeight;
+      if (vpW <= 0 || vpH <= 0) return;
+
+      setConsoleSize(prev => {
+        if (!prev) return prev;
+        const maxW = Math.max(380, vpW - 24);
+        const maxH = Math.max(270, vpH - 24);
+        const nextW = Math.min(prev.width, maxW);
+        const nextH = Math.min(prev.height, maxH);
+        return nextW === prev.width && nextH === prev.height
+          ? prev
+          : { width: nextW, height: nextH };
+      });
+
+      const dlgW = dialogEl.offsetWidth;
+      const dlgH = dialogEl.offsetHeight;
+      const maxDx = Math.max(16, Math.floor((vpW - dlgW) / 2) - 8);
+      const maxDy = Math.max(16, Math.floor((vpH - dlgH) / 2) - 8);
+      setConsoleOffset(prev => {
+        const nextX = Math.max(-maxDx, Math.min(maxDx, prev.x));
+        const nextY = Math.max(-maxDy, Math.min(maxDy, prev.y));
+        return nextX === prev.x && nextY === prev.y ? prev : { x: nextX, y: nextY };
+      });
+    };
+
+    const rafId = window.requestAnimationFrame(reclampToViewport);
+    window.addEventListener('resize', reclampToViewport);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', reclampToViewport);
+    };
+  }, [consoleDeviceId, isWorkspaceFullscreen, isConsoleExpanded, isConsoleMinimized, consoleSize]);
+
+  // CLI state (per-device draft input so multi-tab CLI sessions stay independent)
+  const [cliDraftMap, setCliDraftMap] = useState<Record<string, string>>({});
+  const cliInput = consoleDeviceId ? (cliDraftMap[consoleDeviceId] ?? '') : '';
+  const setCliInput = useCallback(
+    (nextValue: string) => {
+      if (!consoleDeviceId) return;
+      setCliDraftMap(prev => ({ ...prev, [consoleDeviceId]: nextValue }));
+    },
+    [consoleDeviceId]
+  );
   const [cmdHistoryMap, setCmdHistoryMap] = useState<Record<string, string[]>>({});
   const [cmdCursor, setCmdCursor] = useState<number>(-1);
   const terminalEndRef = useRef<HTMLDivElement>(null);
@@ -570,6 +654,7 @@ export const NetworkTopologySimulator: React.FC = () => {
 
   // Viewport & logical canvas refs (zoom/pan wrapper + 1000x580 stage)
   const viewportRef = useRef<HTMLDivElement>(null);
+  const stageBoxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState<number>(1);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -706,13 +791,6 @@ export const NetworkTopologySimulator: React.FC = () => {
   const [lastPingResult, setLastPingResult] = useState<PingSimulationResult | null>(null);
   const [animStepIndex, setAnimStepIndex] = useState<number | null>(null);
 
-  // Static route & VLAN quick-add form state
-  const [newRouteNet, setNewRouteNet] = useState('');
-  const [newRouteMask, setNewRouteMask] = useState('255.255.255.0');
-  const [newRouteHop, setNewRouteHop] = useState('');
-  const [newSubIfId, setNewSubIfId] = useState('');
-  const [newVlanId, setNewVlanId] = useState('');
-  const [newVlanName, setNewVlanName] = useState('');
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
   const [isTemplatesModalOpen, setIsTemplatesModalOpen] = useState<boolean>(false);
   const [templateCategoryFilter, setTemplateCategoryFilter] = useState<
@@ -787,6 +865,7 @@ export const NetworkTopologySimulator: React.FC = () => {
         const firstId = draft.devices[0]?.id || null;
         setSelectedDeviceId(firstId);
         setSelectedDeviceIds(firstId ? [firstId] : []);
+        setConsoleTabIds([]);
         setConsoleDeviceId(null);
         setSelectedLinkId(null);
         setSelectedShapeId(null);
@@ -802,6 +881,7 @@ export const NetworkTopologySimulator: React.FC = () => {
         setActiveSavedLabId(null);
         setSelectedDeviceId(null);
         setSelectedDeviceIds([]);
+        setConsoleTabIds([]);
         setConsoleDeviceId(null);
         setSelectedLinkId(null);
         setSelectedShapeId(null);
@@ -944,8 +1024,9 @@ export const NetworkTopologySimulator: React.FC = () => {
     [devices, selectedDeviceId]
   );
 
-  const isConsoleActive = Boolean(
-    selectedDevice && consoleDeviceId === selectedDevice.id && selectedDeviceIds.length <= 1
+  const consoleDevice = useMemo(
+    () => devices.find(d => d.id === consoleDeviceId) || null,
+    [devices, consoleDeviceId]
   );
 
   const selectedLink = useMemo(
@@ -971,10 +1052,11 @@ export const NetworkTopologySimulator: React.FC = () => {
     return map;
   }, [devices, links]);
 
-  // Scroll terminal to bottom on new output
+  // Scroll terminal to bottom on new output or tab switch
   useEffect(() => {
+    if (isConsoleMinimized || !consoleDevice) return;
     terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [selectedDevice?.cliHistory.length]);
+  }, [consoleDevice?.id, consoleDevice?.cliHistory.length, isConsoleMinimized]);
 
   // Packet animation playback across hops
   useEffect(() => {
@@ -1003,8 +1085,12 @@ export const NetworkTopologySimulator: React.FC = () => {
     if (!viewport || workspaceView !== 'editor') return;
 
     const handleWheel = (e: WheelEvent) => {
+      if ((e.target as HTMLElement | null)?.closest('[data-console-overlay="true"]')) {
+        return;
+      }
       e.preventDefault();
-      const vRect = viewport.getBoundingClientRect();
+      const measureEl = stageBoxRef.current || viewport;
+      const vRect = measureEl.getBoundingClientRect();
       if (vRect.width <= 0 || vRect.height <= 0) return;
 
       const rawDeltaY =
@@ -1053,7 +1139,57 @@ export const NetworkTopologySimulator: React.FC = () => {
       y: Math.min(580, Math.max(0, ((clientY - rect.top) / rect.height) * 580))
     });
 
+    const clampConsoleOffset = (offset: { x: number; y: number }) => {
+      const viewportEl = viewportRef.current;
+      const dialogEl = consoleDialogRef.current;
+      const vpW = viewportEl?.clientWidth ?? 1000;
+      const vpH = viewportEl?.clientHeight ?? 580;
+      const dlgW = dialogEl?.offsetWidth ?? (isWorkspaceFullscreen ? 620 : 720);
+      const dlgH = dialogEl?.offsetHeight ?? (isWorkspaceFullscreen ? 410 : 440);
+      const maxDx = Math.max(16, Math.floor((vpW - dlgW) / 2) - 8);
+      const maxDy = Math.max(16, Math.floor((vpH - dlgH) / 2) - 8);
+      return {
+        x: Math.max(-maxDx, Math.min(maxDx, Math.round(offset.x))),
+        y: Math.max(-maxDy, Math.min(maxDy, Math.round(offset.y)))
+      };
+    };
+
     const handlePointerMove = (e: PointerEvent) => {
+      const cResize = consoleResizeRef.current;
+      if (cResize) {
+        const viewportEl = viewportRef.current;
+        const maxW = viewportEl ? Math.max(400, viewportEl.clientWidth - 24) : 1100;
+        const maxH = viewportEl ? Math.max(280, viewportEl.clientHeight - 24) : 760;
+        const nextWidth = Math.max(
+          380,
+          Math.min(maxW, Math.round(cResize.initWidth + (e.clientX - cResize.startClientX)))
+        );
+        const nextHeight = Math.max(
+          270,
+          Math.min(maxH, Math.round(cResize.initHeight + (e.clientY - cResize.startClientY)))
+        );
+        setConsoleSize({ width: nextWidth, height: nextHeight });
+        const dw = nextWidth - cResize.initWidth;
+        const dh = nextHeight - cResize.initHeight;
+        const vpW = viewportEl?.clientWidth ?? 1000;
+        const vpH = viewportEl?.clientHeight ?? 580;
+        const maxDx = Math.max(16, Math.floor((vpW - nextWidth) / 2) - 8);
+        const maxDy = Math.max(16, Math.floor((vpH - nextHeight) / 2) - 8);
+        setConsoleOffset({
+          x: Math.max(-maxDx, Math.min(maxDx, Math.round(cResize.initOffsetX + dw / 2))),
+          y: Math.max(-maxDy, Math.min(maxDy, Math.round(cResize.initOffsetY + dh / 2)))
+        });
+        return;
+      }
+
+      const cDrag = consoleDragRef.current;
+      if (cDrag) {
+        const dx = e.clientX - cDrag.startClientX;
+        const dy = e.clientY - cDrag.startClientY;
+        setConsoleOffset(clampConsoleOffset({ x: cDrag.initX + dx, y: cDrag.initY + dy }));
+        return;
+      }
+
       const pDrag = panStateRef.current;
       if (pDrag) {
         const dx = e.clientX - pDrag.startClientX;
@@ -1479,6 +1615,8 @@ export const NetworkTopologySimulator: React.FC = () => {
           suppressCanvasClickRef.current = false;
         }, 0);
       }
+      consoleDragRef.current = null;
+      consoleResizeRef.current = null;
       panStateRef.current = null;
       dragStateRef.current = null;
       marqueeStateRef.current = null;
@@ -1487,6 +1625,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       shapeResizeStateRef.current = null;
       labelDragStateRef.current = null;
       diagramLabelDragStateRef.current = null;
+      setIsDraggingConsole(false);
       setIsPanningActive(false);
       setLongPressMoveDeviceId(null);
       setDraggingLabelDeviceId(null);
@@ -1642,7 +1781,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     const nextZoom = Math.min(2.75, Math.max(0.4, Number(targetZoom.toFixed(4))));
     const curZoom = zoomRef.current;
     const curPan = panRef.current;
-    const viewport = viewportRef.current;
+    const viewport = stageBoxRef.current || viewportRef.current;
     if (!viewport) {
       zoomRef.current = nextZoom;
       setZoom(nextZoom);
@@ -1671,7 +1810,7 @@ export const NetworkTopologySimulator: React.FC = () => {
   }, []);
 
   const handleFitToView = useCallback(() => {
-    const viewport = viewportRef.current;
+    const viewport = stageBoxRef.current || viewportRef.current;
     if (!viewport) {
       handleResetZoomPan();
       return;
@@ -1756,6 +1895,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     const firstId = built.devices[0]?.id || null;
     setSelectedDeviceId(firstId);
     setSelectedDeviceIds(firstId ? [firstId] : []);
+    setConsoleTabIds([]);
     setConsoleDeviceId(null);
     setSelectedLinkId(null);
     setSelectedShapeId(null);
@@ -1764,7 +1904,6 @@ export const NetworkTopologySimulator: React.FC = () => {
     setPendingCableSource(null);
     setPendingCableTarget(null);
     setLastPingResult(null);
-    setInspectorTab('objectives');
     handleResetZoomPan();
     flashBanner(`Loaded "${preset.title}"`);
   };
@@ -1810,13 +1949,11 @@ export const NetworkTopologySimulator: React.FC = () => {
     setDevices(prev => [...prev, newDev]);
     setSelectedDeviceId(null);
     setSelectedDeviceIds([]);
-    setConsoleDeviceId(null);
     setSelectedLinkId(null);
     setSelectedShapeId(null);
     setSelectedDiagramLabelId(null);
     setEditingDiagramLabelId(null);
     setTool('select');
-    setInspectorTab('objectives');
   };
 
   const handleAddShape = (kind: SimShapeKind) => {
@@ -1967,7 +2104,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       const remaining = selectedDeviceIds.filter(id => id !== deviceId);
       setSelectedDeviceIds(remaining);
       setSelectedDeviceId(cur => (cur === deviceId ? remaining[0] || null : cur));
-      setConsoleDeviceId(cur => (cur === deviceId ? null : cur));
+      setConsoleTabIds(prev => prev.filter(id => id !== deviceId));
       setPendingCableSource(prev => (prev?.deviceId === deviceId ? null : prev));
       setPendingCableTarget(prev => (prev?.deviceId === deviceId ? null : prev));
     },
@@ -1984,7 +2121,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     );
     setSelectedDeviceIds([]);
     setSelectedDeviceId(null);
-    setConsoleDeviceId(cur => (cur && deleteSet.has(cur) ? null : cur));
+    setConsoleTabIds(prev => prev.filter(id => !deleteSet.has(id)));
     setPendingCableSource(prev => (prev && deleteSet.has(prev.deviceId) ? null : prev));
     setPendingCableTarget(prev => (prev && deleteSet.has(prev.deviceId) ? null : prev));
     flashBanner(`Removed ${count} selected device${count === 1 ? '' : 's'} and attached cables`);
@@ -2001,7 +2138,6 @@ export const NetworkTopologySimulator: React.FC = () => {
       setDevices(prev => prev.map(d => (d.id === deviceId ? { ...d, name: trimmed } : d)));
     }
     setEditingDeviceLabelId(prev => (prev === deviceId ? null : prev));
-    setIsRenamingInspectorHeader(false);
   }, []);
 
   const startCanvasLabelEdit = useCallback((dev: SimDevice) => {
@@ -2075,10 +2211,19 @@ export const NetworkTopologySimulator: React.FC = () => {
       if (e.key === 'Escape') {
         setEditingDeviceLabelId(null);
         setEditingDiagramLabelId(null);
-        setIsRenamingInspectorHeader(false);
+        if (consoleDeviceId || consoleTabIds.length > 0) {
+          setConsoleTabIds([]);
+          setConsoleDeviceId(null);
+          setIsConsoleMinimized(false);
+          setIsConsoleExpanded(false);
+          return;
+        }
+        if (isWorkspaceFullscreen) {
+          setIsWorkspaceFullscreen(false);
+          return;
+        }
         setSelectedDeviceIds([]);
         setSelectedDeviceId(null);
-        setConsoleDeviceId(null);
         setSelectedLinkId(null);
         setSelectedShapeId(null);
         setSelectedDiagramLabelId(null);
@@ -2107,6 +2252,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       setIsSpacePanning(false);
     };
   }, [
+    consoleDeviceId,
     devices,
     handleDeleteDiagramLabel,
     handleDeleteLink,
@@ -2114,6 +2260,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     handleDeleteShape,
     isSavePromptOpen,
     isTemplatesModalOpen,
+    isWorkspaceFullscreen,
     selectedDeviceIds,
     selectedDiagramLabelId,
     selectedLinkId,
@@ -2300,7 +2447,6 @@ export const NetworkTopologySimulator: React.FC = () => {
         if (cur === device.id) return next[next.length - 1] || null;
         return cur;
       });
-      setConsoleDeviceId(null);
       setSelectedLinkId(null);
       setSelectedShapeId(null);
       setSelectedDiagramLabelId(null);
@@ -2309,30 +2455,28 @@ export const NetworkTopologySimulator: React.FC = () => {
 
     setSelectedDeviceIds([device.id]);
     setSelectedDeviceId(device.id);
-    if (consoleDeviceId !== device.id) {
-      setConsoleDeviceId(null);
-    }
     setSelectedLinkId(null);
     setSelectedShapeId(null);
     setSelectedDiagramLabelId(null);
   };
 
-  // Run CLI command on selected device
+  // Run CLI command on active console device
   const handleRunCliCommand = (e?: React.FormEvent, overrideCmd?: string) => {
     if (e) e.preventDefault();
-    if (!selectedDevice) return;
+    const targetDevice = consoleDevice || selectedDevice;
+    if (!targetDevice) return;
     const raw = (overrideCmd ?? cliInput).trim();
     if (!raw) return;
 
-    const result = executeDeviceCommand(selectedDevice, raw, devices, links);
-    setDevices(prev => prev.map(d => (d.id === selectedDevice.id ? result.updatedDevice : d)));
+    const result = executeDeviceCommand(targetDevice, raw, devices, links);
+    setDevices(prev => prev.map(d => (d.id === targetDevice.id ? result.updatedDevice : d)));
 
     if (!overrideCmd) {
       setCliInput('');
     }
     setCmdHistoryMap(prev => ({
       ...prev,
-      [selectedDevice.id]: [...(prev[selectedDevice.id] || []), raw]
+      [targetDevice.id]: [...(prev[targetDevice.id] || []), raw]
     }));
     setCmdCursor(-1);
 
@@ -2343,22 +2487,23 @@ export const NetworkTopologySimulator: React.FC = () => {
   };
 
   const handleCliKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!selectedDevice) return;
+    const targetDevice = consoleDevice || selectedDevice;
+    if (!targetDevice) return;
 
     if (e.key === 'Tab') {
       e.preventDefault();
-      const { completed, suggestions } = getCliTabCompletions(selectedDevice, cliInput);
+      const { completed, suggestions } = getCliTabCompletions(targetDevice, cliInput);
       if (completed !== cliInput) {
         setCliInput(completed);
       } else if (suggestions.length > 0) {
-        const prompt = getCliPrompt(selectedDevice);
+        const prompt = getCliPrompt(targetDevice);
         const hintLines = [
           `${prompt} ${cliInput}`,
           suggestions.slice(0, 12).join('    ')
         ];
         setDevices(prev =>
           prev.map(d =>
-            d.id === selectedDevice.id
+            d.id === targetDevice.id
               ? { ...d, cliHistory: [...d.cliHistory, ...hintLines] }
               : d
           )
@@ -2367,7 +2512,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       return;
     }
 
-    const cmds = cmdHistoryMap[selectedDevice.id] || [];
+    const cmds = cmdHistoryMap[targetDevice.id] || [];
     if (cmds.length === 0) return;
 
     if (e.key === 'ArrowUp') {
@@ -2395,14 +2540,47 @@ export const NetworkTopologySimulator: React.FC = () => {
     if (!pingSourceId || !pingTargetIp.trim()) return;
     const res = simulatePing(devices, links, pingSourceId, pingTargetIp.trim());
     setLastPingResult(res);
-    setInspectorTab('objectives');
   };
 
-  // Update selected device helper
-  const updateSelectedDevice = (updater: (dev: SimDevice) => SimDevice) => {
-    if (!selectedDeviceId) return;
-    setDevices(prev => prev.map(d => (d.id === selectedDeviceId ? updater(d) : d)));
-  };
+  const openDeviceConsole = useCallback(
+    (dev: SimDevice) => {
+      setSelectedDeviceIds([dev.id]);
+      setSelectedDeviceId(dev.id);
+      setSelectedLinkId(null);
+      setSelectedShapeId(null);
+      setSelectedDiagramLabelId(null);
+      setConsoleTabIds(prev => (prev.includes(dev.id) ? prev : [...prev, dev.id]));
+      setConsoleOffset(prev => (consoleTabIds.length > 0 ? prev : { x: 0, y: 0 }));
+      setConsoleDeviceId(dev.id);
+      setIsConsoleMinimized(false);
+      setCmdCursor(-1);
+      window.setTimeout(() => cliInputRef.current?.focus(), 0);
+    },
+    [consoleTabIds.length]
+  );
+
+  const closeConsoleTab = useCallback((deviceId: string) => {
+    setConsoleTabIds(prev => {
+      const idx = prev.indexOf(deviceId);
+      const next = prev.filter(id => id !== deviceId);
+      setConsoleDeviceId(cur => {
+        if (cur !== deviceId) return cur;
+        if (next.length === 0) return null;
+        return next[Math.min(idx, next.length - 1)];
+      });
+      return next;
+    });
+    setCmdCursor(-1);
+  }, []);
+
+  const closeAllConsoleTabs = useCallback(() => {
+    setConsoleTabIds([]);
+    setConsoleDeviceId(null);
+    setIsConsoleMinimized(false);
+    setIsConsoleExpanded(false);
+    setIsDraggingConsole(false);
+    setCmdCursor(-1);
+  }, []);
 
   const handleStartNewBlankLab = () => {
     const blankPreset = NETWORK_LAB_PRESETS.find(p => p.id === 'blank-sandbox') || NETWORK_LAB_PRESETS[0];
@@ -2414,7 +2592,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     setActiveSavedLabId(null);
     setSelectedDeviceId(null);
     setSelectedDeviceIds([]);
-    setConsoleDeviceId(null);
+    closeAllConsoleTabs();
     setSelectedLinkId(null);
     setSelectedShapeId(null);
     setSelectedDiagramLabelId(null);
@@ -2424,7 +2602,6 @@ export const NetworkTopologySimulator: React.FC = () => {
     setLastPingResult(null);
     setRecentlySavedProjectId(null);
     setIsSavePromptOpen(false);
-    setInspectorTab('objectives');
     handleResetZoomPan();
     setWorkspaceView('editor');
     flashBanner('Started a new Blank Lab Project');
@@ -2580,7 +2757,7 @@ export const NetworkTopologySimulator: React.FC = () => {
           const firstImportedId = parsed.devices[0]?.id || null;
           setSelectedDeviceId(firstImportedId);
           setSelectedDeviceIds(firstImportedId ? [firstImportedId] : []);
-          setConsoleDeviceId(null);
+          closeAllConsoleTabs();
           setSelectedLinkId(null);
           setSelectedShapeId(null);
           setSelectedDiagramLabelId(null);
@@ -2681,7 +2858,7 @@ export const NetworkTopologySimulator: React.FC = () => {
         setActiveSavedLabId(null);
         setSelectedDeviceId(null);
         setSelectedDeviceIds([]);
-        setConsoleDeviceId(null);
+        closeAllConsoleTabs();
         setSelectedLinkId(null);
         setSelectedShapeId(null);
         setPendingCableSource(null);
@@ -2720,7 +2897,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     const firstId = record.devices[0]?.id || null;
     setSelectedDeviceId(firstId);
     setSelectedDeviceIds(firstId ? [firstId] : []);
-    setConsoleDeviceId(null);
+    closeAllConsoleTabs();
     setSelectedLinkId(null);
     setSelectedShapeId(null);
     setSelectedDiagramLabelId(null);
@@ -2857,11 +3034,6 @@ export const NetworkTopologySimulator: React.FC = () => {
     });
     return items;
   }, [devices]);
-
-  const routingTable = useMemo(
-    () => (selectedDevice?.type === 'router' ? computeRoutingTable(selectedDevice, devices, links) : []),
-    [devices, links, selectedDevice]
-  );
 
   const selectedGroupBounds = useMemo(() => {
     if ((tool !== 'select' && tool !== 'marquee') || selectedDeviceIds.length < 2) return null;
@@ -3249,9 +3421,15 @@ export const NetworkTopologySimulator: React.FC = () => {
       )}
 
       {workspaceView === 'editor' ? (
-        <>
+        <div
+          className={
+            isWorkspaceFullscreen
+              ? 'fixed inset-0 z-40 bg-slate-100 dark:bg-slate-950 p-2.5 sm:p-4 flex flex-col gap-2.5 overflow-hidden'
+              : 'space-y-4 w-full min-w-0'
+          }
+        >
           {/* Design Palette & Cabling Toolbar */}
-          <div className="p-2.5 sm:p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-3">
+          <div className="p-2.5 sm:p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-3 shrink-0">
         {/* Icon-Only Device Palette + Un-Collapsed Cable Symbols + Group Zones & Label */}
         <div className="flex flex-wrap items-center gap-2 min-w-0">
           <div
@@ -3581,13 +3759,23 @@ export const NetworkTopologySimulator: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Two-Zone Workspace */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start min-w-0">
-        {/* Left Zone (7 cols): Interactive Topology Canvas + Quick Ping Bar */}
-        <div className="xl:col-span-7 space-y-4 min-w-0">
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+      {/* Full-Width Interactive Topology Workspace + Quick Ping Bar */}
+      <div
+        className={
+          isWorkspaceFullscreen
+            ? 'flex-1 min-h-0 flex flex-col gap-2.5 min-w-0'
+            : 'space-y-4 w-full min-w-0'
+        }
+      >
+          <div
+            className={
+              isWorkspaceFullscreen
+                ? 'flex-1 min-h-0 flex flex-col rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden'
+                : 'rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden'
+            }
+          >
             {/* Canvas Info Strip */}
-            <div className="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
               <div className="flex flex-wrap items-center gap-2 text-slate-600 dark:text-slate-300 min-w-0">
                 <span className="font-semibold text-slate-900 dark:text-white">
                   Topology Workspace
@@ -3735,20 +3923,48 @@ export const NetworkTopologySimulator: React.FC = () => {
                 )}
               </div>
 
-              {/* Cable Legend */}
-              <div className="hidden sm:flex items-center gap-3 text-[11px] font-mono text-slate-500 dark:text-slate-400 shrink-0">
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-3 h-0.5 bg-sky-600 inline-block" /> Straight
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-3 h-0.5 border-b-2 border-dashed border-sky-400 inline-block" /> Crossover
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-3 h-0.5 bg-amber-500 inline-block" /> Fiber
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-3 h-0.5 border-b-2 border-dotted border-red-500 inline-block" /> Serial
-                </span>
+              {/* Cable Legend & Workspace Fullscreen Controls */}
+              <div className="flex items-center gap-2.5 shrink-0">
+                <div className="hidden sm:flex items-center gap-3 text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-3 h-0.5 bg-sky-600 inline-block" /> Straight
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-3 h-0.5 border-b-2 border-dashed border-sky-400 inline-block" /> Crossover
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-3 h-0.5 bg-amber-500 inline-block" /> Fiber
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-3 h-0.5 border-b-2 border-dotted border-red-500 inline-block" /> Serial
+                  </span>
+                </div>
+
+                {isWorkspaceFullscreen && objectiveProgress.totalCount > 0 && (
+                  <span className="hidden md:inline-flex items-center font-mono tabular-nums text-[11px] font-semibold text-blue-600 dark:text-cyan-400">
+                    {objectiveProgress.passedCount}/{objectiveProgress.totalCount} goals
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  aria-label={isWorkspaceFullscreen ? 'Minimize workspace' : 'Maximize workspace to fullscreen'}
+                  title={isWorkspaceFullscreen ? 'Minimize workspace (Esc)' : 'Maximize workspace to fullscreen'}
+                  onClick={() => setIsWorkspaceFullscreen(prev => !prev)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-500 hover:text-blue-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap shrink-0"
+                >
+                  {isWorkspaceFullscreen ? (
+                    <>
+                      <Minimize2 className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                      <span>Minimize</span>
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                      <span>Fullscreen</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 
@@ -3820,7 +4036,12 @@ export const NetworkTopologySimulator: React.FC = () => {
               }}
               onPointerDownCapture={(e) => {
                 const targetEl = e.target as HTMLElement | null;
-                if (targetEl?.closest('[data-zoom-hud="true"]')) return;
+                if (
+                  targetEl?.closest('[data-zoom-hud="true"]') ||
+                  targetEl?.closest('[data-console-overlay="true"]')
+                ) {
+                  return;
+                }
                 const shouldStartPan =
                   e.button === 1 ||
                   (e.button === 0 && (tool === 'pan' || isSpacePanningRef.current));
@@ -3882,7 +4103,13 @@ export const NetworkTopologySimulator: React.FC = () => {
               }}
               onPointerDown={(e) => {
                 if (tool !== 'select' || isSpacePanningRef.current || e.button !== 0) return;
-                if (e.target !== viewportRef.current && e.target !== canvasRef.current) return;
+                if (
+                  e.target !== viewportRef.current &&
+                  e.target !== stageBoxRef.current &&
+                  e.target !== canvasRef.current
+                ) {
+                  return;
+                }
                 const canvas = canvasRef.current;
                 if (!canvas) return;
                 const rect = canvas.getBoundingClientRect();
@@ -3908,19 +4135,25 @@ export const NetworkTopologySimulator: React.FC = () => {
                 }
                 if (tool === 'pan') return;
                 const clickedStage =
-                  e.target === viewportRef.current || e.target === canvasRef.current;
+                  e.target === viewportRef.current ||
+                  e.target === stageBoxRef.current ||
+                  e.target === canvasRef.current;
                 if (clickedStage || (tool === 'marquee' && !(e.target as HTMLElement | null)?.closest('[data-device-id]'))) {
                   setSelectedLinkId(null);
                   setSelectedShapeId(null);
                   setSelectedDiagramLabelId(null);
-                  setConsoleDeviceId(null);
                   if ((tool === 'select' || tool === 'marquee') && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
                     setSelectedDeviceIds([]);
                     setSelectedDeviceId(null);
                   }
                 }
               }}
-              className={`relative w-full aspect-[1000/580] min-h-[260px] sm:min-h-[380px] bg-slate-100/80 dark:bg-[#050914] select-none overflow-hidden ${
+              style={{ containerType: 'size' }}
+              className={`relative bg-slate-100/80 dark:bg-[#050914] select-none overflow-hidden flex items-center justify-center ${
+                isWorkspaceFullscreen
+                  ? 'flex-1 min-h-0 w-full'
+                  : 'w-full h-[clamp(420px,64vh,680px)] min-h-[340px]'
+              } ${
                 isPanningActive
                   ? 'cursor-grabbing'
                   : tool === 'pan' || isSpacePanning
@@ -3930,6 +4163,11 @@ export const NetworkTopologySimulator: React.FC = () => {
                   : ''
               }`}
             >
+              <div
+                ref={stageBoxRef}
+                style={{ width: 'min(100cqw, calc(100cqh * 1000 / 580))' }}
+                className="relative aspect-[1000/580] shrink-0"
+              >
               <div
                 ref={canvasRef}
                 style={{
@@ -4632,7 +4870,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                         handleDeviceClick(dev, e);
                       }}
                       onDoubleClick={(e) => {
-                        if (tool !== 'select') return;
+                        if (tool !== 'select' && tool !== 'marquee') return;
                         e.stopPropagation();
                         if (dragStateRef.current?.holdTimerId != null) {
                           window.clearTimeout(dragStateRef.current.holdTimerId);
@@ -4640,13 +4878,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                         dragStateRef.current = null;
                         setLongPressMoveDeviceId(null);
                         setActiveSnapGuides(null);
-                        setSelectedDeviceIds([dev.id]);
-                        setSelectedDeviceId(dev.id);
-                        setSelectedLinkId(null);
-                        setSelectedShapeId(null);
-                        setSelectedDiagramLabelId(null);
-                        setConsoleDeviceId(dev.id);
-                        setInspectorTab(dev.type === 'pc' || dev.type === 'server' ? 'config' : 'cli');
+                        openDeviceConsole(dev);
                       }}
                       className={`absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group ${
                         longPressMoveDeviceId === dev.id ? 'cursor-grabbing z-30' : 'cursor-pointer'
@@ -4758,9 +4990,6 @@ export const NetworkTopologySimulator: React.FC = () => {
 
                             setSelectedDeviceIds([dev.id]);
                             setSelectedDeviceId(dev.id);
-                            if (consoleDeviceId !== dev.id) {
-                              setConsoleDeviceId(null);
-                            }
                             setSelectedLinkId(null);
                             setSelectedShapeId(null);
                             setSelectedDiagramLabelId(null);
@@ -5042,13 +5271,14 @@ export const NetworkTopologySimulator: React.FC = () => {
                 </div>
               )}
               </div>
+              </div>
 
-              {/* Floating Viewport Zoom & Fit Controls HUD */}
+              {/* Floating Viewport Zoom, Fit & Fullscreen Controls HUD */}
               <div
                 data-zoom-hud="true"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
-                className="absolute bottom-3 right-3 z-40 inline-flex items-center gap-0.5 p-1 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 shadow-lg backdrop-blur-xs"
+                className="absolute bottom-3 right-3 z-30 inline-flex items-center gap-0.5 p-1 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 shadow-lg backdrop-blur-xs"
               >
                 <button
                   type="button"
@@ -5091,10 +5321,391 @@ export const NetworkTopologySimulator: React.FC = () => {
                   onClick={handleFitToView}
                   className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
                 >
-                  <Maximize2 className="w-3 h-3 text-blue-600 dark:text-cyan-400" />
+                  <Grid3x3 className="w-3 h-3 text-blue-600 dark:text-cyan-400" />
                   <span>Fit</span>
                 </button>
+
+                <button
+                  type="button"
+                  aria-label={isWorkspaceFullscreen ? 'Minimize workspace' : 'Maximize workspace'}
+                  title={isWorkspaceFullscreen ? 'Minimize workspace (Esc)' : 'Maximize workspace to fullscreen'}
+                  onClick={() => setIsWorkspaceFullscreen(prev => !prev)}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+                >
+                  {isWorkspaceFullscreen ? (
+                    <>
+                      <Minimize2 className="w-3 h-3 text-blue-600 dark:text-cyan-400" />
+                      <span>Min</span>
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="w-3 h-3 text-blue-600 dark:text-cyan-400" />
+                      <span>Full</span>
+                    </>
+                  )}
+                </button>
               </div>
+
+              {/* Multi-Device Tabbed CLI Console Pop-up (opens on device double-click) */}
+              {consoleTabs.length > 0 && consoleDevice && isConsoleMinimized && (
+                <div
+                  data-console-overlay="true"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  className="absolute bottom-3 left-3 z-40 inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 shadow-xl backdrop-blur-xs max-w-[calc(100%-13rem)]"
+                >
+                  <CiscoDeviceIcon type={consoleDevice.type} className="w-6 h-5 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                      {consoleDevice.name}
+                    </div>
+                    <div className="text-[10px] font-mono text-slate-500 dark:text-slate-400 truncate tabular-nums">
+                      {consoleTabs.length} CLI {consoleTabs.length === 1 ? 'session' : 'sessions'} minimized
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsConsoleMinimized(false);
+                      window.setTimeout(() => cliInputRef.current?.focus(), 0);
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0"
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                    <span>Restore</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Close all console tabs"
+                    title="Close console"
+                    onClick={closeAllConsoleTabs}
+                    className="p-1 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {consoleTabs.length > 0 && consoleDevice && !isConsoleMinimized && (
+                <div className="absolute inset-0 z-40 pointer-events-none flex items-center justify-center p-2 sm:p-4">
+                  <div
+                    ref={consoleDialogRef}
+                    data-console-overlay="true"
+                    role="dialog"
+                    aria-label={`${consoleDevice.name} CLI console`}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    style={
+                      isConsoleExpanded
+                        ? undefined
+                        : {
+                            transform: `translate(${consoleOffset.x}px, ${consoleOffset.y}px)`,
+                            ...(consoleSize
+                              ? { width: `${consoleSize.width}px`, height: `${consoleSize.height}px` }
+                              : {})
+                          }
+                    }
+                    className={`pointer-events-auto relative flex flex-col rounded-2xl bg-slate-100 dark:bg-slate-900 border shadow-2xl overflow-hidden ${
+                      isDraggingConsole
+                        ? 'border-blue-500 dark:border-cyan-400 ring-2 ring-blue-500/25 dark:ring-cyan-400/25'
+                        : 'border-slate-300 dark:border-slate-700'
+                    } ${
+                      isConsoleExpanded
+                        ? 'w-full h-full'
+                        : consoleSize
+                        ? ''
+                        : isWorkspaceFullscreen
+                        ? 'w-[min(86%,640px)] h-[min(78%,410px)]'
+                        : 'w-[min(96%,720px)] h-[min(92%,440px)]'
+                    }`}
+                  >
+                    {/* Draggable Console Title Bar */}
+                    <div
+                      onPointerDown={(e) => {
+                        if (isConsoleExpanded || e.button !== 0) return;
+                        const targetEl = e.target as HTMLElement | null;
+                        if (targetEl?.closest('button, select, input, option')) return;
+                        e.stopPropagation();
+                        setIsDraggingConsole(true);
+                        consoleDragRef.current = {
+                          startClientX: e.clientX,
+                          startClientY: e.clientY,
+                          initX: consoleOffset.x,
+                          initY: consoleOffset.y
+                        };
+                      }}
+                      onDoubleClick={(e) => {
+                        const targetEl = e.target as HTMLElement | null;
+                        if (targetEl?.closest('button, select, input, option')) return;
+                        e.stopPropagation();
+                        setIsConsoleExpanded(prev => !prev);
+                      }}
+                      title={isConsoleExpanded ? undefined : 'Drag to move console window · Double-click to expand'}
+                      className={`px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/90 flex items-center justify-between gap-2 shrink-0 select-none touch-none ${
+                        isConsoleExpanded ? '' : 'cursor-grab active:cursor-grabbing'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        {!isConsoleExpanded && (
+                          <Move
+                            className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 shrink-0"
+                            aria-hidden="true"
+                          />
+                        )}
+                        <TerminalIcon className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400 shrink-0" />
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white truncate">
+                          <span className="truncate">{consoleDevice.name} CLI</span>
+                          <span aria-hidden="true" className="text-slate-400">·</span>
+                          <span className="font-mono text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate">
+                            {consoleDevice.model}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {!isConsoleExpanded &&
+                          (consoleOffset.x !== 0 || consoleOffset.y !== 0 || consoleSize !== null) && (
+                            <button
+                              type="button"
+                              aria-label="Center console window"
+                              title="Reset console position and size"
+                              onClick={() => {
+                                setConsoleOffset({ x: 0, y: 0 });
+                                setConsoleSize(null);
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:border-blue-500 hover:text-blue-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              <span>Center</span>
+                            </button>
+                          )}
+
+                        <button
+                          type="button"
+                          aria-label="Minimize console"
+                          title="Minimize console to workspace corner"
+                          onClick={() => setIsConsoleMinimized(true)}
+                          className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          aria-label={isConsoleExpanded ? 'Restore console size' : 'Expand console window'}
+                          title={isConsoleExpanded ? 'Restore floating window size' : 'Expand console over workspace'}
+                          onClick={() => setIsConsoleExpanded(prev => !prev)}
+                          className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        >
+                          {isConsoleExpanded ? (
+                            <Minimize2 className="w-3.5 h-3.5" />
+                          ) : (
+                            <Maximize2 className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          aria-label="Close all console tabs"
+                          title="Close console (Esc)"
+                          onClick={closeAllConsoleTabs}
+                          className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Multi-Device Session Tab Strip (PuTTY / SecureCRT style) */}
+                    <div
+                      onPointerDown={(e) => {
+                        if (isConsoleExpanded || e.button !== 0) return;
+                        const targetEl = e.target as HTMLElement | null;
+                        if (targetEl?.closest('[data-console-tab="true"], button, select, input')) return;
+                        e.stopPropagation();
+                        setIsDraggingConsole(true);
+                        consoleDragRef.current = {
+                          startClientX: e.clientX,
+                          startClientY: e.clientY,
+                          initX: consoleOffset.x,
+                          initY: consoleOffset.y
+                        };
+                      }}
+                      role="tablist"
+                      aria-label="Open device CLI sessions"
+                      className={`px-2 pt-1.5 bg-slate-200/80 dark:bg-slate-900 border-b border-slate-800 flex items-end gap-1 overflow-x-auto shrink-0 select-none touch-none ${
+                        isConsoleExpanded ? '' : 'cursor-grab active:cursor-grabbing'
+                      }`}
+                    >
+                      {consoleTabs.map(tabDev => {
+                        const isActiveTab = tabDev.id === consoleDevice.id;
+                        return (
+                          <div
+                            key={tabDev.id}
+                            data-console-tab="true"
+                            onAuxClick={(e) => {
+                              if (e.button === 1) {
+                                e.preventDefault();
+                                closeConsoleTab(tabDev.id);
+                              }
+                            }}
+                            className={`inline-flex items-center rounded-t-lg border border-b-0 transition-colors shrink-0 ${
+                              isActiveTab
+                                ? 'bg-slate-950 text-white border-slate-700 border-t-2 border-t-cyan-400 -mb-px pb-0.5 z-10 shadow-xs'
+                                : 'bg-white/90 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={isActiveTab}
+                              onClick={() => {
+                                setConsoleDeviceId(tabDev.id);
+                                setSelectedDeviceId(tabDev.id);
+                                setSelectedDeviceIds([tabDev.id]);
+                                setCmdCursor(-1);
+                                window.setTimeout(() => cliInputRef.current?.focus(), 0);
+                              }}
+                              className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 text-xs font-mono font-semibold whitespace-nowrap focus:outline-none"
+                            >
+                              <CiscoDeviceIcon type={tabDev.type} className="w-4 h-3.5 shrink-0" />
+                              <span className="truncate max-w-[140px]">{tabDev.name}</span>
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Close ${tabDev.name} tab`}
+                              title={`Close ${tabDev.name} tab`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                closeConsoleTab(tabDev.id);
+                              }}
+                              className={`mr-1.5 p-0.5 rounded transition-colors ${
+                                isActiveTab
+                                  ? 'text-slate-400 hover:text-white hover:bg-slate-800'
+                                  : 'text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700'
+                              }`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Active Device CLI Terminal */}
+                    <div className="flex-1 min-h-0 flex flex-col bg-slate-950 text-slate-100 font-mono overflow-hidden">
+                          <div
+                            onClick={() => cliInputRef.current?.focus()}
+                            className="flex-1 min-h-0 p-4 overflow-y-auto text-xs leading-relaxed space-y-1 cursor-text"
+                          >
+                            {consoleDevice.cliHistory.map((line, i) => (
+                              <div key={i} className="whitespace-pre-wrap break-words">
+                                {line.startsWith(consoleDevice.name) ? (
+                                  <span className="text-amber-300 font-semibold">{line}</span>
+                                ) : line.startsWith('%') ? (
+                                  <span className="text-red-300">{line}</span>
+                                ) : (
+                                  <span className="text-slate-300">{line}</span>
+                                )}
+                              </div>
+                            ))}
+
+                            <form onSubmit={(e) => handleRunCliCommand(e)} className="flex items-center gap-1.5 pt-1">
+                              <span className="text-amber-300 font-bold whitespace-nowrap">
+                                {getCliPrompt(consoleDevice)}
+                              </span>
+                              <input
+                                ref={cliInputRef}
+                                type="text"
+                                value={cliInput}
+                                onChange={(e) => setCliInput(e.target.value)}
+                                onKeyDown={handleCliKeyDown}
+                                autoFocus
+                                placeholder="Type command, ? for help, or Tab to autocomplete..."
+                                className="flex-1 bg-transparent border-none outline-none text-cyan-300 font-mono text-xs p-0 placeholder-slate-600"
+                              />
+                            </form>
+                            <div ref={terminalEndRef} />
+                          </div>
+
+                          <div className="p-2.5 bg-slate-900 border-t border-slate-800 flex items-center gap-1.5 overflow-x-auto text-[11px] shrink-0">
+                            <span className="text-slate-400 shrink-0 px-1">Quick:</span>
+                            {(consoleDevice.type === 'router'
+                              ? [
+                                  'conf t',
+                                  'show ip int br',
+                                  'show ip route',
+                                  'show ip ospf nei',
+                                  'show cdp nei',
+                                  'show run',
+                                  'copy run start'
+                                ]
+                              : consoleDevice.type === 'switch'
+                              ? [
+                                  'conf t',
+                                  'show vlan brief',
+                                  'show int status',
+                                  'show int trunk',
+                                  'show mac address-table',
+                                  'show cdp nei',
+                                  'int range fa0/1-4'
+                                ]
+                              : ['ipconfig', 'ipconfig /all', 'ping ', 'tracert ']
+                            ).map(snippet => (
+                              <button
+                                key={snippet}
+                                type="button"
+                                onClick={() => {
+                                  if (snippet.endsWith(' ')) {
+                                    setCliInput(snippet);
+                                    cliInputRef.current?.focus();
+                                  } else {
+                                    handleRunCliCommand(undefined, snippet);
+                                  }
+                                }}
+                                className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 whitespace-nowrap shrink-0"
+                              >
+                                {snippet.trim()}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                    {!isConsoleExpanded && (
+                      <div
+                        role="separator"
+                        aria-label="Resize console window"
+                        title="Drag corner to resize console window"
+                        onPointerDown={(e) => {
+                          if (e.button !== 0 || !consoleDialogRef.current) return;
+                          e.stopPropagation();
+                          const rect = consoleDialogRef.current.getBoundingClientRect();
+                          consoleResizeRef.current = {
+                            startClientX: e.clientX,
+                            startClientY: e.clientY,
+                            initWidth: rect.width,
+                            initHeight: rect.height,
+                            initOffsetX: consoleOffset.x,
+                            initOffsetY: consoleOffset.y
+                          };
+                        }}
+                        className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize touch-none flex items-end justify-end p-1 text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 transition-colors"
+                      >
+                        <svg viewBox="0 0 12 12" className="w-3 h-3" aria-hidden="true">
+                          <path
+                            d="M11 1L1 11M11 5L5 11M11 9L9 11"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Selected Shape Styling Bar */}
@@ -5572,7 +6183,7 @@ export const NetworkTopologySimulator: React.FC = () => {
           {/* Quick End-to-End Connectivity Tester */}
           <form
             onSubmit={handleQuickPing}
-            className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center gap-3"
+            className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center gap-3 shrink-0"
           >
             <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-100 shrink-0">
               <Play className="w-4 h-4 text-blue-600 dark:text-cyan-400" />
@@ -5619,1112 +6230,34 @@ export const NetworkTopologySimulator: React.FC = () => {
             >
               Send Ping
             </button>
+
+            {lastPingResult && (
+              <div
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs min-w-0 max-w-full ${
+                  lastPingResult.success
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                    : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+                }`}
+              >
+                {lastPingResult.success ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                ) : (
+                  <XCircle className="w-3.5 h-3.5 shrink-0" />
+                )}
+                <span className="font-mono truncate">{lastPingResult.summary}</span>
+                <button
+                  type="button"
+                  onClick={() => setLastPingResult(null)}
+                  aria-label="Dismiss ping result"
+                  className="p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 shrink-0"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
           </form>
         </div>
-
-        {/* Right Zone (5 cols): Device Inspector, CLI Terminal, Config & Lab Objectives */}
-        <div className="xl:col-span-5 min-w-0 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col min-h-[460px] xl:min-h-[540px]">
-          {/* Inspector Header */}
-          <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                {selectedDeviceIds.length === 1 && selectedDevice && isRenamingInspectorHeader ? (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      commitDeviceRename(selectedDevice.id, inspectorNameDraft);
-                    }}
-                    className="flex items-center gap-1.5"
-                  >
-                    <input
-                      type="text"
-                      autoFocus
-                      maxLength={64}
-                      aria-label="Edit device label name"
-                      value={inspectorNameDraft}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onChange={(e) => setInspectorNameDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Escape') {
-                          e.preventDefault();
-                          setIsRenamingInspectorHeader(false);
-                        }
-                      }}
-                      className="flex-1 min-w-0 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-blue-500 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button
-                      type="submit"
-                      aria-label="Save device label"
-                      title="Save label"
-                      className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Cancel rename"
-                      title="Cancel"
-                      onClick={() => setIsRenamingInspectorHeader(false)}
-                      className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors shrink-0"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </form>
-                ) : (
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <h2
-                      onDoubleClick={() => {
-                        if (selectedDeviceIds.length === 1 && selectedDevice) {
-                          setInspectorNameDraft(selectedDevice.name);
-                          setIsRenamingInspectorHeader(true);
-                        }
-                      }}
-                      className="text-sm font-bold text-slate-900 dark:text-white truncate"
-                    >
-                      {selectedDeviceIds.length > 1
-                        ? `${selectedDeviceIds.length} Devices Selected`
-                        : selectedDevice
-                        ? `${selectedDevice.name} · ${selectedDevice.model}`
-                        : 'Lab Verification & Packet Trace'}
-                    </h2>
-                    {selectedDeviceIds.length === 1 && selectedDevice && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setInspectorNameDraft(selectedDevice.name);
-                          setIsRenamingInspectorHeader(true);
-                        }}
-                        className="p-1 rounded-md text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 transition-colors shrink-0"
-                        title="Rename device label"
-                        aria-label="Rename device label"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                )}
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  {selectedDeviceIds.length > 1
-                    ? 'Long-click any selected node to drag together, or click Delete Selected'
-                    : isConsoleActive
-                    ? 'Configure interfaces, routing, VLANs, or run CLI commands below'
-                    : selectedDevice
-                    ? 'Device selected — double-click on canvas to open console & configuration'
-                    : 'Drag devices onto the workspace, click to select, long-click to move, double-click for console'}
-                </p>
-              </div>
-
-              {selectedDeviceIds.length > 1 ? (
-                <button
-                  type="button"
-                  onClick={handleDeleteSelectedDevices}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-950/70 transition-colors shrink-0 whitespace-nowrap"
-                  title="Delete all selected devices"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Delete ({selectedDeviceIds.length})</span>
-                </button>
-              ) : (
-                selectedDevice && (
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteDevice(selectedDevice.id)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors shrink-0"
-                    title="Delete selected device"
-                    aria-label="Delete selected device"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )
-              )}
-            </div>
-
-            {/* Segmented Inspector Tabs (shown only when a user double-clicks a device to start console) */}
-            {isConsoleActive && (
-              <div
-                role="tablist"
-                aria-label="Device inspector panels"
-                className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={inspectorTab === 'cli'}
-                  onClick={() => setInspectorTab('cli')}
-                  className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
-                    inspectorTab === 'cli'
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  <TerminalIcon className="w-3.5 h-3.5 shrink-0" />
-                  <span>CLI</span>
-                </button>
-
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={inspectorTab === 'config'}
-                  onClick={() => setInspectorTab('config')}
-                  className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
-                    inspectorTab === 'config'
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  <Sliders className="w-3.5 h-3.5 shrink-0" />
-                  <span>Config</span>
-                </button>
-
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={inspectorTab === 'tables'}
-                  onClick={() => setInspectorTab('tables')}
-                  className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
-                    inspectorTab === 'tables'
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  <Table2 className="w-3.5 h-3.5 shrink-0" />
-                  <span>Tables</span>
-                </button>
-
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={inspectorTab === 'objectives'}
-                  onClick={() => setInspectorTab('objectives')}
-                  className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
-                    inspectorTab === 'objectives'
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  <CheckSquare className="w-3.5 h-3.5 shrink-0" />
-                  <span>Verify</span>
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Inspector Body */}
-          <div className="flex-1 flex flex-col min-h-0">
-            {/* TAB 1: Per-Device CLI Terminal */}
-            {inspectorTab === 'cli' && isConsoleActive && selectedDevice && (
-              <div className="flex-1 flex flex-col bg-slate-950 text-slate-100 font-mono">
-                <div
-                  onClick={() => cliInputRef.current?.focus()}
-                  className="flex-1 p-4 overflow-y-auto text-xs leading-relaxed space-y-1 max-h-[420px] cursor-text"
-                >
-                  {selectedDevice.cliHistory.map((line, i) => (
-                    <div key={i} className="whitespace-pre-wrap break-words">
-                      {line.startsWith(selectedDevice.name) ? (
-                        <span className="text-amber-300 font-semibold">{line}</span>
-                      ) : line.startsWith('%') ? (
-                        <span className="text-red-300">{line}</span>
-                      ) : (
-                        <span className="text-slate-300">{line}</span>
-                      )}
-                    </div>
-                  ))}
-
-                  <form onSubmit={(e) => handleRunCliCommand(e)} className="flex items-center gap-1.5 pt-1">
-                    <span className="text-amber-300 font-bold whitespace-nowrap">
-                      {getCliPrompt(selectedDevice)}
-                    </span>
-                    <input
-                      ref={cliInputRef}
-                      type="text"
-                      value={cliInput}
-                      onChange={(e) => setCliInput(e.target.value)}
-                      onKeyDown={handleCliKeyDown}
-                      autoFocus
-                      placeholder="Type command, ? for help, or Tab to autocomplete..."
-                      className="flex-1 bg-transparent border-none outline-none text-cyan-300 font-mono text-xs p-0 placeholder-slate-600"
-                    />
-                  </form>
-                  <div ref={terminalEndRef} />
-                </div>
-
-                {/* Quick Run Snippets per Device Type */}
-                <div className="p-2.5 bg-slate-900 border-t border-slate-800 flex items-center gap-1.5 overflow-x-auto text-[11px]">
-                  <span className="text-slate-400 shrink-0 px-1">Quick:</span>
-                  {(selectedDevice.type === 'router'
-                    ? [
-                        'conf t',
-                        'show ip int br',
-                        'show ip route',
-                        'show ip ospf nei',
-                        'show cdp nei',
-                        'show run',
-                        'copy run start'
-                      ]
-                    : selectedDevice.type === 'switch'
-                    ? [
-                        'conf t',
-                        'show vlan brief',
-                        'show int status',
-                        'show int trunk',
-                        'show mac address-table',
-                        'show cdp nei',
-                        'int range fa0/1-4'
-                      ]
-                    : ['ipconfig', 'ipconfig /all', 'ping ', 'tracert ']
-                  ).map(snippet => (
-                    <button
-                      key={snippet}
-                      type="button"
-                      onClick={() => {
-                        if (snippet.endsWith(' ')) {
-                          setCliInput(snippet);
-                          cliInputRef.current?.focus();
-                        } else {
-                          handleRunCliCommand(undefined, snippet);
-                        }
-                      }}
-                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 whitespace-nowrap shrink-0"
-                    >
-                      {snippet.trim()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* TAB 2: Visual GUI Configuration */}
-            {inspectorTab === 'config' && isConsoleActive && selectedDevice && (
-              <div className="p-4 space-y-4 overflow-y-auto max-h-[480px]">
-                {/* Device Label / Hostname Editor */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <label
-                      htmlFor="device-label-hostname-input"
-                      className="text-xs font-semibold text-slate-700 dark:text-slate-300"
-                    >
-                      Device Label / Hostname
-                    </label>
-                    {((selectedDevice.labelOffsetX || 0) !== 0 ||
-                      (selectedDevice.labelOffsetY || 0) !== 0) && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateSelectedDevice(d => ({ ...d, labelOffsetX: 0, labelOffsetY: 0 }))
-                        }
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        <span>Reset Label Position</span>
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    id="device-label-hostname-input"
-                    type="text"
-                    maxLength={64}
-                    value={selectedDevice.name}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      updateSelectedDevice(d => ({ ...d, name: val }));
-                    }}
-                    onBlur={(e) => {
-                      const trimmed = e.target.value.trim().slice(0, 64);
-                      if (!trimmed) {
-                        const prefixMap: Record<SimDeviceType, string> = {
-                          router: 'R',
-                          switch: 'SW',
-                          pc: 'PC',
-                          server: 'Server'
-                        };
-                        updateSelectedDevice(d => ({ ...d, name: prefixMap[d.type] }));
-                      } else if (trimmed !== selectedDevice.name) {
-                        updateSelectedDevice(d => ({ ...d, name: trimmed }));
-                      }
-                    }}
-                    placeholder="Enter device label (e.g. R1-HQ, Core-SW)..."
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                {/* Diagram Orientation Control */}
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <label
-                      htmlFor="device-orientation-slider"
-                      className="text-xs font-semibold text-slate-700 dark:text-slate-300"
-                    >
-                      Diagram Orientation
-                    </label>
-                    <span className="font-mono tabular-nums text-xs font-bold text-blue-600 dark:text-cyan-400">
-                      {selectedDevice.rotation || 0}°
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      id="device-orientation-slider"
-                      type="range"
-                      min={0}
-                      max={359}
-                      step={1}
-                      value={selectedDevice.rotation || 0}
-                      onChange={(e) => {
-                        const deg = Number(e.target.value);
-                        updateSelectedDevice(d => ({ ...d, rotation: deg }));
-                      }}
-                      className="flex-1 accent-blue-600 dark:accent-cyan-400 cursor-pointer"
-                    />
-                    <button
-                      type="button"
-                      onClick={() =>
-                        updateSelectedDevice(d => ({
-                          ...d,
-                          rotation: (((d.rotation || 0) - 90) % 360 + 360) % 360
-                        }))
-                      }
-                      className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-500 whitespace-nowrap"
-                      title="Rotate 90° counter-clockwise"
-                    >
-                      -90°
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        updateSelectedDevice(d => ({
-                          ...d,
-                          rotation: ((d.rotation || 0) + 90) % 360
-                        }))
-                      }
-                      className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-500 whitespace-nowrap"
-                      title="Rotate 90° clockwise"
-                    >
-                      +90°
-                    </button>
-                    {(selectedDevice.rotation || 0) !== 0 && (
-                      <button
-                        type="button"
-                        onClick={() => updateSelectedDevice(d => ({ ...d, rotation: 0 }))}
-                        className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 whitespace-nowrap"
-                      >
-                        Reset
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* PC / Server IPv4 Desktop Settings */}
-                {(selectedDevice.type === 'pc' || selectedDevice.type === 'server') && (
-                  <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                      IPv4 Configuration
-                    </h3>
-                    {selectedDevice.interfaces.map(iface => (
-                      <div
-                        key={iface.name}
-                        className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2.5"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-mono font-bold text-slate-800 dark:text-slate-200">
-                            {iface.name}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateSelectedDevice(d => ({
-                                ...d,
-                                interfaces: d.interfaces.map(i =>
-                                  i.name === iface.name ? { ...i, adminUp: !i.adminUp } : i
-                                )
-                              }))
-                            }
-                            className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold ${
-                              iface.adminUp
-                                ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                                : 'bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'
-                            }`}
-                          >
-                            <Power className="w-3 h-3" />
-                            <span>{iface.adminUp ? 'Enabled' : 'Disabled'}</span>
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <div>
-                            <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
-                              IPv4 Address
-                            </label>
-                            <input
-                              type="text"
-                              value={iface.ip}
-                              placeholder="192.168.20.10"
-                              onChange={(e) => {
-                                const ip = e.target.value;
-                                updateSelectedDevice(d => ({
-                                  ...d,
-                                  interfaces: d.interfaces.map(i =>
-                                    i.name === iface.name ? { ...i, ip } : i
-                                  )
-                                }));
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono tabular-nums text-slate-900 dark:text-white"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
-                              Subnet Mask
-                            </label>
-                            <input
-                              type="text"
-                              value={iface.mask}
-                              placeholder="255.255.255.0"
-                              onChange={(e) => {
-                                const mask = e.target.value;
-                                updateSelectedDevice(d => ({
-                                  ...d,
-                                  interfaces: d.interfaces.map(i =>
-                                    i.name === iface.name ? { ...i, mask } : i
-                                  )
-                                }));
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono tabular-nums text-slate-900 dark:text-white"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
-                          Default Gateway
-                        </label>
-                        <input
-                          type="text"
-                          value={selectedDevice.gateway || ''}
-                          placeholder="192.168.20.1"
-                          onChange={(e) => {
-                            const gw = e.target.value;
-                            updateSelectedDevice(d => ({ ...d, gateway: gw }));
-                          }}
-                          className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono tabular-nums text-slate-900 dark:text-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">
-                          DNS Server
-                        </label>
-                        <input
-                          type="text"
-                          value={selectedDevice.dns || ''}
-                          placeholder="8.8.8.8"
-                          onChange={(e) => {
-                            const dns = e.target.value;
-                            updateSelectedDevice(d => ({ ...d, dns }));
-                          }}
-                          className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono tabular-nums text-slate-900 dark:text-white"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Router Interface + Static Route Editor */}
-                {selectedDevice.type === 'router' && (
-                  <>
-                    <div className="space-y-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <div className="flex items-center justify-between gap-2">
-                        <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                          Router Interfaces
-                        </h3>
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="number"
-                            min={1}
-                            max={4094}
-                            value={newSubIfId}
-                            onChange={(e) => setNewSubIfId(e.target.value)}
-                            placeholder="VLAN ID"
-                            className="w-20 px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-mono tabular-nums"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const vid = Number(newSubIfId);
-                              if (!Number.isInteger(vid) || vid < 1 || vid > 4094) return;
-                              const subName = `GigabitEthernet0/0.${vid}`;
-                              if (selectedDevice.interfaces.some(i => i.name === subName)) return;
-                              updateSelectedDevice(d => ({
-                                ...d,
-                                interfaces: [
-                                  ...d.interfaces,
-                                  {
-                                    name: subName,
-                                    shortName: `Gig0/0.${vid}`,
-                                    kind: 'subinterface',
-                                    ip: '',
-                                    mask: '255.255.255.0',
-                                    adminUp: true,
-                                    mac: d.interfaces[0]?.mac || '00:50:56:00:00:01',
-                                    parentInterface: 'GigabitEthernet0/0',
-                                    dot1qVlan: vid
-                                  }
-                                ]
-                              }));
-                              setNewSubIfId('');
-                            }}
-                            className="px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-[11px] font-semibold text-blue-700 dark:text-cyan-300 whitespace-nowrap"
-                          >
-                            + Gig0/0.VLAN
-                          </button>
-                        </div>
-                      </div>
-
-                      {selectedDevice.interfaces.map(iface => {
-                        const lineUp = isInterfaceLineProtocolUp(
-                          selectedDevice,
-                          iface,
-                          devices,
-                          links
-                        );
-                        return (
-                          <div
-                            key={iface.name}
-                            className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="text-xs font-mono font-bold text-slate-900 dark:text-white truncate">
-                                  {iface.name}
-                                </span>
-                                {iface.dot1qVlan && (
-                                  <span className="text-[10px] font-mono text-indigo-600 dark:text-indigo-300">
-                                    dot1Q {iface.dot1qVlan}
-                                  </span>
-                                )}
-                              </div>
-
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span
-                                  className={`text-[10px] font-mono font-bold ${
-                                    lineUp
-                                      ? 'text-emerald-600 dark:text-emerald-400'
-                                      : 'text-slate-400'
-                                  }`}
-                                >
-                                  {lineUp ? 'line up' : 'line down'}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    updateSelectedDevice(d => ({
-                                      ...d,
-                                      interfaces: d.interfaces.map(i =>
-                                        i.name === iface.name ? { ...i, adminUp: !i.adminUp } : i
-                                      )
-                                    }))
-                                  }
-                                  className={`px-2 py-0.5 rounded-md text-[11px] font-semibold border ${
-                                    iface.adminUp
-                                      ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
-                                      : 'bg-red-50 dark:bg-red-950/60 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300'
-                                  }`}
-                                >
-                                  {iface.adminUp ? 'Up' : 'Shutdown'}
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2">
-                              <input
-                                type="text"
-                                aria-label={`${iface.name} IP`}
-                                value={iface.ip}
-                                placeholder="IPv4 Address"
-                                onChange={(e) => {
-                                  const ip = e.target.value;
-                                  updateSelectedDevice(d => ({
-                                    ...d,
-                                    interfaces: d.interfaces.map(i =>
-                                      i.name === iface.name ? { ...i, ip } : i
-                                    )
-                                  }));
-                                }}
-                                className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono tabular-nums"
-                              />
-                              <input
-                                type="text"
-                                aria-label={`${iface.name} Subnet Mask`}
-                                value={iface.mask}
-                                placeholder="Subnet Mask"
-                                onChange={(e) => {
-                                  const mask = e.target.value;
-                                  updateSelectedDevice(d => ({
-                                    ...d,
-                                    interfaces: d.interfaces.map(i =>
-                                      i.name === iface.name ? { ...i, mask } : i
-                                    )
-                                  }));
-                                }}
-                                className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono tabular-nums"
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Quick Static Route Builder */}
-                    <div className="space-y-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                        Static Routes (ip route)
-                      </h3>
-                      <div className="grid grid-cols-3 gap-1.5">
-                        <input
-                          type="text"
-                          value={newRouteNet}
-                          onChange={(e) => setNewRouteNet(e.target.value)}
-                          placeholder="Network"
-                          className="px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-mono"
-                        />
-                        <input
-                          type="text"
-                          value={newRouteMask}
-                          onChange={(e) => setNewRouteMask(e.target.value)}
-                          placeholder="Mask"
-                          className="px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-mono"
-                        />
-                        <input
-                          type="text"
-                          value={newRouteHop}
-                          onChange={(e) => setNewRouteHop(e.target.value)}
-                          placeholder="Next Hop"
-                          className="px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-mono"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!isValidIp(newRouteNet) || !isValidMask(newRouteMask) || !isValidIp(newRouteHop)) {
-                            flashBanner('Enter valid IPv4 network, mask, and next-hop IP.');
-                            return;
-                          }
-                          updateSelectedDevice(d => ({
-                            ...d,
-                            staticRoutes: [
-                              ...d.staticRoutes,
-                              { network: newRouteNet.trim(), mask: newRouteMask.trim(), nextHop: newRouteHop.trim() }
-                            ]
-                          }));
-                          setNewRouteNet('');
-                          setNewRouteHop('');
-                        }}
-                        className="w-full py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
-                      >
-                        Add Static Route
-                      </button>
-
-                      {selectedDevice.staticRoutes.length > 0 && (
-                        <div className="space-y-1">
-                          {selectedDevice.staticRoutes.map((sr, i) => (
-                            <div
-                              key={i}
-                              className="px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between text-[11px] font-mono"
-                            >
-                              <span>
-                                {sr.network}/{maskToPrefix(sr.mask)} via {sr.nextHop}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updateSelectedDevice(d => ({
-                                    ...d,
-                                    staticRoutes: d.staticRoutes.filter((_, idx) => idx !== i)
-                                  }))
-                                }
-                                className="text-red-500 hover:text-red-400 font-semibold"
-                              >
-                                Remove
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-
-                {/* Switch VLAN & Port Mode Editor */}
-                {selectedDevice.type === 'switch' && (
-                  <>
-                    <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                        Create VLAN
-                      </h3>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <input
-                          type="number"
-                          min={2}
-                          max={4094}
-                          value={newVlanId}
-                          onChange={(e) => setNewVlanId(e.target.value)}
-                          placeholder="ID (e.g. 10)"
-                          className="w-24 px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono tabular-nums"
-                        />
-                        <input
-                          type="text"
-                          value={newVlanName}
-                          onChange={(e) => setNewVlanName(e.target.value)}
-                          placeholder="VLAN Name (e.g. Sales)"
-                          className="flex-1 min-w-[140px] px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const vid = Number(newVlanId);
-                            if (!Number.isInteger(vid) || vid < 2 || vid > 4094) return;
-                            updateSelectedDevice(d => ({
-                              ...d,
-                              vlans: d.vlans.some(v => v.id === vid)
-                                ? d.vlans
-                                : [
-                                    ...d.vlans,
-                                    { id: vid, name: newVlanName.trim() || `VLAN${vid}` }
-                                  ]
-                            }));
-                            setNewVlanId('');
-                            setNewVlanName('');
-                          }}
-                          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold whitespace-nowrap"
-                        >
-                          Add
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                        Switchport Assignment
-                      </h3>
-                      {selectedDevice.interfaces.map(iface => (
-                        <div
-                          key={iface.name}
-                          className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 flex flex-wrap items-center justify-between gap-2 text-xs"
-                        >
-                          <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
-                            {iface.shortName}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <select
-                              aria-label={`${iface.name} mode`}
-                              value={iface.switchportMode || 'access'}
-                              onChange={(e) => {
-                                const mode = e.target.value as 'access' | 'trunk';
-                                updateSelectedDevice(d => ({
-                                  ...d,
-                                  interfaces: d.interfaces.map(i =>
-                                    i.name === iface.name ? { ...i, switchportMode: mode } : i
-                                  )
-                                }));
-                              }}
-                              className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold"
-                            >
-                              <option value="access">Access</option>
-                              <option value="trunk">Trunk (802.1Q)</option>
-                            </select>
-
-                            {iface.switchportMode !== 'trunk' && (
-                              <input
-                                type="number"
-                                min={1}
-                                max={4094}
-                                aria-label={`${iface.name} access VLAN`}
-                                value={iface.accessVlan || 1}
-                                onChange={(e) => {
-                                  const vid = Number(e.target.value) || 1;
-                                  updateSelectedDevice(d => ({
-                                    ...d,
-                                    vlans: d.vlans.some(v => v.id === vid)
-                                      ? d.vlans
-                                      : [...d.vlans, { id: vid, name: `VLAN${vid}` }],
-                                    interfaces: d.interfaces.map(i =>
-                                      i.name === iface.name ? { ...i, accessVlan: vid } : i
-                                    )
-                                  }));
-                                }}
-                                className="w-16 px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-mono tabular-nums"
-                              />
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* TAB 3: Live Tables (Routing Table / VLAN Database / NIC Status) */}
-            {inspectorTab === 'tables' && isConsoleActive && selectedDevice && (
-              <div className="p-4 space-y-4 overflow-y-auto max-h-[480px]">
-                {selectedDevice.type === 'router' && (
-                  <div className="space-y-2">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                      IPv4 Routing Table ({selectedDevice.name})
-                    </h3>
-                    {routingTable.length === 0 ? (
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        No active routes. Assign IP addresses and bring up interfaces.
-                      </p>
-                    ) : (
-                      <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-x-auto font-mono text-[11px]">
-                        <table className="w-full text-left">
-                          <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                            <tr>
-                              <th className="p-2">Code</th>
-                              <th className="p-2">Prefix</th>
-                              <th className="p-2">Next Hop</th>
-                              <th className="p-2">Exit If</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800 tabular-nums">
-                            {routingTable.map((r, i) => (
-                              <tr key={i}>
-                                <td className="p-2 font-bold text-blue-600 dark:text-cyan-400">
-                                  {r.code}
-                                </td>
-                                <td className="p-2">
-                                  {r.network}/{r.prefix}
-                                </td>
-                                <td className="p-2">{r.nextHop || 'Direct'}</td>
-                                <td className="p-2">{r.exitInterface}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {selectedDevice.type === 'switch' && (
-                  <div className="space-y-2">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                      VLAN Database ({selectedDevice.name})
-                    </h3>
-                    <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-x-auto font-mono text-[11px]">
-                      <table className="w-full text-left">
-                        <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                          <tr>
-                            <th className="p-2">VLAN</th>
-                            <th className="p-2">Name</th>
-                            <th className="p-2">Access Ports</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800 tabular-nums">
-                          {selectedDevice.vlans.map(v => (
-                            <tr key={v.id}>
-                              <td className="p-2 font-bold">{v.id}</td>
-                              <td className="p-2">{v.name}</td>
-                              <td className="p-2">
-                                {selectedDevice.interfaces
-                                  .filter(
-                                    i => i.switchportMode !== 'trunk' && (i.accessVlan || 1) === v.id
-                                  )
-                                  .map(i => i.shortName)
-                                  .join(', ') || '—'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                {(selectedDevice.type === 'pc' || selectedDevice.type === 'server') && (
-                  <div className="space-y-2">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                      Network Adapter Summary
-                    </h3>
-                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 font-mono text-xs space-y-1.5 tabular-nums">
-                      <div>IPv4: {selectedDevice.interfaces[0]?.ip || 'Unassigned'}</div>
-                      <div>Mask: {selectedDevice.interfaces[0]?.mask || 'Unassigned'}</div>
-                      <div>Gateway: {selectedDevice.gateway || 'Unassigned'}</div>
-                      <div>MAC: {selectedDevice.interfaces[0]?.mac}</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* TAB 4: Lab Verification Objectives & Packet Hop Trace */}
-            {(inspectorTab === 'objectives' || !isConsoleActive) && (
-              <div className="p-4 space-y-4 overflow-y-auto max-h-[480px]">
-                {selectedDevice && !isConsoleActive && selectedDeviceIds.length === 1 ? (
-                  <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/35 border border-blue-200 dark:border-blue-800/80 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                        {selectedDevice.name} selected
-                      </div>
-                      <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
-                        Double-click on canvas to open console · Long-click &amp; drag to move
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setConsoleDeviceId(selectedDevice.id);
-                        setInspectorTab(
-                          selectedDevice.type === 'pc' || selectedDevice.type === 'server'
-                            ? 'config'
-                            : 'cli'
-                        );
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors whitespace-nowrap shrink-0"
-                    >
-                      <TerminalIcon className="w-3.5 h-3.5" />
-                      <span>Open Console</span>
-                    </button>
-                  </div>
-                ) : (
-                  devices.length > 0 && (
-                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 text-xs text-slate-600 dark:text-slate-300 flex items-start gap-2.5">
-                      <TerminalIcon className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0 mt-0.5" />
-                      <span>
-                        {selectedDeviceIds.length > 1
-                          ? 'Multiple devices are selected. Long-click any selected device to move them together, or double-click a single device to open its console.'
-                          : 'One-click a device to select it, long-click & drag to move it, or double-click to start its console for configuration.'}
-                      </span>
-                    </div>
-                  )
-                )}
-                {/* Scenario Objectives */}
-                {activePreset.objectives.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                        Lab Verification Checklist
-                      </h3>
-                      <span className="text-[11px] font-mono tabular-nums font-bold text-blue-600 dark:text-cyan-400">
-                        {objectiveProgress.passedCount}/{objectiveProgress.totalCount} complete
-                      </span>
-                    </div>
-
-                    <div className="space-y-2">
-                      {objectiveProgress.results.map(obj => (
-                        <div
-                          key={obj.id}
-                          className={`p-2.5 rounded-xl border flex items-start gap-2.5 text-xs ${
-                            obj.passed
-                              ? 'bg-emerald-50/80 dark:bg-emerald-950/35 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
-                              : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/80 text-slate-700 dark:text-slate-300'
-                          }`}
-                        >
-                          {obj.passed ? (
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                          ) : (
-                            <AlertTriangle className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                          )}
-                          <span>{obj.label}</span>
-                        </div>
-                      ))}
-                    </div>
-
-                    {objectiveProgress.passedCount === objectiveProgress.totalCount && (
-                      <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 space-y-2.5">
-                        <div className="flex items-start gap-2 text-xs text-emerald-900 dark:text-emerald-200">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                          <div>
-                            <div className="font-bold">Lab Completed!</div>
-                            <p className="text-[11px] text-emerald-800/90 dark:text-emerald-300/90 mt-0.5">
-                              Export your finished topology as JSON or a high-resolution PNG diagram for submission.
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleExportTopology()}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-xs transition-colors whitespace-nowrap"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Export JSON</span>
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isExportingImage}
-                            onClick={() => handleExportImage('png')}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100/70 dark:hover:bg-emerald-900/40 disabled:opacity-50 text-xs font-semibold transition-colors whitespace-nowrap"
-                          >
-                            <ImageIcon className="w-3.5 h-3.5" />
-                            <span>{isExportingImage ? 'Exporting PNG...' : 'Export PNG'}</span>
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Packet Trace Log */}
-                <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                    Live Packet Simulation Trace
-                  </h3>
-
-                  {!lastPingResult ? (
-                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                      Run a ping from the bar below the topology canvas or inside any device&apos;s CLI to inspect Layer 2 switching, VLANs, and Layer 3 routing hops.
-                    </p>
-                  ) : (
-                    <div className="space-y-2.5">
-                      <div
-                        className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
-                          lastPingResult.success
-                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
-                            : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
-                        }`}
-                      >
-                        {lastPingResult.success ? (
-                          <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-                        ) : (
-                          <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                        )}
-                        <span className="font-mono">{lastPingResult.summary}</span>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        {lastPingResult.hops.map((hop, idx) => (
-                          <div
-                            key={idx}
-                            className={`p-2 rounded-lg border text-[11px] flex items-start gap-2 transition-colors ${
-                              animStepIndex === idx
-                                ? 'bg-blue-50 dark:bg-blue-950/50 border-blue-400 dark:border-cyan-500'
-                                : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-800'
-                            }`}
-                          >
-                            <span className="font-mono font-bold text-slate-500 tabular-nums">
-                              {hop.step}.
-                            </span>
-                            <div className="min-w-0">
-                              <div className="font-semibold text-slate-800 dark:text-slate-100">
-                                {hop.title}
-                              </div>
-                              <div className="text-slate-600 dark:text-slate-400 font-mono">
-                                {hop.detail}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
         </div>
-      </div>
-        </>
       ) : (
         /* My Lab Projects Repository View (Destination for Saved & Closed Lab Project Files) */
         <div className="space-y-6">
