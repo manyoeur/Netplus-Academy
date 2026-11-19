@@ -30,13 +30,17 @@ import {
   Edit3
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
-import { Course } from '../../types';
+import { Course, CourseModule } from '../../types';
 import { InteractiveCliTerminal } from '../Lab/InteractiveCliTerminal';
 import { CourseThumbnail } from './CourseThumbnail';
 import { InteractiveQuiz, QuizResult } from './InteractiveQuiz';
 import { VideoLecturePlayer } from './VideoLecturePlayer';
 import { PostModuleQuiz } from './PostModuleQuiz';
-import { HierarchyContentWorkspace } from './HierarchyContentWorkspace';
+import {
+  HierarchyContentWorkspace,
+  MarkdownProse,
+  ModuleContentWorkspace
+} from './HierarchyContentWorkspace';
 import { PersonalFlashcardModal } from '../Flashcards/PersonalFlashcardModal';
 import {
   getBetweenModuleQuiz,
@@ -172,9 +176,12 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     recordStudyTime,
     personalFlashcards,
     savePersonalFlashcard,
-    updateCourse
+    updateCourse,
+    updateModuleInCourse
   } = useAcademy();
   const course = courses.find(c => c.id === courseId) || courses[0];
+  const canEditCourseContent =
+    currentUser.role === 'admin' || currentUser.role === 'instructor';
 
   const [readingStore, setReadingStore] = useState<ReadingStore>(() =>
     readReadingStore(currentUser.id)
@@ -252,6 +259,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     | { level: 'section'; chapterId: string; sectionId: string }
   >({ level: 'module' });
   const [openHierarchyEditorOnSelect, setOpenHierarchyEditorOnSelect] = useState<boolean>(false);
+  const [openModuleEditorOnSelect, setOpenModuleEditorOnSelect] = useState<boolean>(false);
   const [quizOrigin, setQuizOrigin] = useState<'manual' | 'next-step'>('manual');
   const [checkpointStore, setCheckpointStore] = useState<CheckpointStore>(() =>
     readCheckpointStore(currentUser.id)
@@ -294,6 +302,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     setPlayerMode('study');
     setSelectedOutlineNode({ level: 'module' });
     setOpenHierarchyEditorOnSelect(false);
+    setOpenModuleEditorOnSelect(false);
     setQuizOrigin('manual');
     setLiveQuizProgress(null);
     const lastModId = freshStore[course.id]?.lastModuleId;
@@ -717,6 +726,31 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     );
   }, [activeHierarchyChapter, selectedOutlineNode]);
 
+  const activeChapterIdx = activeHierarchyChapter
+    ? hierarchyTree.findIndex(ch => ch.id === activeHierarchyChapter.id)
+    : -1;
+  const previousHierarchyChapter =
+    activeChapterIdx > 0 ? hierarchyTree[activeChapterIdx - 1] : null;
+  const nextHierarchyChapter =
+    activeChapterIdx >= 0 && activeChapterIdx < hierarchyTree.length - 1
+      ? hierarchyTree[activeChapterIdx + 1]
+      : null;
+  const activeSectionIdx =
+    activeHierarchyChapter && activeHierarchySection
+      ? activeHierarchyChapter.mainContents.findIndex(sec => sec.id === activeHierarchySection.id)
+      : -1;
+  const nextHierarchySection =
+    activeHierarchyChapter &&
+    activeSectionIdx >= 0 &&
+    activeSectionIdx < activeHierarchyChapter.mainContents.length - 1
+      ? {
+          chapterId: activeHierarchyChapter.id,
+          id: activeHierarchyChapter.mainContents[activeSectionIdx + 1].id,
+          sectionNumber: activeHierarchyChapter.mainContents[activeSectionIdx + 1].sectionNumber,
+          title: activeHierarchyChapter.mainContents[activeSectionIdx + 1].title
+        }
+      : null;
+
   const isViewingHierarchyContent =
     playerMode === 'study' &&
     selectedOutlineNode.level !== 'module' &&
@@ -828,9 +862,23 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     window.setTimeout(() => setFlashcardSavedToast(null), 3200);
   };
 
+  const handleSaveModuleContent = (
+    moduleId: string,
+    updated: Partial<CourseModule>
+  ) => {
+    updateModuleInCourse(course.id, moduleId, updated);
+    const modIndex = course.modules.findIndex(m => m.id === moduleId);
+    const breadcrumb = getModuleSectionBreadcrumb(course, moduleId);
+    const itemNum = breadcrumb?.itemNumber || (modIndex >= 0 ? `M${modIndex + 1}` : '');
+    const title = updated.title || course.modules[modIndex]?.title || 'Lesson';
+    setFlashcardSavedToast(`Saved content for ${itemNum ? `${itemNum} ` : ''}${title}`);
+    window.setTimeout(() => setFlashcardSavedToast(null), 3200);
+  };
+
   const handleOpenModuleQuiz = (moduleIndex: number, origin: 'manual' | 'next-step' = 'manual') => {
     flushCurrentModuleProgress();
     setSelectedOutlineNode({ level: 'module' });
+    setOpenModuleEditorOnSelect(false);
     setActiveModuleIndex(moduleIndex);
     setQuizOrigin(origin);
     setPlayerMode('quiz');
@@ -844,17 +892,24 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     } else {
       setQuizOrigin('manual');
       setSelectedOutlineNode({ level: 'module' });
+      setOpenModuleEditorOnSelect(false);
       setPlayerMode('study');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
-  const handleSelectModule = (idx: number) => {
+  const handleSelectModule = (idx: number, openEditor = false) => {
     flushCurrentModuleProgress();
     setSelectedOutlineNode({ level: 'module' });
     setQuizOrigin('manual');
+    if (openEditor && canEditCourseContent) {
+      setPlayerMode('study');
+      setOpenModuleEditorOnSelect(true);
+    } else {
+      setOpenModuleEditorOnSelect(false);
+    }
     setActiveModuleIndex(idx);
-    if (playerMode === 'quiz') {
+    if (playerMode === 'quiz' || openEditor) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -1164,15 +1219,17 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                           aria-label="Chapter has written content"
                         />
                       )}
-                      <button
-                        type="button"
-                        onClick={() => handleSelectHierarchyChapter(chapter.id, true)}
-                        className="p-1 rounded-md text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover:opacity-100 transition-opacity"
-                        title={`Write or edit content for ${chapter.chapterNumber} ${chapter.title}`}
-                        aria-label={`Write content for ${chapter.chapterNumber} ${chapter.title}`}
-                      >
-                        <Edit3 className="w-3 h-3" />
-                      </button>
+                      {canEditCourseContent && (
+                        <button
+                          type="button"
+                          onClick={() => handleSelectHierarchyChapter(chapter.id, true)}
+                          className="p-1 rounded-md text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover:opacity-100 transition-opacity"
+                          title={`Write or edit content for ${chapter.chapterNumber} ${chapter.title}`}
+                          aria-label={`Write content for ${chapter.chapterNumber} ${chapter.title}`}
+                        >
+                          <Edit3 className="w-3 h-3" />
+                        </button>
+                      )}
                       <span className="text-[10px] font-mono tabular-nums text-slate-400">
                         {chapterDoneCount}/{chapterModules.length}
                       </span>
@@ -1192,9 +1249,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                     </div>
                   </div>
 
-                  {/* Level 2: Main Contents List */}
+                  {/* Level 2: Main Contents List (indented inside Level 1 Chapter) */}
                   {isChapterOpen && (
-                    <div className="mt-1 space-y-2">
+                    <div className="mt-1.5 ml-3 pl-2.5 border-l-2 border-slate-200/80 dark:border-slate-800 space-y-1.5">
                       {chapter.mainContents.map((section) => {
                         const isSectionOpen = Boolean(expandedSections[section.id]);
                         const isSectionSelected =
@@ -1240,17 +1297,19 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                     aria-label="Section has written content"
                                   />
                                 )}
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleSelectHierarchySection(chapter.id, section.id, true)
-                                  }
-                                  className="p-0.5 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover/sec:opacity-100 transition-opacity"
-                                  title={`Write or edit content for ${section.sectionNumber} ${section.title}`}
-                                  aria-label={`Write content for ${section.sectionNumber} ${section.title}`}
-                                >
-                                  <Edit3 className="w-3 h-3" />
-                                </button>
+                                {canEditCourseContent && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleSelectHierarchySection(chapter.id, section.id, true)
+                                    }
+                                    className="p-0.5 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover/sec:opacity-100 transition-opacity"
+                                    title={`Write or edit content for ${section.sectionNumber} ${section.title}`}
+                                    aria-label={`Write content for ${section.sectionNumber} ${section.title}`}
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => toggleSectionAccordion(section.id)}
@@ -1267,9 +1326,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                               </div>
                             </div>
 
-                            {/* Level 3: Course Content Items (e.g. "1.1.1 Steps of Data Profiling") */}
+                            {/* Level 3: Course Content Items (indented inside Level 2 Section) */}
                             {isSectionOpen && (
-                              <div className="pl-6 space-y-0.5">
+                              <div className="ml-3 pl-2.5 border-l border-slate-200/70 dark:border-slate-800/80 space-y-0.5">
                                 {section.items.length === 0 ? (
                                   <p className="px-2 py-1 text-[11px] text-slate-400">
                                     No course contents yet.
@@ -1310,10 +1369,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
                                     return (
                                       <React.Fragment key={m.id}>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleSelectModule(idx)}
-                                          className={`w-full px-2.5 py-2 rounded-lg text-left transition-colors flex items-start gap-2.5 ${
+                                        <div
+                                          className={`group/mod w-full px-2.5 py-2 rounded-lg transition-colors flex items-start gap-1.5 ${
                                             isActive
                                               ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold'
                                               : isModMasteryLocked
@@ -1321,52 +1378,72 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                               : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
                                           }`}
                                         >
-                                          <div className="mt-0.5 shrink-0">
-                                            {isDone ? (
-                                              <CheckCircle className="w-4 h-4 text-emerald-500" />
-                                            ) : isModMasteryLocked ? (
-                                              <Lock className="w-4 h-4 text-amber-500" />
-                                            ) : (
-                                              <ModTypeIcon
-                                                className={`w-4 h-4 ${
-                                                  isActive
-                                                    ? 'text-slate-900 dark:text-white'
-                                                    : 'text-slate-500 dark:text-slate-400'
-                                                }`}
-                                              />
-                                            )}
-                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleSelectModule(idx, false)}
+                                            className="flex-1 min-w-0 text-left flex items-start gap-2.5"
+                                          >
+                                            <div className="mt-0.5 shrink-0">
+                                              {isDone ? (
+                                                <CheckCircle className="w-4 h-4 text-emerald-500" />
+                                              ) : isModMasteryLocked ? (
+                                                <Lock className="w-4 h-4 text-amber-500" />
+                                              ) : (
+                                                <ModTypeIcon
+                                                  className={`w-4 h-4 ${
+                                                    isActive
+                                                      ? 'text-slate-900 dark:text-white'
+                                                      : 'text-slate-500 dark:text-slate-400'
+                                                  }`}
+                                                />
+                                              )}
+                                            </div>
 
-                                          <div className="flex-1 min-w-0">
-                                            <p className="text-[12px] leading-snug">
-                                              <span className="tabular-nums mr-1.5 text-slate-500 dark:text-slate-400">
-                                                {itemNumber}
-                                              </span>
-                                              {m.title}
-                                            </p>
-                                            {isModMasteryLocked && modBlockingVideo ? (
-                                              <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 block mt-0.5">
-                                                Pass M{modBlockingVideo.moduleIndex + 1} quiz to unlock
-                                              </span>
-                                            ) : !isDone && savedModPercent > 0 ? (
-                                              <span className="text-[10px] font-mono tabular-nums text-blue-600 dark:text-cyan-400 block mt-0.5">
-                                                {savedModPercent}% read
-                                              </span>
+                                            <div className="flex-1 min-w-0">
+                                              <p className="text-[12px] leading-snug">
+                                                <span className="tabular-nums mr-1.5 text-slate-500 dark:text-slate-400">
+                                                  {itemNumber}
+                                                </span>
+                                                {m.title}
+                                              </p>
+                                              {isModMasteryLocked && modBlockingVideo ? (
+                                                <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 block mt-0.5">
+                                                  Pass M{modBlockingVideo.moduleIndex + 1} quiz to unlock
+                                                </span>
+                                              ) : !isDone && savedModPercent > 0 ? (
+                                                <span className="text-[10px] font-mono tabular-nums text-blue-600 dark:text-cyan-400 block mt-0.5">
+                                                  {savedModPercent}% read
+                                                </span>
+                                              ) : null}
+                                            </div>
+                                          </button>
+
+                                          <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                                            {canEditCourseContent && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleSelectModule(idx, true)}
+                                                className="p-0.5 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover/mod:opacity-100 transition-opacity"
+                                                title={`Edit content for ${itemNumber} ${m.title}`}
+                                                aria-label={`Edit content for ${itemNumber} ${m.title}`}
+                                              >
+                                                <Edit3 className="w-3 h-3" />
+                                              </button>
+                                            )}
+
+                                            {isStudentPaymentRequired && idx > 0 ? (
+                                              <Lock
+                                                className="w-3.5 h-3.5 shrink-0 text-slate-400 dark:text-slate-500"
+                                                aria-label="Payment required"
+                                              />
+                                            ) : isModMasteryLocked ? (
+                                              <Lock
+                                                className="w-3.5 h-3.5 shrink-0 text-amber-500"
+                                                aria-label="Mastery check required"
+                                              />
                                             ) : null}
                                           </div>
-
-                                          {isStudentPaymentRequired && idx > 0 ? (
-                                            <Lock
-                                              className="w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-400 dark:text-slate-500"
-                                              aria-label="Payment required"
-                                            />
-                                          ) : isModMasteryLocked ? (
-                                            <Lock
-                                              className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-500"
-                                              aria-label="Mastery check required"
-                                            />
-                                          ) : null}
-                                        </button>
+                                        </div>
 
                                         {/* Per-Module Quiz Mode Trigger */}
                                         {modQuiz && m.type !== 'quiz' && (
@@ -1643,6 +1720,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               courseCode={course.code}
               chapter={activeHierarchyChapter}
               section={activeHierarchySection}
+              canEdit={canEditCourseContent}
               startInEditMode={openHierarchyEditorOnSelect}
               onConsumeStartInEditMode={() => setOpenHierarchyEditorOnSelect(false)}
               onSelectChapter={(chapterId, openEditor) =>
@@ -1651,10 +1729,29 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               onSelectSection={(chapterId, sectionId, openEditor) =>
                 handleSelectHierarchySection(chapterId, sectionId, Boolean(openEditor))
               }
-              onOpenModule={(flatIndex) => handleSelectModule(flatIndex)}
+              onOpenModule={(flatIndex) => handleSelectModule(flatIndex, false)}
               onSaveContent={handleSaveHierarchyContent}
               onBackToActiveModule={() => setSelectedOutlineNode({ level: 'module' })}
               activeModuleTitle={activeModule?.title}
+              previousChapter={
+                previousHierarchyChapter
+                  ? {
+                      id: previousHierarchyChapter.id,
+                      chapterNumber: previousHierarchyChapter.chapterNumber,
+                      title: previousHierarchyChapter.title
+                    }
+                  : null
+              }
+              nextChapter={
+                nextHierarchyChapter
+                  ? {
+                      id: nextHierarchyChapter.id,
+                      chapterNumber: nextHierarchyChapter.chapterNumber,
+                      title: nextHierarchyChapter.title
+                    }
+                  : null
+              }
+              nextSection={nextHierarchySection}
             />
           ) : isViewingLockedContent ? (
             <div className="p-6 sm:p-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm text-center space-y-5">
@@ -1955,162 +2052,194 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             </div>
           ) : (
             <>
-              {/* Theory Module */}
-              {activeModule.type === 'theory' && (
-            <div className="p-6 sm:p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-              <h1 className="text-xl font-extrabold text-slate-900 dark:text-white">
-                {activeModule.title}
-              </h1>
-
-              <div className="prose dark:prose-invert max-w-none text-xs leading-relaxed text-slate-700 dark:text-slate-300 font-sans whitespace-pre-wrap">
-                {activeModule.contentMarkdown}
-              </div>
-            </div>
-          )}
-
-          {/* Video Module with Interactive Player & Automatic Post-Module Mastery Quiz */}
-          {activeModule.type === 'video' && (
-            <VideoLecturePlayer
-              courseId={course.id}
-              module={activeModule}
-              moduleIndex={activeModuleIndex}
-              passingScore={
-                (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)?.passingScore ?? 75
-              }
-              isQuizPassed={Boolean(
-                (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) &&
-                  checkpointStore[course.id]?.[
-                    (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)!.id
-                  ]?.passed
-              )}
-              hasWatchedVideo={Boolean(watchedVideosStore[course.id]?.[activeModule.id])}
-              nextModuleTitle={
-                activeModuleIndex < course.modules.length - 1
-                  ? course.modules[activeModuleIndex + 1]?.title
-                  : undefined
-              }
-              onLectureCompleted={() => {
-                markVideoWatched(course.id, activeModule.id);
-                setPostQuizModalModuleIndex(activeModuleIndex);
-              }}
-              onOpenPostQuiz={() => setPostQuizModalModuleIndex(activeModuleIndex)}
-              onStudyTimeTick={(seconds, modId) => recordStudyTime(seconds, 'course', modId)}
-            />
-          )}
-
-          {/* Lab Module (Cisco IOS Terminal + Topology) */}
-          {activeModule.type === 'lab' && (
-            <InteractiveCliTerminal
-              module={activeModule}
-              courseId={course.id}
-              onCompleted={() => {
-                if (!isStudentPaymentRequired) {
-                  completeModule(course.id, activeModule.id);
+              <ModuleContentWorkspace
+                courseCode={course.code}
+                breadcrumb={activeBreadcrumb}
+                module={activeModule}
+                moduleIndex={activeModuleIndex}
+                canEdit={canEditCourseContent}
+                startInEditMode={openModuleEditorOnSelect}
+                onConsumeStartInEditMode={() => setOpenModuleEditorOnSelect(false)}
+                onSelectChapter={(chapterId) => handleSelectHierarchyChapter(chapterId, false)}
+                onSelectSection={(chapterId, sectionId) =>
+                  handleSelectHierarchySection(chapterId, sectionId, false)
                 }
-              }}
-            />
-          )}
+                onSaveModuleContent={handleSaveModuleContent}
+              >
+                {/* Video Module with Interactive Player & Automatic Post-Module Mastery Quiz */}
+                {activeModule.type === 'video' && (
+                  <div className="space-y-4">
+                    <VideoLecturePlayer
+                      courseId={course.id}
+                      module={activeModule}
+                      moduleIndex={activeModuleIndex}
+                      passingScore={
+                        (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)?.passingScore ?? 75
+                      }
+                      isQuizPassed={Boolean(
+                        (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) &&
+                          checkpointStore[course.id]?.[
+                            (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)!.id
+                          ]?.passed
+                      )}
+                      hasWatchedVideo={Boolean(watchedVideosStore[course.id]?.[activeModule.id])}
+                      nextModuleTitle={
+                        activeModuleIndex < course.modules.length - 1
+                          ? course.modules[activeModuleIndex + 1]?.title
+                          : undefined
+                      }
+                      onLectureCompleted={() => {
+                        markVideoWatched(course.id, activeModule.id);
+                        setPostQuizModalModuleIndex(activeModuleIndex);
+                      }}
+                      onOpenPostQuiz={() => setPostQuizModalModuleIndex(activeModuleIndex)}
+                      onStudyTimeTick={(seconds, modId) => recordStudyTime(seconds, 'course', modId)}
+                    />
+                    {activeModule.contentMarkdown?.trim() && (
+                      <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+                        <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                          Lesson Companion Notes
+                        </h3>
+                        <MarkdownProse content={activeModule.contentMarkdown} />
+                      </div>
+                    )}
+                  </div>
+                )}
 
-          {/* Wireshark PCAP Module */}
-          {activeModule.type === 'pcap' && (
-            <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
-                <h1 className="text-xl font-extrabold text-slate-900 dark:text-white">
-                  {activeModule.title}
-                </h1>
-                <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-mono text-[10px] font-bold">
-                  Wireshark Packet Dissector
-                </span>
-              </div>
+                {/* Lab Module (Cisco IOS Terminal + Topology) */}
+                {activeModule.type === 'lab' && (
+                  <div className="space-y-4">
+                    <InteractiveCliTerminal
+                      module={activeModule}
+                      courseId={course.id}
+                      onCompleted={() => {
+                        if (!isStudentPaymentRequired) {
+                          completeModule(course.id, activeModule.id);
+                        }
+                      }}
+                    />
+                    {activeModule.contentMarkdown?.trim() && (
+                      <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+                        <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                          Lab Notes &amp; Walkthrough
+                        </h3>
+                        <MarkdownProse content={activeModule.contentMarkdown} />
+                      </div>
+                    )}
+                  </div>
+                )}
 
-              {/* Simulated Packet Table */}
-              <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden font-mono text-[11px]">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                    <tr>
-                      <th className="p-2">No.</th>
-                      <th className="p-2">Time</th>
-                      <th className="p-2">Source</th>
-                      <th className="p-2">Destination</th>
-                      <th className="p-2">Protocol</th>
-                      <th className="p-2">Length</th>
-                      <th className="p-2">Info</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-800 dark:text-slate-200">
-                    <tr className="bg-blue-50/50 dark:bg-blue-950/20">
-                      <td className="p-2">1</td>
-                      <td className="p-2">0.000000</td>
-                      <td className="p-2">10.0.0.1</td>
-                      <td className="p-2">224.0.0.5</td>
-                      <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
-                      <td className="p-2">82</td>
-                      <td className="p-2 truncate max-w-xs">Hello Packet (Area 0.0.0.0, Priority 1, Dead 40s)</td>
-                    </tr>
-                    <tr>
-                      <td className="p-2">2</td>
-                      <td className="p-2">0.142010</td>
-                      <td className="p-2">10.0.0.2</td>
-                      <td className="p-2">224.0.0.5</td>
-                      <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
-                      <td className="p-2">82</td>
-                      <td className="p-2 truncate max-w-xs">Hello Packet (Area 0.0.0.0, Priority 1, Dead 40s)</td>
-                    </tr>
-                    <tr className="bg-emerald-50/50 dark:bg-emerald-950/20">
-                      <td className="p-2">3</td>
-                      <td className="p-2">0.281944</td>
-                      <td className="p-2">10.0.0.1</td>
-                      <td className="p-2">10.0.0.2</td>
-                      <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
-                      <td className="p-2">66</td>
-                      <td className="p-2 truncate max-w-xs">DB Description (Init, More, Master)</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+                {/* Wireshark PCAP Module */}
+                {activeModule.type === 'pcap' && (
+                  <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
+                        Packet Capture Dissector
+                      </h2>
+                      <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-mono text-[10px] font-bold">
+                        Wireshark Packet Dissector
+                      </span>
+                    </div>
 
-              <div className="prose dark:prose-invert max-w-none text-xs leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
-                {activeModule.contentMarkdown}
-              </div>
-            </div>
-          )}
+                    {/* Simulated Packet Table */}
+                    <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden font-mono text-[11px]">
+                      <table className="w-full text-left">
+                        <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          <tr>
+                            <th className="p-2">No.</th>
+                            <th className="p-2">Time</th>
+                            <th className="p-2">Source</th>
+                            <th className="p-2">Destination</th>
+                            <th className="p-2">Protocol</th>
+                            <th className="p-2">Length</th>
+                            <th className="p-2">Info</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-800 dark:text-slate-200">
+                          <tr className="bg-blue-50/50 dark:bg-blue-950/20">
+                            <td className="p-2">1</td>
+                            <td className="p-2">0.000000</td>
+                            <td className="p-2">10.0.0.1</td>
+                            <td className="p-2">224.0.0.5</td>
+                            <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
+                            <td className="p-2">82</td>
+                            <td className="p-2 truncate max-w-xs">Hello Packet (Area 0.0.0.0, Priority 1, Dead 40s)</td>
+                          </tr>
+                          <tr>
+                            <td className="p-2">2</td>
+                            <td className="p-2">0.142010</td>
+                            <td className="p-2">10.0.0.2</td>
+                            <td className="p-2">224.0.0.5</td>
+                            <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
+                            <td className="p-2">82</td>
+                            <td className="p-2 truncate max-w-xs">Hello Packet (Area 0.0.0.0, Priority 1, Dead 40s)</td>
+                          </tr>
+                          <tr className="bg-emerald-50/50 dark:bg-emerald-950/20">
+                            <td className="p-2">3</td>
+                            <td className="p-2">0.281944</td>
+                            <td className="p-2">10.0.0.1</td>
+                            <td className="p-2">10.0.0.2</td>
+                            <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
+                            <td className="p-2">66</td>
+                            <td className="p-2 truncate max-w-xs">DB Description (Init, More, Master)</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
 
-              {/* Quiz Module (Powered by InteractiveQuiz with immediate feedback & scoring) */}
-              {activeModule.type === 'quiz' && activeModule.quiz && (
-                <InteractiveQuiz
-                  quizKey={`${course.id}:${activeModule.id}`}
-                  title={activeModule.title}
-                  subtitle={activeModule.summary}
-                  questions={activeModule.quiz.questions}
-                  passingScore={
-                    activeModule.quiz.passingScore ||
-                    course.gradingCriteria?.quizPassingScore ||
-                    75
-                  }
-                  mode="module"
-                  allowModeToggle={true}
-                  nextModuleTitle={
-                    activeModuleIndex < course.modules.length - 1
-                      ? course.modules[activeModuleIndex + 1]?.title
-                      : undefined
-                  }
-                  previousResult={
-                    checkpointStore[course.id]?.[`module:${activeModule.id}`] || null
-                  }
-                  allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
-                  onComplete={(result) => {
-                    saveQuizResult(`module:${activeModule.id}`, result);
-                    if (result.passed && !isStudentPaymentRequired) {
-                      completeModule(course.id, activeModule.id);
-                    }
-                  }}
-                  onContinue={
-                    activeModuleIndex < course.modules.length - 1
-                      ? () => handleNextModule()
-                      : undefined
-                  }
-                />
-              )}
+                    {activeModule.contentMarkdown?.trim() && (
+                      <MarkdownProse content={activeModule.contentMarkdown} />
+                    )}
+                  </div>
+                )}
+
+                {/* Quiz Module (Powered by InteractiveQuiz with immediate feedback & scoring) */}
+                {activeModule.type === 'quiz' && activeModule.quiz && (
+                  <div className="space-y-4">
+                    {activeModule.contentMarkdown?.trim() && (
+                      <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+                        <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                          Assessment Briefing
+                        </h3>
+                        <MarkdownProse content={activeModule.contentMarkdown} />
+                      </div>
+                    )}
+                    <InteractiveQuiz
+                      quizKey={`${course.id}:${activeModule.id}`}
+                      title={activeModule.title}
+                      subtitle={activeModule.summary}
+                      questions={activeModule.quiz.questions}
+                      passingScore={
+                        activeModule.quiz.passingScore ||
+                        course.gradingCriteria?.quizPassingScore ||
+                        75
+                      }
+                      mode="module"
+                      allowModeToggle={true}
+                      nextModuleTitle={
+                        activeModuleIndex < course.modules.length - 1
+                          ? course.modules[activeModuleIndex + 1]?.title
+                          : undefined
+                      }
+                      previousResult={
+                        checkpointStore[course.id]?.[`module:${activeModule.id}`] || null
+                      }
+                      allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
+                      onComplete={(result) => {
+                        saveQuizResult(`module:${activeModule.id}`, result);
+                        if (result.passed && !isStudentPaymentRequired) {
+                          completeModule(course.id, activeModule.id);
+                        }
+                      }}
+                      onContinue={
+                        activeModuleIndex < course.modules.length - 1
+                          ? () => handleNextModule()
+                          : undefined
+                      }
+                    />
+                  </div>
+                )}
+              </ModuleContentWorkspace>
 
               {/* Post-Module Quiz Mode Callout at Bottom of Every Non-Quiz Module */}
               {activeModule.type !== 'quiz' && activeModuleQuiz && (
