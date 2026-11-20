@@ -527,15 +527,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
 
                 <div className="min-w-0">
-                  <div className="flex items-baseline gap-1 whitespace-nowrap">
-                    <span className="text-base font-extrabold tracking-tight bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-500 bg-clip-text text-transparent">
-                      Netplus
+                  <div className="flex flex-col leading-tight">
+                    <span className="text-[13px] font-extrabold tracking-tight bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-500 bg-clip-text text-transparent truncate">
+                      Network Plus
                     </span>
-                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 transition-colors group-hover/brand:text-slate-900 dark:group-hover/brand:text-white">
+                    <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 transition-colors group-hover/brand:text-slate-900 dark:group-hover/brand:text-white">
                       Academy
                     </span>
                   </div>
-                  <p className="hidden lg:block text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate">
+                  <p className="hidden lg:block text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate mt-0.5">
                     {isPinned ? 'Pinned workspace' : 'Auto-hide active'}
                   </p>
                 </div>
@@ -695,11 +695,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => handleNavClick('courses')}
                 onMouseEnter={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
-                  setRailTooltip({ label: 'Netplus Academy Home', top: rect.top + rect.height / 2 });
+                  setRailTooltip({ label: 'Network Plus Academy Home', top: rect.top + rect.height / 2 });
                 }}
                 onMouseLeave={() => setRailTooltip(null)}
                 className="relative flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 text-white shadow-lg shadow-blue-500/25 ring-1 ring-white/20 hover:scale-105 active:scale-95 transition-transform duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                aria-label="Netplus Academy Home"
+                aria-label="Network Plus Academy Home"
               >
                 <Network className="w-5 h-5 text-white" />
               </button>
@@ -831,7 +831,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <div className="p-2.5 bg-slate-50 dark:bg-[#070b14] border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-[10px] text-slate-400 font-mono">
-              <span>Netplus Academy Quick Jump</span>
+              <span>Network Plus Academy Quick Jump</span>
               <span>ESC to dismiss</span>
             </div>
           </div>

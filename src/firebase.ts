@@ -45,6 +45,13 @@ import {
   sanitizeCourseRefId,
   sanitizeFlashcardId
 } from './utils/personalFlashcards';
+import {
+  QuickNote,
+  normalizeQuickNote,
+  sanitizeNoteId,
+  sanitizeNoteTags,
+  sanitizeVideoTimestamp
+} from './utils/quickNotes';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -899,5 +906,136 @@ export async function deletePersonalFlashcardFromFirestore(
     return false;
   }
 }
+
+export async function fetchQuickNotesFromFirestore(): Promise<QuickNote[] | null> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return null;
+  const uid = auth.currentUser.uid;
+  const path = 'quickNotes';
+  try {
+    const q = query(collection(db, path), where('ownerUid', '==', uid));
+    const snap = await getDocs(q);
+    return snap.docs
+      .filter(d => d.data()?.ownerUid === uid)
+      .map(d => {
+        const data = d.data() as Record<string, any>;
+        const createdAtIso =
+          data.createdAt && typeof data.createdAt.toDate === 'function'
+            ? data.createdAt.toDate().toISOString()
+            : typeof data.createdAt === 'string'
+            ? data.createdAt
+            : new Date().toISOString();
+        const updatedAtIso =
+          data.updatedAt && typeof data.updatedAt.toDate === 'function'
+            ? data.updatedAt.toDate().toISOString()
+            : typeof data.updatedAt === 'string'
+            ? data.updatedAt
+            : createdAtIso;
+
+        return normalizeQuickNote(
+          {
+            id: String(data.id || d.id),
+            ownerUid: uid,
+            courseId: String(data.courseId || 'general'),
+            courseCode: typeof data.courseCode === 'string' ? data.courseCode : undefined,
+            courseTitle: typeof data.courseTitle === 'string' ? data.courseTitle : undefined,
+            moduleId: String(data.moduleId || 'module-general'),
+            moduleTitle: String(data.moduleTitle || 'Lesson Notes'),
+            title: String(data.title || ''),
+            content: String(data.content || ''),
+            videoTimestampSeconds:
+              typeof data.videoTimestampSeconds === 'number'
+                ? data.videoTimestampSeconds
+                : undefined,
+            tags: sanitizeNoteTags(data.tags),
+            createdAt: createdAtIso,
+            updatedAt: updatedAtIso
+          },
+          uid
+        );
+      });
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+    return null;
+  }
+}
+
+export async function saveQuickNoteToFirestore(note: QuickNote): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const uid = auth.currentUser.uid;
+  const safeId = sanitizeNoteId(note.id);
+  const safeCourseId = sanitizeNoteId(note.courseId || 'general');
+  const safeModuleId = sanitizeNoteId(note.moduleId || 'module-general');
+  const notePath = `quickNotes/${safeId}`;
+  const ref = doc(db, 'quickNotes', safeId);
+
+  const safeCourseCode = note.courseCode?.trim().slice(0, 64);
+  const safeCourseTitle = note.courseTitle?.trim().slice(0, 200);
+  const safeModuleTitle = (note.moduleTitle || 'Lesson Notes').trim().slice(0, 200) || 'Lesson Notes';
+  const safeContent = (note.content || '').trim().slice(0, 4000);
+  const safeTitle = (note.title || 'Technical Concept').trim().slice(0, 140) || 'Technical Concept';
+  const safeTimestamp = sanitizeVideoTimestamp(note.videoTimestampSeconds);
+  const safeTags = sanitizeNoteTags(note.tags);
+
+  if (!safeContent) return false;
+
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, {
+        courseId: safeCourseId,
+        courseCode: safeCourseCode || deleteField(),
+        courseTitle: safeCourseTitle || deleteField(),
+        moduleId: safeModuleId,
+        moduleTitle: safeModuleTitle,
+        title: safeTitle,
+        content: safeContent,
+        videoTimestampSeconds:
+          typeof safeTimestamp === 'number' ? safeTimestamp : deleteField(),
+        tags: safeTags,
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      await setDoc(ref, {
+        id: safeId,
+        ownerUid: uid,
+        courseId: safeCourseId,
+        ...(safeCourseCode ? { courseCode: safeCourseCode } : {}),
+        ...(safeCourseTitle ? { courseTitle: safeCourseTitle } : {}),
+        moduleId: safeModuleId,
+        moduleTitle: safeModuleTitle,
+        title: safeTitle,
+        content: safeContent,
+        ...(typeof safeTimestamp === 'number' ? { videoTimestampSeconds: safeTimestamp } : {}),
+        tags: safeTags,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.WRITE, notePath);
+    }
+    return false;
+  }
+}
+
+export async function deleteQuickNoteFromFirestore(noteId: string): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const safeId = sanitizeNoteId(noteId);
+  const notePath = `quickNotes/${safeId}`;
+  try {
+    await deleteDoc(doc(db, 'quickNotes', safeId));
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.DELETE, notePath);
+    }
+    return false;
+  }
+}
+
 
 

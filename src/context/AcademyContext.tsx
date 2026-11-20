@@ -47,7 +47,10 @@ import {
   saveStudyGoalToFirestore,
   fetchPersonalFlashcardsFromFirestore,
   savePersonalFlashcardToFirestore,
-  deletePersonalFlashcardFromFirestore
+  deletePersonalFlashcardFromFirestore,
+  fetchQuickNotesFromFirestore,
+  saveQuickNoteToFirestore,
+  deleteQuickNoteFromFirestore
 } from '../firebase';
 import {
   CardMasteryStatus,
@@ -83,6 +86,15 @@ import {
   saveLocalStudyGoal,
   updateDailyGoalMinutesInData
 } from '../utils/studyGoal';
+import {
+  QuickNote,
+  QuickNoteInput,
+  loadLocalQuickNotes,
+  mergeQuickNotes,
+  normalizeQuickNote,
+  saveLocalQuickNotes,
+  sanitizeNoteId
+} from '../utils/quickNotes';
 import { 
   INITIAL_USERS, 
   INITIAL_COURSES, 
@@ -175,6 +187,9 @@ interface AcademyContextType {
   savePersonalFlashcard: (input: PersonalFlashcardInput) => PersonalFlashcard;
   deletePersonalFlashcard: (cardId: string) => void;
   updatePersonalFlashcardMastery: (cardId: string, status: CardMasteryStatus) => void;
+  quickNotes: QuickNote[];
+  saveQuickNote: (input: QuickNoteInput) => QuickNote;
+  deleteQuickNote: (noteId: string) => void;
   addCourse: (course: Course) => void;
   updateCourse: (courseId: string, updated: Partial<Course>) => void;
   deleteCourse: (courseId: string) => void;
@@ -412,6 +427,16 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   useEffect(() => {
     setPersonalFlashcards(loadLocalPersonalFlashcards(currentUser.id));
+  }, [currentUser.id]);
+
+  const [quickNotes, setQuickNotes] = useState<QuickNote[]>(() =>
+    loadLocalQuickNotes(currentUser.id)
+  );
+  const quickNotesRef = useRef<QuickNote[]>(quickNotes);
+  quickNotesRef.current = quickNotes;
+
+  useEffect(() => {
+    setQuickNotes(loadLocalQuickNotes(currentUser.id));
   }, [currentUser.id]);
 
   const [invitations, setInvitations] = useState<Invitation[]>(() => {
@@ -710,6 +735,28 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
               const remoteMs = remoteMatch ? Date.parse(remoteMatch.updatedAt) || 0 : -1;
               if (!remoteMatch || localMs > remoteMs) {
                 savePersonalFlashcardToFirestore(card).catch(() => {});
+              }
+            }
+          }
+        })
+        .catch(() => {});
+
+      fetchQuickNotesFromFirestore()
+        .then(remoteNotes => {
+          const localNotes = loadLocalQuickNotes(resolvedId);
+          const mergedNotes = mergeQuickNotes(localNotes, remoteNotes);
+          saveLocalQuickNotes(resolvedId, mergedNotes);
+          if (resolvedId === currentUser.id || resolvedId === fbUser.uid) {
+            setQuickNotes(mergedNotes);
+          }
+          if (remoteNotes !== null) {
+            const remoteById = new Map(remoteNotes.map(n => [n.id, n]));
+            for (const note of localNotes) {
+              const remoteMatch = remoteById.get(note.id);
+              const localMs = Date.parse(note.updatedAt) || 0;
+              const remoteMs = remoteMatch ? Date.parse(remoteMatch.updatedAt) || 0 : -1;
+              if (!remoteMatch || localMs > remoteMs) {
+                saveQuickNoteToFirestore(note).catch(() => {});
               }
             }
           }
@@ -1746,6 +1793,63 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (updatedCard) {
       savePersonalFlashcardToFirestore(updatedCard).catch(() => {});
     }
+  };
+
+  const saveQuickNote = (input: QuickNoteInput): QuickNote => {
+    const activeUserId = currentUser.id;
+    const nowIso = new Date().toISOString();
+    const existing = input.id
+      ? quickNotesRef.current.find(n => n.id === input.id)
+      : undefined;
+
+    const safeCourseId = sanitizeNoteId(input.courseId || 'general');
+    const matchedCourse = courses.find(c => c.id === safeCourseId);
+    const safeModuleId = sanitizeNoteId(input.moduleId || 'module-general');
+    const matchedModule = matchedCourse?.modules.find(m => m.id === safeModuleId);
+
+    const note = normalizeQuickNote(
+      {
+        id:
+          existing?.id ||
+          (input.id
+            ? sanitizeNoteId(input.id)
+            : `qn-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+        ownerUid: existing?.ownerUid || activeUserId,
+        courseId: safeCourseId,
+        courseCode: matchedCourse?.code || input.courseCode,
+        courseTitle: matchedCourse?.title || input.courseTitle,
+        moduleId: safeModuleId,
+        moduleTitle: matchedModule?.title || input.moduleTitle || 'Lesson Notes',
+        title: input.title,
+        content: input.content,
+        videoTimestampSeconds: input.videoTimestampSeconds,
+        tags: input.tags,
+        createdAt: existing?.createdAt || nowIso,
+        updatedAt: nowIso
+      },
+      activeUserId
+    );
+
+    setQuickNotes(prev => {
+      const filtered = prev.filter(n => n.id !== note.id);
+      const next = [note, ...filtered];
+      saveLocalQuickNotes(activeUserId, next);
+      return next;
+    });
+
+    saveQuickNoteToFirestore(note).catch(() => {});
+    recordLearningActivity(existing ? 'Updated quick note' : 'Saved quick note');
+    return note;
+  };
+
+  const deleteQuickNote = (noteId: string) => {
+    const activeUserId = currentUser.id;
+    setQuickNotes(prev => {
+      const next = prev.filter(n => n.id !== noteId);
+      saveLocalQuickNotes(activeUserId, next);
+      return next;
+    });
+    deleteQuickNoteFromFirestore(noteId).catch(() => {});
   };
 
   const completeModule = (courseId: string, moduleId: string) => {
@@ -2846,6 +2950,9 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         savePersonalFlashcard,
         deletePersonalFlashcard,
         updatePersonalFlashcardMastery,
+        quickNotes,
+        saveQuickNote,
+        deleteQuickNote,
         addCourse,
         updateCourse,
         deleteCourse,

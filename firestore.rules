@@ -461,5 +461,67 @@ service cloud.firestore {
         && isVerified()
         && isOwner(existing().ownerUid);
     }
+
+    function isValidQuickNote(data) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'courseId', 'moduleId', 'moduleTitle',
+          'title', 'content', 'tags', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerUid', 'courseId', 'courseCode', 'courseTitle',
+          'moduleId', 'moduleTitle', 'title', 'content',
+          'videoTimestampSeconds', 'tags', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && isValidId(data.courseId)
+        && (!('courseCode' in data) || (data.courseCode is string && data.courseCode.size() <= 64))
+        && (!('courseTitle' in data) || (data.courseTitle is string && data.courseTitle.size() <= 200))
+        && isValidId(data.moduleId)
+        && data.moduleTitle is string && data.moduleTitle.size() >= 1 && data.moduleTitle.size() <= 200
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 140
+        && data.content is string && data.content.size() >= 1 && data.content.size() <= 4000
+        && (!('videoTimestampSeconds' in data) || (data.videoTimestampSeconds is int && data.videoTimestampSeconds >= 0 && data.videoTimestampSeconds <= 86400))
+        && data.tags is list
+        && data.tags.size() <= 6
+        && (data.tags.size() == 0 || (data.tags[0] is string && data.tags[0].size() <= 40))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /quickNotes/{noteId} {
+      allow get: if isValidId(noteId)
+        && isVerified()
+        && (resource == null || isOwner(existing().ownerUid));
+
+      allow list: if isVerified()
+        && resource.data.ownerUid == request.auth.uid;
+
+      allow create: if isValidId(noteId)
+        && isVerified()
+        && isValidQuickNote(incoming())
+        && incoming().id == noteId
+        && incoming().ownerUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(noteId)
+        && isVerified()
+        && isValidQuickNote(incoming())
+        && isOwner(existing().ownerUid)
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'courseId', 'courseCode', 'courseTitle', 'moduleId', 'moduleTitle',
+          'title', 'content', 'videoTimestampSeconds', 'tags', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(noteId)
+        && isVerified()
+        && isOwner(existing().ownerUid);
+    }
   }
 }

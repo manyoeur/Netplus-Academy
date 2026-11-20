@@ -24,7 +24,8 @@ import {
   Edit3,
   Check,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  NotebookPen
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course, CourseModule } from '../../types';
@@ -32,6 +33,7 @@ import { InteractiveCliTerminal } from '../Lab/InteractiveCliTerminal';
 import { InteractiveQuiz, QuizResult } from './InteractiveQuiz';
 import { VideoLecturePlayer } from './VideoLecturePlayer';
 import { PostModuleQuiz } from './PostModuleQuiz';
+import { QuickNotesDrawer } from './QuickNotesDrawer';
 import {
   HierarchyContentWorkspace,
   MarkdownProse,
@@ -172,6 +174,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     recordStudyTime,
     personalFlashcards,
     savePersonalFlashcard,
+    quickNotes,
+    saveQuickNote,
+    deleteQuickNote,
     updateCourse,
     updateModuleInCourse
   } = useAcademy();
@@ -206,6 +211,15 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [isOutlineSidebarCollapsed, setIsOutlineSidebarCollapsed] = useState<boolean>(false);
   const [isOutlineBodyCollapsed, setIsOutlineBodyCollapsed] = useState<boolean>(false);
+  const outlineTitleClickTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (outlineTitleClickTimerRef.current !== null) {
+        window.clearTimeout(outlineTitleClickTimerRef.current);
+      }
+    };
+  }, []);
 
   // Reset outline to collapsed by default when switching courses
   useEffect(() => {
@@ -270,6 +284,11 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const [instructorMasteryBypass, setInstructorMasteryBypass] = useState<boolean>(false);
   const [isFlashcardModalOpen, setIsFlashcardModalOpen] = useState<boolean>(false);
   const [flashcardSavedToast, setFlashcardSavedToast] = useState<string | null>(null);
+  const [isQuickNotesOpen, setIsQuickNotesOpen] = useState<boolean>(false);
+  const [liveVideoSeconds, setLiveVideoSeconds] = useState<number>(0);
+  const [videoSeekRequest, setVideoSeekRequest] = useState<{ seconds: number; nonce: number } | null>(
+    null
+  );
   const [liveQuizProgress, setLiveQuizProgress] = useState<{
     quizKey: string;
     answeredCount: number;
@@ -304,10 +323,18 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     setOpenModuleEditorOnSelect(false);
     setQuizOrigin('manual');
     setLiveQuizProgress(null);
+    setLiveVideoSeconds(0);
+    setVideoSeekRequest(null);
     const lastModId = freshStore[course.id]?.lastModuleId;
     const foundIdx = lastModId ? course.modules.findIndex(m => m.id === lastModId) : -1;
     setActiveModuleIndex(foundIdx >= 0 ? foundIdx : 0);
   }, [currentUser.id, course.id, course.modules.length]);
+
+  // Reset live video timestamp when active module changes
+  useEffect(() => {
+    setLiveVideoSeconds(0);
+    setVideoSeekRequest(null);
+  }, [activeModule?.id]);
 
   const computeScrollMetrics = useCallback(() => {
     const el = moduleContentRef.current;
@@ -1131,20 +1158,42 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           )}
 
           {!isViewingLockedContent && (
-            <button
-              type="button"
-              onClick={() => setIsFlashcardModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-blue-400 dark:hover:border-cyan-500 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              title="Create a personal flashcard tagged to this course and module"
-            >
-              <Plus className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-              <span>Flashcard</span>
-              {personalFlashcards.filter(c => c.courseId === course.id).length > 0 && (
-                <span className="font-mono text-[10px] tabular-nums text-blue-600 dark:text-cyan-400">
-                  ({personalFlashcards.filter(c => c.courseId === course.id).length})
-                </span>
-              )}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setIsQuickNotesOpen(prev => !prev)}
+                aria-expanded={isQuickNotesOpen}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                  isQuickNotesOpen
+                    ? 'border-blue-500 dark:border-cyan-500 bg-blue-50 dark:bg-cyan-950/40 text-blue-700 dark:text-cyan-300'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-blue-400 dark:hover:border-cyan-500 text-slate-700 dark:text-slate-200'
+                }`}
+                title="Open Quick Notes slide-out panel (saved to your profile)"
+              >
+                <NotebookPen className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                <span>Quick Notes</span>
+                {quickNotes.filter(n => n.courseId === course.id).length > 0 && (
+                  <span className="font-mono text-[10px] tabular-nums text-blue-600 dark:text-cyan-400">
+                    ({quickNotes.filter(n => n.courseId === course.id).length})
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsFlashcardModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-blue-400 dark:hover:border-cyan-500 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                title="Create a personal flashcard tagged to this course and module"
+              >
+                <Plus className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                <span>Flashcard</span>
+                {personalFlashcards.filter(c => c.courseId === course.id).length > 0 && (
+                  <span className="font-mono text-[10px] tabular-nums text-blue-600 dark:text-cyan-400">
+                    ({personalFlashcards.filter(c => c.courseId === course.id).length})
+                  </span>
+                )}
+              </button>
+            </>
           )}
 
           <div className="w-36 hidden sm:block text-right">
@@ -1181,7 +1230,18 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             {/* Course Outline Header with Progress Bar & Collapse Toggle */}
             <div className="p-4 bg-emerald-50/90 dark:bg-emerald-950/35 border-b border-emerald-200/70 dark:border-emerald-900/50 space-y-2.5">
               <div className="flex items-start justify-between gap-2.5">
-                <div className="min-w-0">
+                <div
+                  onDoubleClick={(e) => {
+                    e.preventDefault();
+                    setIsOutlineBodyCollapsed(prev => !prev);
+                  }}
+                  title={
+                    isOutlineBodyCollapsed
+                      ? 'Double-click title to un-collapse course outline'
+                      : 'Double-click title to collapse course outline'
+                  }
+                  className="min-w-0 flex-1 cursor-pointer select-none"
+                >
                   <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 block">
                     Course Outline
                   </span>
@@ -1422,11 +1482,31 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                             onClick={() => {
                               handleSelectHierarchyChapter(chapter.id, false);
                               if (!isChapterOpen) {
-                                toggleChapterAccordion(chapter.id);
+                                if (outlineTitleClickTimerRef.current !== null) {
+                                  window.clearTimeout(outlineTitleClickTimerRef.current);
+                                }
+                                outlineTitleClickTimerRef.current = window.setTimeout(() => {
+                                  outlineTitleClickTimerRef.current = null;
+                                  setExpandedChapters(prev =>
+                                    prev[chapter.id] ? prev : { ...prev, [chapter.id]: true }
+                                  );
+                                }, 220);
                               }
                             }}
-                            className="flex-1 min-w-0 text-left"
-                            title="Open chapter content"
+                            onDoubleClick={(e) => {
+                              e.preventDefault();
+                              if (outlineTitleClickTimerRef.current !== null) {
+                                window.clearTimeout(outlineTitleClickTimerRef.current);
+                                outlineTitleClickTimerRef.current = null;
+                              }
+                              toggleChapterAccordion(chapter.id);
+                            }}
+                            className="flex-1 min-w-0 text-left select-none"
+                            title={
+                              isChapterOpen
+                                ? 'Click to view chapter · Double-click to collapse'
+                                : 'Click to view chapter · Double-click to un-collapse'
+                            }
                           >
                             <span
                               className={`text-[13px] font-bold leading-snug transition-colors block ${
@@ -1597,11 +1677,31 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                       onClick={() => {
                                         handleSelectHierarchySection(chapter.id, section.id, false);
                                         if (!isSectionOpen) {
-                                          toggleSectionAccordion(section.id);
+                                          if (outlineTitleClickTimerRef.current !== null) {
+                                            window.clearTimeout(outlineTitleClickTimerRef.current);
+                                          }
+                                          outlineTitleClickTimerRef.current = window.setTimeout(() => {
+                                            outlineTitleClickTimerRef.current = null;
+                                            setExpandedSections(prev =>
+                                              prev[section.id] ? prev : { ...prev, [section.id]: true }
+                                            );
+                                          }, 220);
                                         }
                                       }}
-                                      className="flex-1 min-w-0 text-left"
-                                      title="Open section content"
+                                      onDoubleClick={(e) => {
+                                        e.preventDefault();
+                                        if (outlineTitleClickTimerRef.current !== null) {
+                                          window.clearTimeout(outlineTitleClickTimerRef.current);
+                                          outlineTitleClickTimerRef.current = null;
+                                        }
+                                        toggleSectionAccordion(section.id);
+                                      }}
+                                      className="flex-1 min-w-0 text-left select-none"
+                                      title={
+                                        isSectionOpen
+                                          ? 'Click to view section · Double-click to collapse'
+                                          : 'Click to view section · Double-click to un-collapse'
+                                      }
                                     >
                                       <span
                                         className={`text-[12px] font-bold leading-snug transition-colors block ${
@@ -2570,6 +2670,14 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                       }}
                       onOpenPostQuiz={() => setPostQuizModalModuleIndex(activeModuleIndex)}
                       onStudyTimeTick={(seconds, modId) => recordStudyTime(seconds, 'course', modId)}
+                      onCurrentTimeChange={setLiveVideoSeconds}
+                      seekToRequest={videoSeekRequest}
+                      onOpenQuickNotes={() => setIsQuickNotesOpen(true)}
+                      quickNotesCount={
+                        quickNotes.filter(
+                          n => n.courseId === course.id && n.moduleId === activeModule.id
+                        ).length
+                      }
                     />
                     {activeModule.contentMarkdown?.trim() && (
                       <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
@@ -2921,6 +3029,38 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           window.setTimeout(() => setFlashcardSavedToast(null), 3200);
         }}
         onClose={() => setIsFlashcardModalOpen(false)}
+      />
+
+      {/* Quick Notes Slide-Out Panel (Video Timestamp & Profile Synced) */}
+      <QuickNotesDrawer
+        isOpen={isQuickNotesOpen}
+        userName={currentUser.name}
+        notes={quickNotes}
+        courses={courses}
+        activeCourse={course}
+        activeModule={activeModule}
+        currentVideoSeconds={liveVideoSeconds}
+        onSeekVideo={(seconds) => {
+          setPlayerMode('study');
+          setSelectedOutlineNode({ level: 'module' });
+          setVideoSeekRequest(prev => ({
+            seconds,
+            nonce: (prev?.nonce ?? 0) + 1
+          }));
+        }}
+        onNavigateToModule={(targetCourseId, targetModuleId) => {
+          if (targetCourseId !== course.id) return;
+          const targetIdx = course.modules.findIndex(m => m.id === targetModuleId);
+          if (targetIdx >= 0) {
+            setPlayerMode('study');
+            setSelectedOutlineNode({ level: 'module' });
+            setActiveModuleIndex(targetIdx);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+        }}
+        onSaveNote={saveQuickNote}
+        onDeleteNote={deleteQuickNote}
+        onClose={() => setIsQuickNotesOpen(false)}
       />
     </div>
   );

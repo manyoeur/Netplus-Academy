@@ -94,8 +94,8 @@ export const TopBar: React.FC<TopBarProps> = ({
             <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center text-white shadow-md">
               <Network className="w-4 h-4" />
             </div>
-            <span className="text-base font-black tracking-tight bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400 bg-clip-text text-transparent">
-              Netplus
+            <span className="text-sm sm:text-base font-black tracking-tight bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400 bg-clip-text text-transparent whitespace-nowrap">
+              Network Plus Academy
             </span>
           </div>
 
@@ -103,7 +103,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           {!isSidebarShown && (
             <div className="hidden lg:flex items-center gap-2.5 select-none">
               <span className="text-sm font-bold text-slate-900 dark:text-white tracking-tight">
-                Netplus Academy
+                Network Plus Academy
               </span>
               <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">
                 • Enterprise Networking LMS

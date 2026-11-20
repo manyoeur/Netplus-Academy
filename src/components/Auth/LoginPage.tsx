@@ -159,7 +159,7 @@ export const LoginPage: React.FC = () => {
             <Network className="w-4 h-4" />
           </div>
           <span className="text-lg font-extrabold tracking-tight text-slate-900 dark:text-white whitespace-nowrap">
-            Netplus Academy
+            Network Plus Academy
           </span>
         </div>
 
@@ -433,7 +433,7 @@ export const LoginPage: React.FC = () => {
 
       {/* Quiet Footer */}
       <footer className="px-6 py-4 text-center text-[11px] text-slate-400 dark:text-slate-500">
-        Netplus Academy · Enterprise Networking Learning Platform
+        Network Plus Academy · Enterprise Networking Learning Platform
       </footer>
     </div>
   );

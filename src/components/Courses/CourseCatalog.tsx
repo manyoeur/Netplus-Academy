@@ -12,7 +12,11 @@ import {
   ArrowUpDown,
   Calendar,
   AlertTriangle,
-  XCircle
+  XCircle,
+  TrendingUp,
+  Signal,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course } from '../../types';
@@ -31,7 +35,27 @@ interface CourseCatalogProps {
 }
 
 type CatalogViewMode = 'grid' | 'list';
-type SortOption = 'recommended' | 'rating' | 'enrolled' | 'duration';
+type SortOption =
+  | 'recommended'
+  | 'recent'
+  | 'popular'
+  | 'difficulty_asc'
+  | 'difficulty_desc'
+  | 'rating'
+  | 'duration';
+
+const DIFFICULTY_RANK: Record<Course['level'], number> = {
+  Beginner: 1,
+  Intermediate: 2,
+  Advanced: 3,
+  Expert: 4
+};
+
+function parseCourseDateMs(dateStr?: string): number {
+  if (!dateStr) return 0;
+  const parsed = Date.parse(dateStr);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
 
 const CATALOG_VIEW_STORAGE_KEY = 'netpulse_academy_catalog_view';
 
@@ -150,21 +174,80 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
 
     if (sortBy === 'recommended') return filtered;
 
-    return [...filtered].sort((a, b) => {
-      if (sortBy === 'rating') return b.rating - a.rating;
-      if (sortBy === 'enrolled') return b.enrolledCount - a.enrolledCount;
-      if (sortBy === 'duration') return b.durationHours - a.durationHours;
-      return 0;
-    });
+    return filtered
+      .map((course, idx) => ({ course, idx }))
+      .sort((a, b) => {
+        if (sortBy === 'recent') {
+          const diff = parseCourseDateMs(b.course.updatedAt) - parseCourseDateMs(a.course.updatedAt);
+          return diff !== 0 ? diff : a.idx - b.idx;
+        }
+        if (sortBy === 'popular') {
+          return (
+            b.course.enrolledCount - a.course.enrolledCount ||
+            b.course.rating - a.course.rating ||
+            b.course.reviewsCount - a.course.reviewsCount ||
+            a.idx - b.idx
+          );
+        }
+        if (sortBy === 'difficulty_asc') {
+          return (
+            (DIFFICULTY_RANK[a.course.level] ?? 99) - (DIFFICULTY_RANK[b.course.level] ?? 99) ||
+            b.course.enrolledCount - a.course.enrolledCount ||
+            a.idx - b.idx
+          );
+        }
+        if (sortBy === 'difficulty_desc') {
+          return (
+            (DIFFICULTY_RANK[b.course.level] ?? 0) - (DIFFICULTY_RANK[a.course.level] ?? 0) ||
+            b.course.enrolledCount - a.course.enrolledCount ||
+            a.idx - b.idx
+          );
+        }
+        if (sortBy === 'rating') {
+          return (
+            b.course.rating - a.course.rating ||
+            b.course.reviewsCount - a.course.reviewsCount ||
+            a.idx - b.idx
+          );
+        }
+        if (sortBy === 'duration') {
+          return b.course.durationHours - a.course.durationHours || a.idx - b.idx;
+        }
+        return a.idx - b.idx;
+      })
+      .map(entry => entry.course);
   }, [courses, selectedCategory, selectedLevel, searchQuery, sortBy]);
 
+  const sortSummaryLabel = useMemo(() => {
+    switch (sortBy) {
+      case 'recent':
+        return 'Sorted by Recently Added';
+      case 'popular':
+        return 'Sorted by Popular';
+      case 'difficulty_asc':
+        return 'Sorted by Difficulty (Beginner → Expert)';
+      case 'difficulty_desc':
+        return 'Sorted by Difficulty (Expert → Beginner)';
+      case 'rating':
+        return 'Sorted by Highest Rated';
+      case 'duration':
+        return 'Sorted by Longest Duration';
+      default:
+        return 'Recommended Order';
+    }
+  }, [sortBy]);
+
   const hasActiveFilters =
-    selectedCategory !== 'All' || selectedLevel !== 'All' || searchQuery.trim() !== '';
+    selectedCategory !== 'All' ||
+    selectedLevel !== 'All' ||
+    searchQuery.trim() !== '' ||
+    sortBy !== 'recommended';
 
   const resetFilters = () => {
     setSelectedCategory('All');
     setSelectedLevel('All');
     setSearchQuery('');
+    setSortBy('recommended');
   };
 
   return (
@@ -278,8 +361,11 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                 className="pl-8 pr-3 py-2 rounded-xl text-xs font-medium bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="recommended">Recommended</option>
+                <option value="recent">Recently Added</option>
+                <option value="popular">Popular</option>
+                <option value="difficulty_asc">Difficulty: Beginner → Expert</option>
+                <option value="difficulty_desc">Difficulty: Expert → Beginner</option>
                 <option value="rating">Highest Rated</option>
-                <option value="enrolled">Most Enrolled</option>
                 <option value="duration">Longest Duration</option>
               </select>
             </div>
@@ -322,12 +408,104 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
           </div>
         </div>
 
+        {/* Quick Sort & Difficulty Level Bar */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
+              Sort:
+            </span>
+            <button
+              type="button"
+              onClick={() => setSortBy('recommended')}
+              aria-pressed={sortBy === 'recommended'}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
+                sortBy === 'recommended'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              <span>Recommended</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSortBy('recent')}
+              aria-pressed={sortBy === 'recent'}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
+                sortBy === 'recent'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Recently Added</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSortBy('popular')}
+              aria-pressed={sortBy === 'popular'}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
+                sortBy === 'popular'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5" />
+              <span>Popular</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setSortBy(prev => (prev === 'difficulty_asc' ? 'difficulty_desc' : 'difficulty_asc'))
+              }
+              aria-pressed={sortBy === 'difficulty_asc' || sortBy === 'difficulty_desc'}
+              title="Click to sort by Difficulty Level (toggle Beginner ↔ Expert)"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
+                sortBy === 'difficulty_asc' || sortBy === 'difficulty_desc'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              <Signal className="w-3.5 h-3.5" />
+              <span>Difficulty Level</span>
+              {sortBy === 'difficulty_asc' && <ArrowUp className="w-3 h-3" />}
+              {sortBy === 'difficulty_desc' && <ArrowDown className="w-3 h-3" />}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
+              Difficulty:
+            </span>
+            {levels.map(lvl => (
+              <button
+                key={`quick-lvl-${lvl}`}
+                type="button"
+                onClick={() => setSelectedLevel(lvl)}
+                aria-pressed={selectedLevel === lvl}
+                className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  selectedLevel === lvl
+                    ? 'bg-slate-900 text-white dark:bg-cyan-500 dark:text-slate-950 font-semibold'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                {lvl === 'All' ? 'All Levels' : lvl}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Results Count Bar */}
-        <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800/80 text-xs text-slate-500 dark:text-slate-400">
-          <span className="tabular-nums">
-            Showing <strong className="text-slate-900 dark:text-slate-100">{filteredCourses.length}</strong> of{' '}
-            <strong className="text-slate-900 dark:text-slate-100">{courses.length}</strong> courses
-          </span>
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800/80 text-xs text-slate-500 dark:text-slate-400">
+          <div className="flex flex-wrap items-center gap-2 tabular-nums">
+            <span>
+              Showing <strong className="text-slate-900 dark:text-slate-100">{filteredCourses.length}</strong> of{' '}
+              <strong className="text-slate-900 dark:text-slate-100">{courses.length}</strong> courses
+            </span>
+            <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">·</span>
+            <span className="font-medium text-slate-600 dark:text-slate-300">
+              {sortSummaryLabel}
+            </span>
+          </div>
           {hasActiveFilters && (
             <button
               type="button"
@@ -403,9 +581,9 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                 {/* Card Body */}
                 <div className="p-5 flex-1 flex flex-col justify-between space-y-3">
                   <div className="space-y-1.5">
-                    {/* Quiet inline category & level metadata */}
-                    <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate">
-                      {course.category} · {course.level}
+                    {/* Quiet inline category, level & updated date metadata */}
+                    <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate tabular-nums">
+                      {course.category} · {course.level} · Updated {course.updatedAt}
                     </p>
 
                     {/* Course Title */}

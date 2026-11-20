@@ -9,7 +9,8 @@ import {
   Unlock,
   Volume2,
   VolumeX,
-  SkipForward
+  SkipForward,
+  NotebookPen
 } from 'lucide-react';
 import { CourseModule } from '../../types';
 
@@ -25,6 +26,10 @@ interface VideoLecturePlayerProps {
   onLectureCompleted: () => void;
   onOpenPostQuiz: () => void;
   onStudyTimeTick?: (seconds: number, moduleId: string) => void;
+  onCurrentTimeChange?: (seconds: number) => void;
+  seekToRequest?: { seconds: number; nonce: number } | null;
+  onOpenQuickNotes?: () => void;
+  quickNotesCount?: number;
 }
 
 interface LectureSlide {
@@ -133,7 +138,11 @@ export const VideoLecturePlayer: React.FC<VideoLecturePlayerProps> = ({
   nextModuleTitle,
   onLectureCompleted,
   onOpenPostQuiz,
-  onStudyTimeTick
+  onStudyTimeTick,
+  onCurrentTimeChange,
+  seekToRequest,
+  onOpenQuickNotes,
+  quickNotesCount = 0
 }) => {
   const isDirectVideo = useMemo(() => isDirectVideoFile(module.videoUrl), [module.videoUrl]);
   const totalSeconds = useMemo(
@@ -160,6 +169,25 @@ export const VideoLecturePlayer: React.FC<VideoLecturePlayerProps> = ({
     completionFiredRef.current = false;
     studyAccumulatorRef.current = 0;
   }, [courseId, module.id, totalSeconds]);
+
+  // Emit whole-second playback position for timestamped Quick Notes
+  const flooredSeconds = Math.floor(currentSeconds);
+  useEffect(() => {
+    onCurrentTimeChange?.(flooredSeconds);
+  }, [flooredSeconds, onCurrentTimeChange]);
+
+  // Respond to timestamp jump requests from Quick Notes
+  useEffect(() => {
+    if (!seekToRequest) return;
+    const clamped = Math.max(0, Math.min(videoDuration, seekToRequest.seconds));
+    setCurrentSeconds(clamped);
+    if (isDirectVideo && videoRef.current) {
+      videoRef.current.currentTime = clamped;
+    }
+    if (clamped < videoDuration) {
+      completionFiredRef.current = false;
+    }
+  }, [seekToRequest?.nonce, seekToRequest?.seconds, videoDuration, isDirectVideo]);
 
   // Keep HTML5 video speed synced
   useEffect(() => {
@@ -304,7 +332,23 @@ export const VideoLecturePlayer: React.FC<VideoLecturePlayerProps> = ({
           </h1>
         </div>
 
-        <div className="shrink-0">
+        <div className="shrink-0 flex flex-wrap items-center gap-2.5">
+          {onOpenQuickNotes && (
+            <button
+              type="button"
+              onClick={onOpenQuickNotes}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:border-blue-400 dark:hover:border-cyan-500 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              title="Open Quick Notes panel to jot technical concepts at this timestamp"
+            >
+              <NotebookPen className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+              <span>Quick Notes</span>
+              {quickNotesCount > 0 && (
+                <span className="font-mono text-[10px] tabular-nums text-blue-600 dark:text-cyan-400">
+                  ({quickNotesCount})
+                </span>
+              )}
+            </button>
+          )}
           {!hasPostQuiz ? (
             hasWatchedVideo ? (
               <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
@@ -487,6 +531,18 @@ export const VideoLecturePlayer: React.FC<VideoLecturePlayerProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              {onOpenQuickNotes && (
+                <button
+                  type="button"
+                  onClick={onOpenQuickNotes}
+                  title="Jot Quick Note at current timestamp"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-cyan-200 text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                >
+                  <NotebookPen className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Note</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={handleCycleSpeed}

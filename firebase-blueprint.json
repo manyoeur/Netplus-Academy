@@ -654,6 +654,95 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "QuickNote": {
+      "title": "QuickNote",
+      "description": "Student technical concept quick note captured while watching course videos or studying modules",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique quick note identifier",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase UID of the student who owns the quick note",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Associated course identifier",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "courseCode": {
+          "type": "string",
+          "description": "Optional course code tag",
+          "maxLength": 64
+        },
+        "courseTitle": {
+          "type": "string",
+          "description": "Optional course title snapshot",
+          "maxLength": 200
+        },
+        "moduleId": {
+          "type": "string",
+          "description": "Associated course module identifier",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "moduleTitle": {
+          "type": "string",
+          "description": "Module title snapshot",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "title": {
+          "type": "string",
+          "description": "Technical concept title",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "content": {
+          "type": "string",
+          "description": "Technical concept note body",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "videoTimestampSeconds": {
+          "type": "integer",
+          "description": "Optional captured video lecture timestamp in seconds"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Optional technical concept tags (max 6)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "courseId",
+        "moduleId",
+        "moduleTitle",
+        "title",
+        "content",
+        "tags",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -684,6 +773,10 @@
     "/personalFlashcards/{cardId}": {
       "schema": { "$ref": "#/entities/PersonalFlashcard" },
       "description": "Owner-isolated personal manual flashcards created by students and tagged by course."
+    },
+    "/quickNotes/{noteId}": {
+      "schema": { "$ref": "#/entities/QuickNote" },
+      "description": "Owner-isolated student quick notes captured while watching course videos."
     }
   }
 }

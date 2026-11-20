@@ -17,11 +17,14 @@ import {
   Building2,
   CreditCard,
   FileText,
-  Flame
+  Flame,
+  NotebookPen,
+  Clock as ClockIcon
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course, CoursePaymentRecord } from '../../types';
 import { CourseThumbnail } from '../Courses/CourseThumbnail';
+import { QuickNotesDrawer } from '../Courses/QuickNotesDrawer';
 import { CourseRadialProgressChart } from './CourseRadialProgressChart';
 import { DailyStreakCard } from './DailyStreakCard';
 import { DailyStudyGoalCard } from './DailyStudyGoalCard';
@@ -31,6 +34,7 @@ import {
   getEnrollmentExpirationInfo
 } from '../../utils/enrollmentDates';
 import { formatStudyDuration } from '../../utils/studyGoal';
+import { formatVideoTimestamp } from '../../utils/quickNotes';
 
 interface StudentDashboardProps {
   onSelectCourse: (courseId: string) => void;
@@ -58,7 +62,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     recordLearningActivity,
     dailyStudyGoal,
     setDailyStudyGoalMinutes,
+    quickNotes,
+    saveQuickNote,
+    deleteQuickNote,
   } = useAcademy();
+  const [isQuickNotesOpen, setIsQuickNotesOpen] = useState(false);
   const [viewMode, setViewMode] = useState<DashboardViewMode>(() => {
     try {
       const saved = localStorage.getItem(DASHBOARD_VIEW_STORAGE_KEY);
@@ -181,6 +189,19 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 {learningStreak.badge.title}
               </span>
             )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsQuickNotesOpen(true)}
+            className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/15 text-xs font-semibold text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+            title="View and manage Quick Notes saved to your profile"
+          >
+            <NotebookPen className="w-4 h-4 text-cyan-300" />
+            <span>Quick Notes</span>
+            <span className="font-mono text-[11px] font-bold text-cyan-200 tabular-nums">
+              ({quickNotes.length})
+            </span>
           </button>
 
           {currentUser.subscription.tier === 'free' ? (
@@ -814,6 +835,88 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
         )}
       </div>
+      {/* Saved Technical Quick Notes on Profile */}
+      <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <NotebookPen className="w-5 h-5 text-blue-600 dark:text-cyan-400" />
+            <div>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                Saved Study Quick Notes
+              </h2>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Technical concepts and video timestamps synced to {currentUser.name}&apos;s profile.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsQuickNotesOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors whitespace-nowrap shrink-0"
+          >
+            <NotebookPen className="w-3.5 h-3.5" />
+            <span>{quickNotes.length > 0 ? `Open Notebook (${quickNotes.length})` : 'New Quick Note'}</span>
+          </button>
+        </div>
+
+        {quickNotes.length === 0 ? (
+          <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              No quick notes saved yet. Open Quick Notes while watching any course video to capture protocols, CLI syntax, and timestamps directly to your profile.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {quickNotes.slice(0, 3).map(note => (
+              <div
+                key={note.id}
+                onClick={() => setIsQuickNotesOpen(true)}
+                className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 hover:border-blue-400 dark:hover:border-cyan-500/50 transition-colors cursor-pointer space-y-1.5 flex flex-col justify-between"
+              >
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                    <span className="font-mono text-[10px] font-bold text-blue-600 dark:text-cyan-400">
+                      {note.courseCode || 'STUDY'}
+                    </span>
+                    {typeof note.videoTimestampSeconds === 'number' && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-cyan-300 font-mono text-[10px] font-bold tabular-nums">
+                        <ClockIcon className="w-2.5 h-2.5" />
+                        <span>{formatVideoTimestamp(note.videoTimestampSeconds)}</span>
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="text-xs font-bold text-slate-900 dark:text-white line-clamp-1">
+                    {note.title}
+                  </h3>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-300 line-clamp-2 leading-relaxed">
+                    {note.content}
+                  </p>
+                </div>
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/70 dark:border-slate-800 text-[10px] text-slate-400">
+                  <span className="truncate">{note.moduleTitle}</span>
+                  <span className="font-mono tabular-nums shrink-0">{note.updatedAt.slice(0, 10)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <QuickNotesDrawer
+        isOpen={isQuickNotesOpen}
+        userName={currentUser.name}
+        notes={quickNotes}
+        courses={courses}
+        onNavigateToModule={(courseId) => {
+          setIsQuickNotesOpen(false);
+          if (courseId && courseId !== 'general') {
+            onSelectCourse(courseId);
+          }
+        }}
+        onSaveNote={saveQuickNote}
+        onDeleteNote={deleteQuickNote}
+        onClose={() => setIsQuickNotesOpen(false)}
+      />
     </div>
   );
 };
