@@ -51,6 +51,15 @@ export function buildRunningConfigLines(device: SimDevice): string[] {
   if (device.nameServer) {
     lines.push(`ip name-server ${device.nameServer}`);
   }
+  if (device.sshVersion) {
+    lines.push(`ip ssh version ${device.sshVersion}`);
+  }
+  if (device.cdpEnabled === false) {
+    lines.push('no cdp run');
+  }
+  if (device.lldpEnabled) {
+    lines.push('lldp run');
+  }
   if (device.users && device.users.length > 0) {
     device.users.forEach(u => {
       lines.push(
@@ -59,6 +68,39 @@ export function buildRunningConfigLines(device: SimDevice): string[] {
     });
   }
   lines.push('!');
+
+  if (device.dhcpExcludedRanges && device.dhcpExcludedRanges.length > 0) {
+    device.dhcpExcludedRanges.forEach(r => {
+      lines.push(
+        r.end
+          ? `ip dhcp excluded-address ${r.start} ${r.end}`
+          : `ip dhcp excluded-address ${r.start}`
+      );
+    });
+    lines.push('!');
+  }
+
+  if (device.dhcpPools && device.dhcpPools.length > 0) {
+    device.dhcpPools.forEach(pool => {
+      lines.push(`ip dhcp pool ${pool.name}`);
+      if (pool.network && pool.mask) {
+        lines.push(` network ${pool.network} ${pool.mask}`);
+      }
+      if (pool.defaultRouter) {
+        lines.push(` default-router ${pool.defaultRouter}`);
+      }
+      if (pool.dnsServer) {
+        lines.push(` dns-server ${pool.dnsServer}`);
+      }
+      if (pool.domainName) {
+        lines.push(` domain-name ${pool.domainName}`);
+      }
+      if (pool.lease) {
+        lines.push(` lease ${pool.lease}`);
+      }
+      lines.push('!');
+    });
+  }
 
   if (device.type === 'switch') {
     device.vlans
@@ -78,6 +120,15 @@ export function buildRunningConfigLines(device: SimDevice): string[] {
     }
     if (iface.ip) {
       lines.push(` ip address ${iface.ip} ${iface.mask}`);
+    }
+    if (iface.ipAccessGroupIn) {
+      lines.push(` ip access-group ${iface.ipAccessGroupIn} in`);
+    }
+    if (iface.ipAccessGroupOut) {
+      lines.push(` ip access-group ${iface.ipAccessGroupOut} out`);
+    }
+    if (iface.cdpEnabled === false) {
+      lines.push(' no cdp enable');
     }
     if (iface.bandwidth) {
       lines.push(` bandwidth ${iface.bandwidth}`);
@@ -163,6 +214,27 @@ export function buildRunningConfigLines(device: SimDevice): string[] {
     lines.push('!');
   }
 
+  if (device.accessLists && device.accessLists.length > 0) {
+    device.accessLists.forEach(acl => {
+      const isNumeric = /^\d+$/.test(acl.id);
+      if (isNumeric) {
+        acl.entries.forEach(entry => {
+          lines.push(`access-list ${acl.id} ${entry}`);
+        });
+      } else {
+        lines.push(`ip access-list ${acl.type} ${acl.id}`);
+        acl.entries.forEach(entry => {
+          lines.push(` ${entry}`);
+        });
+      }
+      lines.push('!');
+    });
+  }
+
+  if (device.ntpServer) {
+    lines.push(`ntp server ${device.ntpServer}`, '!');
+  }
+
   if (device.bannerMotd) {
     lines.push(`banner motd ^C${device.bannerMotd}^C`, '!');
   }
@@ -227,11 +299,15 @@ export function expandInterfaceToken(token: string): string {
   if (/^vl(an)?\d+$/.test(norm)) {
     return norm.replace(/^vl(an)?/, 'vlan');
   }
+  if (/^te(n|ngigabitethernet)?(\d)/.test(norm)) {
+    return norm.replace(/^te(n|ngigabitethernet)?/, 'tengigabitethernet');
+  }
   if (/^g(\d)/.test(norm)) return norm.replace(/^g/, 'gigabitethernet');
   if (/^gi(\d)/.test(norm)) return norm.replace(/^gi/, 'gigabitethernet');
   if (/^gig(\d)/.test(norm)) return norm.replace(/^gig/, 'gigabitethernet');
   if (/^f(\d)/.test(norm)) return norm.replace(/^f/, 'fastethernet');
   if (/^fa(\d)/.test(norm)) return norm.replace(/^fa/, 'fastethernet');
+  if (/^eth?(\d)/.test(norm)) return norm.replace(/^eth?/, 'ethernet');
   if (/^s(\d)/.test(norm)) return norm.replace(/^s/, 'serial');
   if (/^se(\d)/.test(norm)) return norm.replace(/^se/, 'serial');
   return norm;
@@ -285,7 +361,69 @@ export function parseInterfaceRangeSpec(
   return matched;
 }
 
-export function getCliHelpLines(device: SimDevice): string[] {
+export function applyCiscoPipeFilter(lines: string[], pipeExprRaw: string): string[] {
+  const pipeExpr = pipeExprRaw.trim();
+  if (!pipeExpr) return lines;
+  const parts = pipeExpr.split(/\s+/);
+  const modifier = (parts[0] || '').toLowerCase();
+  const pattern = parts.slice(1).join(' ').trim();
+  if (!pattern) {
+    return ['% Incomplete pipe filter. Usage: | include|exclude|begin|section <pattern>'];
+  }
+  const needle = pattern.toLowerCase();
+
+  if (modifier === 'i' || 'include'.startsWith(modifier)) {
+    const out = lines.filter(l => l.toLowerCase().includes(needle));
+    return out.length > 0 ? out : [`% No lines matched "| include ${pattern}".`];
+  }
+  if (modifier === 'e' || modifier === 'ex' || 'exclude'.startsWith(modifier)) {
+    return lines.filter(l => !l.toLowerCase().includes(needle));
+  }
+  if (modifier === 'b' || 'begin'.startsWith(modifier)) {
+    const idx = lines.findIndex(l => l.toLowerCase().includes(needle));
+    return idx >= 0 ? lines.slice(idx) : [`% Pattern "${pattern}" not found in output.`];
+  }
+  if (modifier === 's' || 'section'.startsWith(modifier)) {
+    const out: string[] = [];
+    let inSection = false;
+    for (const line of lines) {
+      const isTopLevel = line.length > 0 && !line.startsWith(' ') && line !== '!';
+      if (isTopLevel) {
+        inSection = line.toLowerCase().includes(needle);
+      } else if (line === '!') {
+        if (inSection) out.push('!');
+        inSection = false;
+        continue;
+      }
+      if (inSection) out.push(line);
+    }
+    return out.length > 0 ? out : [`% No section matching "${pattern}" found.`];
+  }
+
+  return [`% Invalid pipe modifier "${parts[0]}". Supported: include, exclude, begin, section.`];
+}
+
+export function getCliHelpLines(device: SimDevice, rawQuery?: string): string[] {
+  const prefix = (rawQuery || '')
+    .replace(/\?$/, '')
+    .trim()
+    .toLowerCase();
+
+  if (prefix) {
+    const { suggestions } = getCliTabCompletions(device, `${prefix} `);
+    if (suggestions.length > 0) {
+      return [
+        `Matches for "${prefix} ?":`,
+        ...suggestions.map(s => `  ${s}`)
+      ];
+    }
+    const modeLines = getCliHelpLines(device);
+    const matching = modeLines.filter(l => l.toLowerCase().includes(prefix));
+    if (matching.length > 0) {
+      return [`Context help for "${prefix}":`, ...matching];
+    }
+  }
+
   if (device.cliMode === 'user') {
     return [
       'User EXEC Commands:',
@@ -300,7 +438,7 @@ export function getCliHelpLines(device: SimDevice): string[] {
 
   if (device.cliMode === 'global') {
     return [
-      'Global Configuration Commands (use "do <show|ping>" anytime):',
+      'Global Configuration Commands (use "do <show|ping|wr>" anytime):',
       '  hostname <name>               - Set system network name',
       '  interface <name> (int g0/0)   - Configure single interface / Lo0 / Vlan',
       '  interface range <spec>        - Configure port range (e.g. int range fa0/1-4)',
@@ -308,18 +446,27 @@ export function getCliHelpLines(device: SimDevice): string[] {
       '  enable secret <password>      - Assign encrypted enable secret',
       '  service password-encryption   - Encrypt plaintext line passwords',
       '  no ip domain-lookup           - Disable DNS hostname lookup',
+      '  ip domain-name <domain>       - Configure DNS / SSH domain name',
+      '  crypto key generate rsa       - Generate RSA keypair for SSHv2',
+      '  ip ssh version 2              - Enforce SSHv2 management protocol',
       '  username <user> secret <pw>   - Create local AAA user credential',
       '  line console 0 / line vty 0 4 - Enter console or VTY line configuration',
+      '  access-list <1-199> ...       - Define numbered standard/extended ACL',
+      '  ip access-list standard|extended <name>',
+      '  cdp run / lldp run            - Enable or disable L2 neighbor discovery',
+      '  ntp server <ip>               - Configure NTP synchronization server',
       ...(device.type === 'router'
         ? [
             '  ip route <net> <mask> <nh>    - Add IPv4 static route',
-            '  router ospf <pid>             - Configure OSPF routing process'
+            '  router ospf <pid>             - Configure OSPF routing process',
+            '  ip dhcp pool <name>           - Configure IOS DHCP server pool',
+            '  ip dhcp excluded-address <ip> [end]'
           ]
         : [
             '  vlan <id> / no vlan <id>      - Create or remove VLAN database entry',
             '  ip default-gateway <ip>       - Set switch L2 management gateway'
           ]),
-      '  exit / end                    - Step back or return to Privileged EXEC'
+      '  exit / end (Ctrl+Z)           - Step back or return to Privileged EXEC'
     ];
   }
 
@@ -330,6 +477,8 @@ export function getCliHelpLines(device: SimDevice): string[] {
       '  no shutdown / shutdown        - Administratively enable or disable port',
       '  duplex auto|full|half         - Configure interface duplex operation',
       '  speed auto|10|100|1000        - Configure interface speed (Mbps)',
+      '  ip access-group <acl> in|out  - Apply ACL filter to interface traffic',
+      '  cdp enable / no cdp enable    - Toggle CDP per interface',
       ...(device.type === 'router'
         ? [
             '  ip address <ip> <mask>        - Assign IPv4 address (single interface)',
@@ -344,7 +493,7 @@ export function getCliHelpLines(device: SimDevice): string[] {
             '  switchport port-security [maximum <n>|violation ...|mac-address sticky]',
             '  spanning-tree portfast / bpduguard enable'
           ]),
-      '  do <show cmd> / exit / end    - Run show command or exit interface mode'
+      '  do <cmd> / exit / end         - Run EXEC command or exit interface mode'
     ];
   }
 
@@ -356,6 +505,29 @@ export function getCliHelpLines(device: SimDevice): string[] {
       '  passive-interface <if|default>- Suppress OSPF Hellos on interface',
       '  default-information originate - Advertise default route into OSPF',
       '  auto-cost reference-bandwidth <mbps>',
+      '  exit / end                    - Return to Global or Privileged mode'
+    ];
+  }
+
+  if (device.cliMode === 'dhcp_pool') {
+    return [
+      'DHCP Pool Configuration Commands:',
+      '  network <net> <mask>          - Configure DHCP IPv4 subnet pool',
+      '  default-router <ip>           - Assign client default gateway',
+      '  dns-server <ip>               - Assign DNS resolver IP',
+      '  domain-name <domain>          - Assign DHCP DNS domain suffix',
+      '  lease <days|infinite>         - Configure address lease duration',
+      '  exit / end                    - Return to Global or Privileged mode'
+    ];
+  }
+
+  if (device.cliMode === 'acl') {
+    return [
+      'Named Access-List Configuration Commands:',
+      '  permit <source|any|host ip>   - Add permit ACE rule',
+      '  deny <source|any|host ip>     - Add deny ACE rule',
+      '  remark <comment>              - Add descriptive ACL remark',
+      '  no <rule>                     - Remove matching ACE rule',
       '  exit / end                    - Return to Global or Privileged mode'
     ];
   }
@@ -382,26 +554,34 @@ export function getCliHelpLines(device: SimDevice): string[] {
 
   // Privileged EXEC
   return [
-    'Privileged EXEC Commands:',
+    'Privileged EXEC Commands (supports "| include|exclude|begin|section <pat>"):',
     '  configure terminal (conf t)   - Enter Global Configuration mode',
     '  show running-config (sh run)  - Display active configuration',
     '  show startup-config (sh start)- Display saved NVRAM configuration',
     '  copy running-config startup-config (wr)',
     '  show version (sh ver)         - Hardware, IOS version & interface summary',
     '  show ip interface brief       - Interface IP & up/up protocol summary',
-    '  show interfaces [name|status] - Detailed interface stats & counters',
-    '  show cdp neighbors [detail]   - Live adjacent Cisco neighbor table',
+    '  show interfaces [name|desc]   - Detailed interface stats & descriptions',
+    '  show cdp [neighbors [detail]] - Live adjacent Cisco neighbor table',
+    '  show lldp neighbors           - Live LLDP neighbor table',
     '  show arp / show ip arp        - L2-resolved IP-to-MAC ARP table',
+    '  show access-lists             - Configured IPv4 standard/extended ACLs',
+    '  show ip ssh / show ntp status - Management SSHv2 & NTP status',
+    '  show history / show users     - Session command history & lines',
     ...(device.type === 'router'
       ? [
           '  show ip route [static|ospf]   - IPv4 routing table',
           '  show ip protocols             - Active OSPF routing configuration',
-          '  show ip ospf neighbor         - Converged OSPF adjacencies'
+          '  show ip ospf [neighbor|int|database]',
+          '  show ip dhcp pool / binding   - DHCP server pools & active bindings',
+          '  clear ip ospf process / arp-cache'
         ]
       : [
           '  show vlan brief / id <n>      - VLAN membership & active ports',
           '  show interfaces trunk         - Active 802.1Q trunk ports',
           '  show interfaces switchport    - Switchport access/trunk settings',
+          '  show interfaces status        - Switchport link/speed/VLAN summary',
+          '  show port-security [int <if>] - Port-security violations & limits',
           '  show mac address-table        - Dynamically learned MAC addresses',
           '  show spanning-tree            - Spanning-Tree root & port states'
         ]),
@@ -431,9 +611,73 @@ export function getCliTabCompletions(
     return { completed: rawInput, suggestions: [] };
   }
 
+  const privilegedShowCandidates = [
+    'show running-config',
+    'show startup-config',
+    'show version',
+    'show ip interface brief',
+    'show ip interface',
+    'show interfaces',
+    'show interfaces description',
+    ...(device.type === 'router'
+      ? [
+          'show ip route',
+          'show ip protocols',
+          'show ip ospf',
+          'show ip ospf neighbor',
+          'show ip ospf interface',
+          'show ip ospf database',
+          'show ip dhcp pool',
+          'show ip dhcp binding'
+        ]
+      : [
+          'show interfaces status',
+          'show interfaces switchport',
+          'show interfaces trunk',
+          'show port-security',
+          'show vlan brief',
+          'show mac address-table',
+          'show spanning-tree'
+        ]),
+    'show access-lists',
+    'show ip ssh',
+    'show cdp',
+    'show cdp neighbors',
+    'show cdp neighbors detail',
+    'show lldp neighbors',
+    'show arp',
+    'show ntp status',
+    'show users',
+    'show history',
+    'show clock'
+  ];
+
+  // Interface completion inside `show interfaces <partial>` or `show ip int <partial>`
+  const lowerTrim = trimmedLeft.toLowerCase();
+  if (
+    (lowerTrim.startsWith('show interfaces ') ||
+      lowerTrim.startsWith('sh int ') ||
+      lowerTrim.startsWith('show ip interface ') ||
+      lowerTrim.startsWith('sh ip int ') ||
+      lowerTrim.startsWith('do show interfaces ')) &&
+    !hasTrailingSpace
+  ) {
+    const lastToken = (parts[parts.length - 1] || '').toLowerCase();
+    const extraKw = device.type === 'switch' ? ['status', 'switchport', 'trunk', 'description'] : ['description'];
+    const ifPool = [...extraKw, ...device.interfaces.map(i => i.name)];
+    const matches = ifPool.filter(n => n.toLowerCase().startsWith(lastToken));
+    if (matches.length === 1) {
+      const prefixTokens = parts.slice(0, -1).join(' ');
+      return { completed: `${prefixTokens} ${matches[0]} `, suggestions: [] };
+    }
+    if (matches.length > 1) {
+      return { completed: rawInput, suggestions: matches };
+    }
+  }
+
   let candidates: string[] = [];
   if (device.cliMode === 'user') {
-    candidates = ['enable', 'ping', 'traceroute', 'show', 'exit', 'clear', 'help'];
+    candidates = ['enable', 'ping', 'traceroute', 'show ip interface brief', 'show version', 'show clock', 'exit', 'clear', 'help'];
   } else if (device.cliMode === 'privileged') {
     candidates = [
       'configure terminal',
@@ -443,27 +687,10 @@ export function getCliTabCompletions(
       'disable',
       'ping',
       'traceroute',
-      'show running-config',
-      'show startup-config',
-      'show version',
-      'show ip interface brief',
-      'show ip interface',
-      'show interfaces',
-      ...(device.type === 'router'
-        ? ['show ip route', 'show ip protocols', 'show ip ospf neighbor', 'show ip ospf interface']
-        : [
-            'show interfaces status',
-            'show interfaces switchport',
-            'show interfaces trunk',
-            'show vlan brief',
-            'show mac address-table',
-            'show spanning-tree'
-          ]),
-      'show cdp neighbors',
-      'show cdp neighbors detail',
-      'show lldp neighbors',
-      'show arp',
-      'show clock',
+      'clear ip ospf process',
+      'clear arp-cache',
+      'clear mac address-table dynamic',
+      ...privilegedShowCandidates,
       'terminal length',
       'clear',
       'exit'
@@ -480,14 +707,31 @@ export function getCliTabCompletions(
       'no ip domain-lookup',
       'ip domain-name',
       'ip name-server',
+      'crypto key generate rsa',
+      'ip ssh version 2',
+      'cdp run',
+      'no cdp run',
+      'lldp run',
+      'no lldp run',
+      'ntp server',
+      'access-list',
+      'ip access-list standard',
+      'ip access-list extended',
       'username',
       'line console 0',
       'line vty 0 4',
       ...(device.type === 'router'
-        ? ['ip route', 'no ip route', 'router ospf', 'no router ospf']
+        ? [
+            'ip route',
+            'no ip route',
+            'router ospf',
+            'no router ospf',
+            'ip dhcp pool',
+            'ip dhcp excluded-address'
+          ]
         : ['vlan', 'no vlan', 'ip default-gateway']),
-      'do show ip interface brief',
-      'do show running-config',
+      ...privilegedShowCandidates.map(s => `do ${s}`),
+      'do write memory',
       'exit',
       'end'
     ];
@@ -499,6 +743,9 @@ export function getCliTabCompletions(
       'no shutdown',
       'duplex',
       'speed',
+      'ip access-group',
+      'cdp enable',
+      'no cdp enable',
       ...(device.type === 'router'
         ? ['ip address', 'no ip address', 'encapsulation dot1q', 'bandwidth', 'clock rate']
         : [
@@ -508,10 +755,14 @@ export function getCliTabCompletions(
             'switchport trunk native vlan',
             'switchport trunk allowed vlan',
             'switchport port-security',
+            'switchport port-security maximum',
+            'switchport port-security violation',
+            'switchport port-security mac-address sticky',
             'spanning-tree portfast',
             'spanning-tree bpduguard enable'
           ]),
-      'do show ip interface brief',
+      ...privilegedShowCandidates.map(s => `do ${s}`),
+      'do write memory',
       'exit',
       'end'
     ];
@@ -523,11 +774,17 @@ export function getCliTabCompletions(
       'no passive-interface',
       'default-information originate',
       'auto-cost reference-bandwidth',
+      'do show ip ospf neighbor',
+      'do show ip route',
       'exit',
       'end'
     ];
+  } else if (device.cliMode === 'dhcp_pool') {
+    candidates = ['network', 'default-router', 'dns-server', 'domain-name', 'lease', 'do show ip dhcp pool', 'exit', 'end'];
+  } else if (device.cliMode === 'acl') {
+    candidates = ['permit', 'deny', 'remark', 'do show access-lists', 'exit', 'end'];
   } else if (device.cliMode === 'vlan_db') {
-    candidates = ['name', 'exit', 'end'];
+    candidates = ['name', 'do show vlan brief', 'exit', 'end'];
   } else if (device.cliMode === 'line') {
     candidates = [
       'password',
@@ -542,19 +799,23 @@ export function getCliTabCompletions(
     ];
   }
 
-  // If typing interface name after `interface ` or `int `
+  // Interface name completion after `interface ` or `int `
   if (
-    device.cliMode === 'global' &&
+    device.cliMode !== 'user' &&
+    device.cliMode !== 'privileged' &&
     parts.length >= 1 &&
-    (parts[0].toLowerCase() === 'interface' || parts[0].toLowerCase() === 'int')
+    ('interface'.startsWith(parts[0].toLowerCase()) && parts[0].toLowerCase().startsWith('int'))
   ) {
     const partialIf = hasTrailingSpace ? '' : (parts[1] || '').toLowerCase();
     if (parts.length <= 2) {
       const ifNames = [
         ...device.interfaces.map(i => i.name),
+        'Loopback0',
+        ...(device.type === 'switch' ? ['Vlan1'] : []),
         'range'
       ];
-      const matches = ifNames.filter(n => n.toLowerCase().startsWith(partialIf));
+      const uniqueIfNames = Array.from(new Set(ifNames));
+      const matches = uniqueIfNames.filter(n => n.toLowerCase().startsWith(partialIf));
       if (matches.length === 1) {
         return { completed: `${parts[0]} ${matches[0]} `, suggestions: [] };
       }
@@ -570,7 +831,6 @@ export function getCliTabCompletions(
     return { completed: `${matches[0]} `, suggestions: [] };
   }
   if (matches.length > 1) {
-    // Compute longest common prefix among matches
     let prefix = matches[0];
     for (let i = 1; i < matches.length; i++) {
       let j = 0;
@@ -608,6 +868,13 @@ export function findDirectlyConnectedNeighbor(
   return { link, remoteDevice, remoteIface };
 }
 
+function resolveShowVerbMatch(verb: string, targets: string[]): string | null {
+  const exact = targets.find(t => t === verb);
+  if (exact) return exact;
+  const prefixMatches = targets.filter(t => t.startsWith(verb));
+  return prefixMatches.length === 1 ? prefixMatches[0] : null;
+}
+
 export function executeCiscoShowCommand(
   device: SimDevice,
   lowerCmd: string,
@@ -615,44 +882,136 @@ export function executeCiscoShowCommand(
   allLinks: SimLink[],
   deps: CiscoShowDeps
 ): string[] | null {
-  const tokens = lowerCmd.split(/\s+/);
-  if (tokens[0] !== 'show' && tokens[0] !== 'sh') return null;
+  // Split optional Cisco IOS output pipe modifier: e.g. `show run | section ospf`
+  const pipeIdx = lowerCmd.indexOf('|');
+  const baseLower = (pipeIdx >= 0 ? lowerCmd.slice(0, pipeIdx) : lowerCmd).trim();
+  const pipeExpr = pipeIdx >= 0 ? lowerCmd.slice(pipeIdx + 1).trim() : '';
 
-  const sub = tokens.slice(1).join(' ');
+  const tokens = baseLower.split(/\s+/);
+  if (!tokens[0] || !'show'.startsWith(tokens[0]) || tokens[0].length < 2) return null;
 
-  if (sub === 'version' || sub === 'ver') {
-    return buildShowVersionLines(device);
+  const subTokens = tokens.slice(1);
+  const sub = subTokens.join(' ');
+  const firstSub = subTokens[0] || '';
+
+  const finalize = (lines: string[] | null): string[] | null => {
+    if (lines === null) return null;
+    return pipeExpr ? applyCiscoPipeFilter(lines, pipeExpr) : lines;
+  };
+
+  if (subTokens.length === 0) {
+    return ['% Incomplete command. Type "show ?" for show subcommands.'];
   }
 
-  if (sub === 'clock') {
-    return [new Date().toUTCString()];
+  if (firstSub && 'version'.startsWith(firstSub) && subTokens.length === 1 && firstSub.length >= 2) {
+    return finalize(buildShowVersionLines(device));
   }
 
-  if (sub === 'history') {
-    return ['  show commands executed in this session are visible in terminal scrollback.'];
+  if (firstSub && 'clock'.startsWith(firstSub) && subTokens.length === 1 && firstSub.length >= 2) {
+    return finalize([new Date().toUTCString()]);
+  }
+
+  if (firstSub && 'history'.startsWith(firstSub) && subTokens.length === 1 && firstSub.length >= 3) {
+    const cmds = device.commandHistory && device.commandHistory.length > 0
+      ? device.commandHistory.slice(-20)
+      : [];
+    return finalize(
+      cmds.length > 0
+        ? cmds.map((c, idx) => `  ${String(idx + 1).padStart(2, ' ')}  ${c}`)
+        : ['  No commands recorded in current session history yet.']
+    );
+  }
+
+  if (firstSub && 'users'.startsWith(firstSub) && subTokens.length === 1 && firstSub.length >= 2) {
+    return finalize([
+      '    Line       User       Host(s)              Idle       Location',
+      `*  0 con 0                idle                 00:00:00   Local Console (${device.name})`
+    ]);
+  }
+
+  if (firstSub === 'ntp' && (subTokens[1] === 'status' || subTokens[1] === 'associations')) {
+    return finalize(
+      device.ntpServer
+        ? [
+            `Clock is synchronized, stratum 2, reference is ${device.ntpServer}`,
+            'nominal freq is 250.0000 Hz, actual freq is 250.0000 Hz, precision is 2**10'
+          ]
+        : ['Clock is unsynchronized. Configure with "ntp server <ip>".']
+    );
   }
 
   if (sub === 'banner') {
-    return device.bannerMotd
-      ? ['MOTD Banner:', device.bannerMotd]
-      : ['No MOTD banner configured.'];
+    return finalize(
+      device.bannerMotd
+        ? ['MOTD Banner:', device.bannerMotd]
+        : ['No MOTD banner configured.']
+    );
   }
 
-  if (sub === 'running-config' || sub === 'run') {
-    return buildRunningConfigLines(device);
+  if (
+    subTokens.length === 1 &&
+    firstSub.length >= 3 &&
+    'running-config'.startsWith(firstSub)
+  ) {
+    return finalize(buildRunningConfigLines(device));
   }
 
-  if (sub === 'startup-config' || sub === 'start') {
+  if (
+    subTokens.length === 1 &&
+    firstSub.length >= 2 &&
+    'startup-config'.startsWith(firstSub)
+  ) {
     if (!device.startupConfigLines || device.startupConfigLines.length === 0) {
-      return ['%% startup-config is not present (run "copy running-config startup-config" or "wr").'];
+      return finalize([
+        '%% startup-config is not present (run "copy running-config startup-config" or "wr").'
+      ]);
     }
-    return [
+    return finalize([
       `! Saved ${device.startupConfigSavedAt ? new Date(device.startupConfigSavedAt).toLocaleString() : 'NVRAM'}`,
       ...device.startupConfigLines
-    ];
+    ]);
   }
 
-  if (sub === 'ip interface brief' || sub === 'ip int br' || sub === 'ip int brief') {
+  if (
+    sub === 'access-lists' ||
+    sub === 'access-list' ||
+    sub === 'ip access-lists' ||
+    sub === 'ip access-list'
+  ) {
+    const acls = device.accessLists || [];
+    if (acls.length === 0) {
+      return finalize(['No IP access lists configured.']);
+    }
+    const out: string[] = [];
+    acls.forEach(acl => {
+      const label = acl.type === 'standard' ? 'Standard IP access list' : 'Extended IP access list';
+      out.push(`${label} ${acl.id}`);
+      acl.entries.forEach((entry, idx) => {
+        out.push(`    ${(idx + 1) * 10} ${entry}`);
+      });
+    });
+    return finalize(out);
+  }
+
+  if (sub === 'ip ssh' || sub === 'ssh') {
+    const enabled = Boolean(device.domainName && (device.rsaKeyBits || 0) >= 768);
+    return finalize([
+      enabled
+        ? `SSH Enabled - version ${device.sshVersion || 2}.0`
+        : 'SSH Disabled - configure "ip domain-name" and "crypto key generate rsa"',
+      'Authentication timeout: 120 secs; Authentication retries: 3',
+      `RSA Key Modulus: ${device.rsaKeyBits ? `${device.rsaKeyBits} bits` : 'Not generated'}`
+    ]);
+  }
+
+  if (
+    subTokens[0] === 'ip' &&
+    subTokens[1] &&
+    'interface'.startsWith(subTokens[1]) &&
+    subTokens[2] &&
+    'brief'.startsWith(subTokens[2]) &&
+    subTokens[2].length >= 2
+  ) {
     const out = [
       'Interface                  IP-Address      OK? Method Status                Protocol'
     ];
@@ -665,11 +1024,11 @@ export function executeCiscoShowCommand(
         `${iface.name.padEnd(27, ' ')}${ipDisplay.padEnd(16, ' ')}YES manual ${statusText.padEnd(22, ' ')}${protoText}`
       );
     });
-    return out;
+    return finalize(out);
   }
 
-  if (sub.startsWith('ip interface') || sub.startsWith('ip int')) {
-    const targetToken = tokens.slice(3).join('');
+  if (subTokens[0] === 'ip' && subTokens[1] && 'interface'.startsWith(subTokens[1]) && subTokens[1].length >= 3) {
+    const targetToken = subTokens.slice(2).join('');
     const list = targetToken
       ? device.interfaces.filter(
           i =>
@@ -677,7 +1036,7 @@ export function executeCiscoShowCommand(
             i.shortName.toLowerCase() === targetToken
         )
       : device.interfaces;
-    if (list.length === 0) return [`% Invalid interface "${targetToken}".`];
+    if (list.length === 0) return finalize([`% Invalid interface "${targetToken}".`]);
     const out: string[] = [];
     list.forEach(iface => {
       const up = deps.isIfUp(device, iface);
@@ -689,14 +1048,95 @@ export function executeCiscoShowCommand(
       } else {
         out.push('  Internet protocol processing disabled');
       }
-      out.push(`  MTU is 1500 bytes`);
+      out.push(
+        `  Inbound  access list is ${iface.ipAccessGroupIn || 'not set'}`,
+        `  Outgoing access list is ${iface.ipAccessGroupOut || 'not set'}`,
+        `  MTU is 1500 bytes`
+      );
     });
-    return out;
+    return finalize(out);
   }
 
-  if (sub === 'interfaces status' || sub === 'int status') {
+  if (
+    subTokens[0] === 'port-security' ||
+    sub.startsWith('port-security ')
+  ) {
     if (device.type !== 'switch') {
-      return ['% "show interfaces status" is supported on Catalyst switches.'];
+      return finalize(['% Port Security is supported on Catalyst switches.']);
+    }
+    const ifArg =
+      subTokens[1] && 'interface'.startsWith(subTokens[1])
+        ? subTokens.slice(2).join('')
+        : '';
+    if (ifArg) {
+      const expanded = expandInterfaceToken(ifArg);
+      const iface = device.interfaces.find(
+        i => i.name.toLowerCase() === expanded || i.shortName.toLowerCase() === ifArg
+      );
+      if (!iface) return finalize([`% Invalid interface "${ifArg}".`]);
+      const ps = iface.portSecurity;
+      const nb = findDirectlyConnectedNeighbor(device, iface, allDevices, allLinks);
+      return finalize([
+        `Port Security              : ${ps?.enabled ? 'Enabled' : 'Disabled'}`,
+        `Port Status                : ${ps?.enabled && deps.isIfUp(device, iface) ? 'Secure-up' : 'Secure-down'}`,
+        `Violation Mode             : ${ps?.violation || 'shutdown'}`,
+        `Maximum MAC Addresses      : ${ps?.maximum || 1}`,
+        `Sticky MAC Addresses       : ${ps?.sticky ? 'Enabled' : 'Disabled'}`,
+        `Last Source Address:Vlan   : ${nb ? `${nb.remoteIface.mac}:${iface.accessVlan || 1}` : '0000.0000.0000:0'}`
+      ]);
+    }
+    const secured = device.interfaces.filter(i => i.portSecurity?.enabled);
+    if (secured.length === 0) {
+      return finalize(['No interfaces currently have port-security enabled.']);
+    }
+    const out = [
+      'Secure Port  MaxSecureAddr  CurrentAddr  SecurityViolation  Security Action',
+      '               (Count)       (Count)          (Count)',
+      '---------------------------------------------------------------------------'
+    ];
+    secured.forEach(iface => {
+      const ps = iface.portSecurity!;
+      const nb = findDirectlyConnectedNeighbor(device, iface, allDevices, allLinks);
+      const curr = nb && deps.isIfUp(device, iface) ? 1 : 0;
+      out.push(
+        `${iface.shortName.padEnd(13, ' ')}${String(ps.maximum).padEnd(15, ' ')}${String(curr).padEnd(13, ' ')}0                  ${ps.violation}`
+      );
+    });
+    return finalize(out);
+  }
+
+  if (
+    subTokens[0] &&
+    'interfaces'.startsWith(subTokens[0]) &&
+    subTokens[0].length >= 3 &&
+    subTokens[1] &&
+    'description'.startsWith(subTokens[1]) &&
+    subTokens[1].length >= 4
+  ) {
+    const out = [
+      'Interface                      Status         Protocol Description'
+    ];
+    device.interfaces.forEach(iface => {
+      const up = deps.isIfUp(device, iface);
+      const status = !iface.adminUp ? 'admin down' : up ? 'up' : 'down';
+      const proto = iface.adminUp && up ? 'up' : 'down';
+      out.push(
+        `${iface.shortName.padEnd(31, ' ')}${status.padEnd(15, ' ')}${proto.padEnd(9, ' ')}${iface.description || ''}`
+      );
+    });
+    return finalize(out);
+  }
+
+  if (
+    subTokens[0] &&
+    'interfaces'.startsWith(subTokens[0]) &&
+    subTokens[0].length >= 3 &&
+    subTokens[1] &&
+    'status'.startsWith(subTokens[1]) &&
+    subTokens[1].length >= 2
+  ) {
+    if (device.type !== 'switch') {
+      return finalize(['% "show interfaces status" is supported on Catalyst switches.']);
     }
     const out = [
       'Port      Name               Status       Vlan       Duplex  Speed Type'
@@ -714,12 +1154,19 @@ export function executeCiscoShowCommand(
           `${iface.shortName.padEnd(10, ' ')}${desc.padEnd(19, ' ')}${status.padEnd(13, ' ')}${vlanCol.padEnd(11, ' ')}${dup.padEnd(8, ' ')}${spd.padEnd(6, ' ')}10/100/1000`
         );
       });
-    return out;
+    return finalize(out);
   }
 
-  if (sub === 'interfaces switchport' || sub === 'int switchport') {
+  if (
+    subTokens[0] &&
+    'interfaces'.startsWith(subTokens[0]) &&
+    subTokens[0].length >= 3 &&
+    subTokens[1] &&
+    'switchport'.startsWith(subTokens[1]) &&
+    subTokens[1].length >= 2
+  ) {
     if (device.type !== 'switch') {
-      return ['% Switchport parameters apply to Catalyst switches.'];
+      return finalize(['% Switchport parameters apply to Catalyst switches.']);
     }
     const out: string[] = [];
     device.interfaces
@@ -737,15 +1184,22 @@ export function executeCiscoShowCommand(
           ''
         );
       });
-    return out;
+    return finalize(out);
   }
 
-  if (sub === 'interfaces trunk' || sub === 'int trunk' || sub === 'int tr') {
+  if (
+    subTokens[0] &&
+    'interfaces'.startsWith(subTokens[0]) &&
+    subTokens[0].length >= 3 &&
+    subTokens[1] &&
+    'trunk'.startsWith(subTokens[1]) &&
+    subTokens[1].length >= 2
+  ) {
     if (device.type !== 'switch') {
-      return ['% Trunk status applies to Catalyst switches.'];
+      return finalize(['% Trunk status applies to Catalyst switches.']);
     }
     const trunks = device.interfaces.filter(i => i.switchportMode === 'trunk');
-    if (trunks.length === 0) return ['No active 802.1Q trunk ports configured.'];
+    if (trunks.length === 0) return finalize(['No active 802.1Q trunk ports configured.']);
     const out = [
       'Port        Mode         Encapsulation  Status        Native vlan'
     ];
@@ -759,11 +1213,11 @@ export function executeCiscoShowCommand(
     trunks.forEach(t => {
       out.push(`${t.shortName.padEnd(12, ' ')}${(t.trunkAllowedVlans || [1]).join(',')}`);
     });
-    return out;
+    return finalize(out);
   }
 
-  if (sub === 'interfaces' || sub === 'int' || sub.startsWith('interfaces ') || sub.startsWith('int ')) {
-    const targetToken = tokens.slice(2).join('');
+  if (subTokens[0] && 'interfaces'.startsWith(subTokens[0]) && subTokens[0].length >= 3) {
+    const targetToken = subTokens.slice(1).join('');
     const list = targetToken
       ? device.interfaces.filter(
           i =>
@@ -771,7 +1225,7 @@ export function executeCiscoShowCommand(
             i.shortName.toLowerCase() === targetToken
         )
       : device.interfaces;
-    if (list.length === 0) return [`% Invalid interface "${targetToken}".`];
+    if (list.length === 0) return finalize([`% Invalid interface "${targetToken}".`]);
     const out: string[] = [];
     list.forEach(iface => {
       const up = deps.isIfUp(device, iface);
@@ -788,33 +1242,29 @@ export function executeCiscoShowCommand(
       }
       out.push(`     5 minute input rate 0 bits/sec, 0 packets/sec`);
     });
-    return out;
+    return finalize(out);
   }
 
-  if (
-    sub === 'ip route' ||
-    sub === 'ip ro' ||
-    sub === 'ip route connected' ||
-    sub === 'ip route static' ||
-    sub === 'ip route ospf'
-  ) {
+  if (subTokens[0] === 'ip' && subTokens[1] && 'route'.startsWith(subTokens[1]) && subTokens[1].length >= 2) {
     if (device.type !== 'router') {
-      return ['% Routing table applies to Layer 3 routers.'];
+      return finalize(['% Routing table applies to Layer 3 routers.']);
     }
-    const filterCode =
-      sub.endsWith('connected')
+    const mod = subTokens[2] || '';
+    const filterCode = mod
+      ? 'connected'.startsWith(mod)
         ? 'C'
-        : sub.endsWith('static')
+        : 'static'.startsWith(mod)
         ? 'S'
-        : sub.endsWith('ospf')
+        : 'ospf'.startsWith(mod)
         ? 'O'
-        : null;
+        : null
+      : null;
     const table = deps.computeRoutes(device).filter(r => !filterCode || r.code === filterCode);
     const out = ['Codes: C - connected, S - static, O - OSPF', ''];
     if (table.length === 0) {
       out.push(
         filterCode
-          ? `No ${sub.split(' ').pop()} routes installed in RIB.`
+          ? `No ${mod} routes installed in RIB.`
           : 'Routing table is empty. Configure interface IPs and run "no shutdown".'
       );
     } else {
@@ -830,12 +1280,12 @@ export function executeCiscoShowCommand(
         }
       });
     }
-    return out;
+    return finalize(out);
   }
 
-  if (sub === 'ip protocols') {
-    if (device.type !== 'router') return ['% Routing protocols apply to routers.'];
-    if (!device.ospf) return ['No dynamic routing protocols configured.'];
+  if (subTokens[0] === 'ip' && subTokens[1] && 'protocols'.startsWith(subTokens[1]) && subTokens[1].length >= 4) {
+    if (device.type !== 'router') return finalize(['% Routing protocols apply to routers.']);
+    if (!device.ospf) return finalize(['No dynamic routing protocols configured.']);
     const out = [
       `Routing Protocol is "ospf ${device.ospf.processId}"`,
       `  Outgoing update filter list for all interfaces is not set`,
@@ -852,64 +1302,154 @@ export function executeCiscoShowCommand(
       if (device.ospf.passiveDefault) out.push('    default');
       (device.ospf.passiveInterfaces || []).forEach(p => out.push(`    ${p}`));
     }
-    return out;
+    return finalize(out);
   }
 
-  if (sub === 'ip ospf neighbor' || sub === 'ip ospf nei') {
-    if (device.type !== 'router') return ['% OSPF applies to Layer 3 routers.'];
-    if (!device.ospf) return ['OSPF process not configured.'];
-    const out = [
-      'Neighbor ID     Pri   State           Dead Time   Address         Interface'
-    ];
-    let count = 0;
-    device.interfaces.forEach(iface => {
-      if (!deps.isIfUp(device, iface) || !iface.ip) return;
-      const advertised = device.ospf!.networks.some(n =>
-        deps.matchesPrefix(iface.ip, n.network, deps.wildcardToMask(n.wildcard))
-      );
-      if (!advertised) return;
-      if (device.ospf!.passiveDefault || device.ospf!.passiveInterfaces?.includes(iface.name)) return;
-      const nb = findDirectlyConnectedNeighbor(device, iface, allDevices, allLinks);
-      if (!nb || nb.remoteDevice.type !== 'router' || !nb.remoteDevice.ospf) return;
-      const remoteIp = nb.remoteIface.ip;
-      if (!remoteIp) return;
-      const rid = nb.remoteDevice.ospf.routerId || remoteIp;
-      const state = iface.kind === 'serial' ? 'FULL/  -' : 'FULL/DR';
-      out.push(
-        `${rid.padEnd(16, ' ')}1     ${state.padEnd(16, ' ')}00:00:34    ${remoteIp.padEnd(16, ' ')}${iface.shortName}`
-      );
-      count++;
-    });
-    if (count === 0) return ['No converged OSPF neighbors found on up/up non-passive interfaces.'];
-    return out;
-  }
-
-  if (sub === 'ip ospf interface' || sub === 'ip ospf int' || sub === 'ip ospf interface brief') {
-    if (device.type !== 'router') return ['% OSPF applies to Layer 3 routers.'];
-    if (!device.ospf) return ['OSPF process not configured.'];
-    const out = ['Interface    PID   Area            IP Address/Mask    Cost  State Nbrs'];
-    device.interfaces.forEach(iface => {
-      if (!iface.ip) return;
-      const net = device.ospf!.networks.find(n =>
-        deps.matchesPrefix(iface.ip, n.network, deps.wildcardToMask(n.wildcard))
-      );
-      if (!net) return;
-      const up = deps.isIfUp(device, iface);
-      const cost = iface.kind === 'serial' ? 64 : 1;
-      out.push(
-        `${iface.shortName.padEnd(13, ' ')}${device.ospf!.processId.padEnd(6, ' ')}${net.area.padEnd(16, ' ')}${(iface.ip || '').padEnd(19, ' ')}${String(cost).padEnd(6, ' ')}${up ? 'UP   ' : 'DOWN '}`
-      );
-    });
-    return out;
-  }
-
-  if (sub === 'vlan' || sub === 'vlan brief' || sub === 'vlan br' || sub.startsWith('vlan id ')) {
-    if (device.type !== 'switch') {
-      return ['% VLAN database applies to Catalyst switches.'];
+  if (subTokens[0] === 'ip' && subTokens[1] === 'dhcp') {
+    if (device.type !== 'router') return finalize(['% DHCP server commands apply to Layer 3 routers.']);
+    const pools = device.dhcpPools || [];
+    const arg = subTokens[2] || 'pool';
+    if ('pool'.startsWith(arg)) {
+      if (pools.length === 0) return finalize(['No DHCP pools configured.']);
+      const out: string[] = [];
+      pools.forEach(pool => {
+        const subnetDevices = allDevices.filter(d => {
+          const nic = d.interfaces[0];
+          return (
+            (d.type === 'pc' || d.type === 'server') &&
+            nic?.ip &&
+            pool.network &&
+            pool.mask &&
+            deps.matchesPrefix(nic.ip, pool.network, pool.mask)
+          );
+        });
+        out.push(
+          `Pool ${pool.name} :`,
+          ` Utilization mark (high/low)    : 100 / 0`,
+          ` Subnet size (first/next)       : 0 / 0`,
+          ` Leased addresses               : ${subnetDevices.length}`,
+          ` Network / Mask                 : ${pool.network || 'unconfigured'} ${pool.mask || ''}`,
+          ` Default router                 : ${pool.defaultRouter || 'none'}`,
+          ` DNS server                     : ${pool.dnsServer || 'none'}`,
+          ''
+        );
+      });
+      return finalize(out);
     }
-    const idFilter = sub.startsWith('vlan id ') ? Number(tokens[3]) : null;
+    if ('binding'.startsWith(arg)) {
+      const out = [
+        'Bindings from all pools not associated with VRF:',
+        'IP address          Client-ID/              Lease expiration        Type',
+        '                    Hardware address'
+      ];
+      let count = 0;
+      pools.forEach(pool => {
+        if (!pool.network || !pool.mask) return;
+        allDevices.forEach(d => {
+          const nic = d.interfaces[0];
+          if ((d.type === 'pc' || d.type === 'server') && nic?.ip && deps.matchesPrefix(nic.ip, pool.network!, pool.mask!)) {
+            out.push(
+              `${nic.ip.padEnd(20, ' ')}${nic.mac.padEnd(24, ' ')}24 hours                Automatic`
+            );
+            count++;
+          }
+        });
+      });
+      if (count === 0) out.push('No active DHCP bindings matched configured pool subnets.');
+      return finalize(out);
+    }
+  }
+
+  if (subTokens[0] === 'ip' && subTokens[1] === 'ospf') {
+    if (device.type !== 'router') return finalize(['% OSPF applies to Layer 3 routers.']);
+    if (!device.ospf) return finalize(['OSPF process not configured.']);
+    const ospfSub = subTokens[2] || '';
+
+    if (!ospfSub) {
+      return finalize([
+        ` Routing Process "ospf ${device.ospf.processId}" with ID ${device.ospf.routerId || '(auto)'}`,
+        ` Reference bandwidth unit is ${device.ospf.referenceBandwidth || 100} mbps`,
+        ` Supports only single TOS(TOS0) routes`,
+        ` Default route origination: ${device.ospf.defaultInformationOriginate ? 'Enabled' : 'Disabled'}`,
+        ` Number of areas in this router is ${new Set(device.ospf.networks.map(n => n.area)).size}`
+      ]);
+    }
+
+    if ('neighbor'.startsWith(ospfSub) && ospfSub.length >= 3) {
+      const out = [
+        'Neighbor ID     Pri   State           Dead Time   Address         Interface'
+      ];
+      let count = 0;
+      device.interfaces.forEach(iface => {
+        if (!deps.isIfUp(device, iface) || !iface.ip) return;
+        const advertised = device.ospf!.networks.some(n =>
+          deps.matchesPrefix(iface.ip, n.network, deps.wildcardToMask(n.wildcard))
+        );
+        if (!advertised) return;
+        if (device.ospf!.passiveDefault || device.ospf!.passiveInterfaces?.includes(iface.name)) return;
+        const nb = findDirectlyConnectedNeighbor(device, iface, allDevices, allLinks);
+        if (!nb || nb.remoteDevice.type !== 'router' || !nb.remoteDevice.ospf) return;
+        const remoteIp = nb.remoteIface.ip;
+        if (!remoteIp) return;
+        const rid = nb.remoteDevice.ospf.routerId || remoteIp;
+        const state = iface.kind === 'serial' ? 'FULL/  -' : 'FULL/DR';
+        out.push(
+          `${rid.padEnd(16, ' ')}1     ${state.padEnd(16, ' ')}00:00:34    ${remoteIp.padEnd(16, ' ')}${iface.shortName}`
+        );
+        count++;
+      });
+      if (count === 0) return finalize(['No converged OSPF neighbors found on up/up non-passive interfaces.']);
+      return finalize(out);
+    }
+
+    if ('interface'.startsWith(ospfSub) && ospfSub.length >= 3) {
+      const out = ['Interface    PID   Area            IP Address/Mask    Cost  State Nbrs'];
+      device.interfaces.forEach(iface => {
+        if (!iface.ip) return;
+        const net = device.ospf!.networks.find(n =>
+          deps.matchesPrefix(iface.ip, n.network, deps.wildcardToMask(n.wildcard))
+        );
+        if (!net) return;
+        const up = deps.isIfUp(device, iface);
+        const cost = iface.kind === 'serial' ? 64 : 1;
+        out.push(
+          `${iface.shortName.padEnd(13, ' ')}${device.ospf!.processId.padEnd(6, ' ')}${net.area.padEnd(16, ' ')}${(iface.ip || '').padEnd(19, ' ')}${String(cost).padEnd(6, ' ')}${up ? 'UP   ' : 'DOWN '}`
+        );
+      });
+      return finalize(out);
+    }
+
+    if ('database'.startsWith(ospfSub) && ospfSub.length >= 3) {
+      const rid = device.ospf.routerId || device.interfaces.find(i => i.ip)?.ip || '0.0.0.0';
+      const out = [
+        `            OSPF Router with ID (${rid}) (Process ID ${device.ospf.processId})`,
+        '',
+        '                Router Link States (Area 0)',
+        'Link ID         ADV Router      Age         Seq#       Checksum Link count'
+      ];
+      out.push(`${rid.padEnd(16, ' ')}${rid.padEnd(16, ' ')}120         0x80000003 0x00A1B2 ${device.ospf.networks.length}`);
+      allDevices
+        .filter(d => d.id !== device.id && d.type === 'router' && d.ospf)
+        .forEach((r, idx) => {
+          const rId = r.ospf!.routerId || r.interfaces.find(i => i.ip)?.ip || `1.1.1.${idx + 2}`;
+          out.push(
+            `${rId.padEnd(16, ' ')}${rId.padEnd(16, ' ')}115         0x80000002 0x0044C1 ${r.ospf!.networks.length}`
+          );
+        });
+      return finalize(out);
+    }
+  }
+
+  if (
+    (subTokens[0] && 'vlan'.startsWith(subTokens[0]) && subTokens[0].length >= 2) ||
+    sub.startsWith('vlan id ')
+  ) {
+    if (device.type !== 'switch') {
+      return finalize(['% VLAN database applies to Catalyst switches.']);
+    }
+    const idFilter = sub.startsWith('vlan id ') ? Number(subTokens[2]) : null;
     const list = idFilter ? device.vlans.filter(v => v.id === idFilter) : device.vlans;
-    if (list.length === 0) return [`VLAN id ${idFilter} not found in current VLAN database`];
+    if (list.length === 0) return finalize([`VLAN id ${idFilter} not found in current VLAN database`]);
     const out = [
       'VLAN Name                             Status    Ports',
       '---- -------------------------------- --------- -------------------------------'
@@ -921,12 +1461,17 @@ export function executeCiscoShowCommand(
         .join(', ');
       out.push(`${String(v.id).padEnd(5, ' ')}${v.name.padEnd(33, ' ')}active    ${ports}`);
     });
-    return out;
+    return finalize(out);
   }
 
-  if (sub === 'mac address-table' || sub === 'mac-address-table') {
+  if (
+    sub === 'mac address-table' ||
+    sub === 'mac-address-table' ||
+    sub === 'mac add' ||
+    sub === 'mac addr'
+  ) {
     if (device.type !== 'switch') {
-      return ['% MAC address table applies to Catalyst switches.'];
+      return finalize(['% MAC address table applies to Catalyst switches.']);
     }
     const out = [
       '          Mac Address Table',
@@ -948,11 +1493,11 @@ export function executeCiscoShowCommand(
     if (entries === 0) {
       out.push('No dynamic MAC addresses learned on active switchports yet.');
     }
-    return out;
+    return finalize(out);
   }
 
-  if (sub === 'spanning-tree' || sub === 'stp') {
-    if (device.type !== 'switch') return ['% Spanning Tree applies to Catalyst switches.'];
+  if (subTokens[0] && ('spanning-tree'.startsWith(subTokens[0]) && subTokens[0].length >= 2) || sub === 'stp') {
+    if (device.type !== 'switch') return finalize(['% Spanning Tree applies to Catalyst switches.']);
     const baseMac = device.interfaces[0]?.mac || '00:50:56:00:00:01';
     const out = [
       '',
@@ -973,20 +1518,42 @@ export function executeCiscoShowCommand(
           `${iface.shortName.padEnd(20, ' ')}Desg FWD 19        128.1    ${typeStr}`
         );
       });
-    return out;
+    return finalize(out);
   }
 
-  if (sub === 'cdp neighbors' || sub === 'cdp nei' || sub === 'cdp neighbors detail' || sub === 'cdp nei det') {
-    const isDetail = sub.endsWith('detail') || sub.endsWith('det');
+  if (sub === 'cdp') {
+    return finalize([
+      device.cdpEnabled === false
+        ? '% CDP is not enabled'
+        : 'Global CDP information:\n        Sending CDP packets every 60 seconds\n        Sending a holdtime value of 180 seconds\n        Sending CDPv2 advertisements is enabled'
+    ]);
+  }
+
+  if (
+    sub === 'cdp neighbors' ||
+    sub === 'cdp nei' ||
+    sub === 'cdp neighbors detail' ||
+    sub === 'cdp nei det' ||
+    sub === 'cdp entry *'
+  ) {
+    if (device.cdpEnabled === false) {
+      return finalize(['% CDP is not enabled']);
+    }
+    const isDetail = sub.endsWith('detail') || sub.endsWith('det') || sub === 'cdp entry *';
     const neighbors: Array<{ local: SimDeviceInterface; remote: SimDevice; remoteIf: SimDeviceInterface }> = [];
     device.interfaces.forEach(iface => {
-      if (!deps.isIfUp(device, iface)) return;
+      if (iface.cdpEnabled === false || !deps.isIfUp(device, iface)) return;
       const nb = findDirectlyConnectedNeighbor(device, iface, allDevices, allLinks);
-      if (nb && (nb.remoteDevice.type === 'router' || nb.remoteDevice.type === 'switch')) {
+      if (
+        nb &&
+        nb.remoteDevice.cdpEnabled !== false &&
+        nb.remoteIface.cdpEnabled !== false &&
+        (nb.remoteDevice.type === 'router' || nb.remoteDevice.type === 'switch')
+      ) {
         neighbors.push({ local: iface, remote: nb.remoteDevice, remoteIf: nb.remoteIface });
       }
     });
-    if (neighbors.length === 0) return ['Total cdp entries displayed : 0'];
+    if (neighbors.length === 0) return finalize(['Total cdp entries displayed : 0']);
 
     if (!isDetail) {
       const out = [
@@ -1000,7 +1567,7 @@ export function executeCiscoShowCommand(
           `${n.remote.name.padEnd(17, ' ')}${n.local.shortName.padEnd(18, ' ')}145        ${cap.padEnd(12, ' ')}${plat.padEnd(10, ' ')}${n.remoteIf.shortName}`
         );
       });
-      return out;
+      return finalize(out);
     }
 
     const detailOut: string[] = [];
@@ -1013,7 +1580,7 @@ export function executeCiscoShowCommand(
         `Interface: ${n.local.name},  Port ID (outgoing port): ${n.remoteIf.name}`
       );
     });
-    return detailOut;
+    return finalize(detailOut);
   }
 
   if (sub === 'lldp neighbors' || sub === 'lldp nei') {
@@ -1032,7 +1599,7 @@ export function executeCiscoShowCommand(
       );
       count++;
     });
-    return count > 0 ? out : ['Total entries displayed: 0'];
+    return finalize(count > 0 ? out : ['Total entries displayed: 0']);
   }
 
   if (sub === 'arp' || sub === 'ip arp') {
@@ -1054,9 +1621,11 @@ export function executeCiscoShowCommand(
         }
       }
     });
-    return out;
+    return finalize(out);
   }
+
+  // Keep reference to resolveShowVerbMatch unused-safe or used
+  void resolveShowVerbMatch;
 
   return null;
 }
-

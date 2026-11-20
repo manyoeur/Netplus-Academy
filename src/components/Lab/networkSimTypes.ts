@@ -10,7 +10,9 @@ export type SimCliMode =
   | 'interface_range'
   | 'router_ospf'
   | 'vlan_db'
-  | 'line';
+  | 'line'
+  | 'dhcp_pool'
+  | 'acl';
 
 export interface SimPortSecurityConfig {
   enabled: boolean;
@@ -43,6 +45,10 @@ export interface SimDeviceInterface {
   // Router-on-a-stick dot1Q tag (for subinterfaces like GigabitEthernet0/0.10)
   dot1qVlan?: number;
   parentInterface?: string;
+  // Interface ACL & discovery controls
+  ipAccessGroupIn?: string;
+  ipAccessGroupOut?: string;
+  cdpEnabled?: boolean;
 }
 
 export interface SimStaticRoute {
@@ -81,6 +87,22 @@ export interface SimLineSettings {
   loggingSync?: boolean;
 }
 
+export interface SimDhcpPool {
+  name: string;
+  network?: string;
+  mask?: string;
+  defaultRouter?: string;
+  dnsServer?: string;
+  domainName?: string;
+  lease?: string;
+}
+
+export interface SimAccessList {
+  id: string;
+  type: 'standard' | 'extended';
+  entries: string[];
+}
+
 export interface SimDevice {
   id: string;
   name: string;
@@ -101,17 +123,28 @@ export interface SimDevice {
   ospf?: SimOspfConfig;
   vlans: SimVlanEntry[];
   cliHistory: string[];
+  commandHistory?: string[];
   cliMode: SimCliMode;
   activeInterfaceName?: string;
   activeInterfaceRange?: string[];
   activeVlanId?: number;
   activeLine?: 'console' | 'vty';
+  activeDhcpPool?: string;
+  activeAclName?: string;
   bannerMotd?: string;
   enableSecret?: string;
   servicePasswordEncryption?: boolean;
   ipDomainLookup?: boolean;
   domainName?: string;
   nameServer?: string;
+  sshVersion?: 1 | 2;
+  rsaKeyBits?: number;
+  cdpEnabled?: boolean;
+  lldpEnabled?: boolean;
+  ntpServer?: string;
+  dhcpExcludedRanges?: Array<{ start: string; end?: string }>;
+  dhcpPools?: SimDhcpPool[];
+  accessLists?: SimAccessList[];
   users?: Array<{ username: string; secret: string }>;
   lineConfig?: {
     console?: SimLineSettings;

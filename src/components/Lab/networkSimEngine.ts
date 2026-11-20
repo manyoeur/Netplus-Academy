@@ -1347,6 +1347,12 @@ export function getCliPrompt(device: SimDevice): string {
       return `${device.name}(config-vlan)#`;
     case 'line':
       return `${device.name}(config-line)#`;
+    case 'dhcp_pool':
+      return `${device.name}(dhcp-config)#`;
+    case 'acl': {
+      const acl = device.accessLists?.find(a => a.id === device.activeAclName);
+      return `${device.name}(config-${acl?.type === 'extended' ? 'ext' : 'std'}-nacl)#`;
+    }
     default:
       return `${device.name}#`;
   }
@@ -1547,6 +1553,7 @@ export function executeDeviceCommand(
     return {
       updatedDevice: {
         ...device,
+        commandHistory: [...(device.commandHistory || []), cmd].slice(-50),
         cliHistory: out
       },
       pingResult
@@ -1556,10 +1563,20 @@ export function executeDeviceCommand(
   // Cisco Router / Switch IOS CLI
   let nextDevice: SimDevice = {
     ...device,
+    commandHistory: [...(device.commandHistory || []), cmd].slice(-50),
     interfaces: device.interfaces.map(i => ({ ...i })),
     staticRoutes: [...device.staticRoutes],
     vlans: [...device.vlans],
     users: device.users ? device.users.map(u => ({ ...u })) : undefined,
+    dhcpExcludedRanges: device.dhcpExcludedRanges
+      ? device.dhcpExcludedRanges.map(r => ({ ...r }))
+      : undefined,
+    dhcpPools: device.dhcpPools
+      ? device.dhcpPools.map(p => ({ ...p }))
+      : undefined,
+    accessLists: device.accessLists
+      ? device.accessLists.map(a => ({ ...a, entries: [...a.entries] }))
+      : undefined,
     lineConfig: device.lineConfig
       ? {
           console: device.lineConfig.console ? { ...device.lineConfig.console } : undefined,
@@ -1581,6 +1598,15 @@ export function executeDeviceCommand(
 
   const setMode = (mode: SimCliMode) => {
     nextDevice.cliMode = mode;
+  };
+
+  const resetSubModeContext = () => {
+    nextDevice.activeInterfaceName = undefined;
+    nextDevice.activeInterfaceRange = undefined;
+    nextDevice.activeVlanId = undefined;
+    nextDevice.activeLine = undefined;
+    nextDevice.activeDhcpPool = undefined;
+    nextDevice.activeAclName = undefined;
   };
 
   // Helper: active interfaces for either single (config-if) or range (config-if-range)
@@ -1618,12 +1644,12 @@ export function executeDeviceCommand(
   };
 
   const showLines =
-    (effectiveLower === 'show' || effectiveLower.startsWith('show ') || effectiveLower.startsWith('sh '))
+    effectiveLower === 'show' || effectiveLower.startsWith('show ') || effectiveLower.startsWith('sh ')
       ? executeCiscoShowCommand(nextDevice, effectiveLower, allDevices, allLinks, showDeps)
       : null;
 
   if (lower === 'help' || lower === '?' || lower.endsWith(' ?')) {
-    out.push(...getCliHelpLines(nextDevice));
+    out.push(...getCliHelpLines(nextDevice, cmd));
   } else if (showLines !== null && (execAllowed || nextDevice.cliMode === 'user')) {
     out.push(...showLines);
   } else if (lower === 'enable' || lower === 'en' || lower === 'ena') {
@@ -1633,17 +1659,11 @@ export function executeDeviceCommand(
     setMode('privileged');
   } else if (lower === 'disable') {
     setMode('user');
-    nextDevice.activeInterfaceName = undefined;
-    nextDevice.activeInterfaceRange = undefined;
-    nextDevice.activeVlanId = undefined;
-    nextDevice.activeLine = undefined;
+    resetSubModeContext();
   } else if (lower === 'end') {
     if (nextDevice.cliMode !== 'user') {
       setMode('privileged');
-      nextDevice.activeInterfaceName = undefined;
-      nextDevice.activeInterfaceRange = undefined;
-      nextDevice.activeVlanId = undefined;
-      nextDevice.activeLine = undefined;
+      resetSubModeContext();
       out.push('%SYS-5-CONFIG_I: Configured from console by console');
     }
   } else if (lower === 'exit' || lower === 'ex') {
@@ -1652,13 +1672,12 @@ export function executeDeviceCommand(
       nextDevice.cliMode === 'interface_range' ||
       nextDevice.cliMode === 'router_ospf' ||
       nextDevice.cliMode === 'vlan_db' ||
-      nextDevice.cliMode === 'line'
+      nextDevice.cliMode === 'line' ||
+      nextDevice.cliMode === 'dhcp_pool' ||
+      nextDevice.cliMode === 'acl'
     ) {
       setMode('global');
-      nextDevice.activeInterfaceName = undefined;
-      nextDevice.activeInterfaceRange = undefined;
-      nextDevice.activeVlanId = undefined;
-      nextDevice.activeLine = undefined;
+      resetSubModeContext();
     } else if (nextDevice.cliMode === 'global') {
       setMode('privileged');
       out.push('%SYS-5-CONFIG_I: Configured from console by console');
@@ -1666,24 +1685,22 @@ export function executeDeviceCommand(
       setMode('user');
     }
   } else if (
-    lower === 'configure terminal' ||
-    lower === 'conf t' ||
-    lower === 'config t' ||
-    lower === 'conf terminal'
+    /^conf(ig|igure)?\s+t(er|erm|ermi|ermin|ermina|erminal)?$/.test(lower)
   ) {
     if (nextDevice.cliMode === 'user') {
       out.push('% Type "enable" first to enter Privileged EXEC mode.');
     } else {
+      resetSubModeContext();
       setMode('global');
-      out.push('Enter configuration commands, one per line. End with "end" or "exit".');
+      out.push('Enter configuration commands, one per line. End with "end" or CNTL/Z.');
     }
   } else if (
     (effectiveLower === 'write' ||
       effectiveLower === 'wr' ||
       effectiveLower === 'write memory' ||
+      effectiveLower === 'write mem' ||
       effectiveLower === 'wr mem' ||
-      effectiveLower === 'copy running-config startup-config' ||
-      effectiveLower === 'copy run start') &&
+      /^copy\s+r(un|unning-config)?\s+s(tart|tartup-config)?$/.test(effectiveLower)) &&
     execAllowed &&
     nextDevice.cliMode !== 'user'
   ) {
@@ -1698,14 +1715,40 @@ export function executeDeviceCommand(
     nextDevice.startupConfigLines = undefined;
     nextDevice.startupConfigSavedAt = undefined;
     out.push('Erasing the nvram filesystem will remove all configuration files! [OK]');
+  } else if (
+    (effectiveLower === 'clear ip ospf process' || effectiveLower === 'clear ip ospf proc') &&
+    execAllowed &&
+    nextDevice.cliMode !== 'user'
+  ) {
+    if (nextDevice.type !== 'router' || !nextDevice.ospf) {
+      out.push('% OSPF routing process is not configured on this device.');
+    } else {
+      out.push(`%OSPF-5-ADJCHG: Process ${nextDevice.ospf.processId}, OSPF adjacencies reset and re-converged`);
+    }
+  } else if (
+    (effectiveLower === 'clear arp-cache' || effectiveLower === 'clear arp') &&
+    execAllowed &&
+    nextDevice.cliMode !== 'user'
+  ) {
+    out.push('ARP cache entries cleared.');
+  } else if (
+    (effectiveLower === 'clear mac address-table dynamic' ||
+      effectiveLower === 'clear mac address-table' ||
+      effectiveLower === 'clear mac-address-table dynamic' ||
+      effectiveLower === 'clear mac-address-table') &&
+    execAllowed &&
+    nextDevice.cliMode !== 'user'
+  ) {
+    out.push(
+      nextDevice.type === 'switch'
+        ? 'Dynamic MAC address table entries cleared.'
+        : '% MAC address table applies to Catalyst switches.'
+    );
   } else if (effectiveLower.startsWith('terminal length ') || effectiveLower.startsWith('term len ')) {
     out.push('Terminal pagination updated.');
   } else if (effectiveLower === 'reload' && execAllowed && nextDevice.cliMode !== 'user') {
     setMode('privileged');
-    nextDevice.activeInterfaceName = undefined;
-    nextDevice.activeInterfaceRange = undefined;
-    nextDevice.activeVlanId = undefined;
-    nextDevice.activeLine = undefined;
+    resetSubModeContext();
     out.push('% System reloaded.');
   } else if (effectiveLower.startsWith('ping ') && (execAllowed || nextDevice.cliMode === 'user')) {
     const target = effectiveCmd.split(/\s+/)[1] || '';
@@ -1777,13 +1820,73 @@ export function executeDeviceCommand(
       nextDevice.ipDomainLookup = true;
     }
   } else if (lower.startsWith('ip domain-name ') || lower.startsWith('ip domain name ')) {
-    if (nextDevice.cliMode !== 'user' && nextDevice.cliMode !== 'privileged') {
+    if (nextDevice.cliMode === 'dhcp_pool' && nextDevice.activeDhcpPool) {
+      // Handled inside dhcp_pool submode below, unless prefixed with "ip "
+      out.push('% In DHCP pool mode, use "domain-name <domain>".');
+    } else if (nextDevice.cliMode !== 'user' && nextDevice.cliMode !== 'privileged') {
       nextDevice.domainName = cmd.split(/\s+/).pop();
     }
   } else if (lower.startsWith('ip name-server ')) {
     const dnsIp = cmd.split(/\s+/)[2];
     if (dnsIp && isValidIp(dnsIp)) nextDevice.nameServer = dnsIp;
     else out.push('% Usage: ip name-server <ipv4-address>');
+  } else if (lower.startsWith('crypto key generate rsa')) {
+    if (!isConfigSubMode) {
+      out.push('% Enter Global Configuration mode ("conf t") first.');
+    } else if (!nextDevice.domainName) {
+      out.push('% Please define a domain-name first ("ip domain-name <domain>").');
+    } else {
+      const parts = cmd.split(/\s+/);
+      const modIdx = parts.findIndex(p => p.toLowerCase() === 'modulus');
+      const bits = modIdx >= 0 ? Number(parts[modIdx + 1]) : 2048;
+      if (!Number.isInteger(bits) || bits < 512 || bits > 4096) {
+        out.push('% Usage: crypto key generate rsa [modulus <512-4096>]');
+      } else {
+        nextDevice.rsaKeyBits = bits;
+        nextDevice.sshVersion = nextDevice.sshVersion || 2;
+        out.push(
+          `The name for the keys will be: ${nextDevice.name}.${nextDevice.domainName}`,
+          `% Generating ${bits} bit RSA keys, keys will be non-exportable...[OK]`,
+          `*SYS-5-SSH: %SSH-5-ENABLED: SSH ${nextDevice.sshVersion}.0 has been enabled`
+        );
+      }
+    }
+  } else if (lower.startsWith('ip ssh version ')) {
+    if (!isConfigSubMode) {
+      out.push('% Enter Global Configuration mode ("conf t") first.');
+    } else {
+      const ver = Number(cmd.split(/\s+/)[3]);
+      if (ver !== 1 && ver !== 2) {
+        out.push('% Usage: ip ssh version <1|2>');
+      } else {
+        nextDevice.sshVersion = ver;
+      }
+    }
+  } else if (lower === 'cdp run' || lower === 'no cdp run') {
+    if (!isConfigSubMode) {
+      out.push('% Enter Global Configuration mode ("conf t") first.');
+    } else {
+      nextDevice.cdpEnabled = lower === 'cdp run';
+    }
+  } else if (lower === 'lldp run' || lower === 'no lldp run') {
+    if (!isConfigSubMode) {
+      out.push('% Enter Global Configuration mode ("conf t") first.');
+    } else {
+      nextDevice.lldpEnabled = lower === 'lldp run';
+    }
+  } else if (lower.startsWith('ntp server ')) {
+    if (!isConfigSubMode) {
+      out.push('% Enter Global Configuration mode ("conf t") first.');
+    } else {
+      const ip = cmd.split(/\s+/)[2];
+      if (!ip || !isValidIp(ip)) {
+        out.push('% Usage: ntp server <ipv4-address>');
+      } else {
+        nextDevice.ntpServer = ip;
+      }
+    }
+  } else if (lower === 'no ntp server') {
+    if (isConfigSubMode) nextDevice.ntpServer = undefined;
   } else if (lower.startsWith('username ')) {
     if (nextDevice.cliMode === 'user' || nextDevice.cliMode === 'privileged') {
       out.push('% Enter Global Configuration mode ("conf t") first.');
@@ -1817,6 +1920,183 @@ export function executeDeviceCommand(
     }
   } else if (lower === 'no ip default-gateway') {
     nextDevice.defaultGateway = undefined;
+  } else if (lower.startsWith('ip dhcp excluded-address ')) {
+    if (nextDevice.type !== 'router' || !isConfigSubMode) {
+      out.push('% Enter Global Configuration mode on a router.');
+    } else {
+      const parts = cmd.split(/\s+/);
+      const startIp = parts[3];
+      const endIp = parts[4];
+      if (!startIp || !isValidIp(startIp) || (endIp && !isValidIp(endIp))) {
+        out.push('% Usage: ip dhcp excluded-address <low-ip> [high-ip]');
+      } else {
+        const ranges = nextDevice.dhcpExcludedRanges || [];
+        const dup = ranges.some(r => r.start === startIp && r.end === endIp);
+        if (!dup) {
+          nextDevice.dhcpExcludedRanges = [...ranges, { start: startIp, ...(endIp ? { end: endIp } : {}) }];
+        }
+      }
+    }
+  } else if (lower.startsWith('no ip dhcp excluded-address ')) {
+    if (isConfigSubMode && nextDevice.dhcpExcludedRanges) {
+      const parts = cmd.split(/\s+/);
+      const startIp = parts[4];
+      nextDevice.dhcpExcludedRanges = nextDevice.dhcpExcludedRanges.filter(r => r.start !== startIp);
+    }
+  } else if (lower.startsWith('ip dhcp pool ')) {
+    if (nextDevice.type !== 'router' || !isConfigSubMode) {
+      out.push('% Enter Global Configuration mode on a router.');
+    } else {
+      const poolName = cmd.split(/\s+/).slice(3).join('_').trim();
+      if (!poolName) {
+        out.push('% Usage: ip dhcp pool <pool-name>');
+      } else {
+        const pools = nextDevice.dhcpPools || [];
+        if (!pools.some(p => p.name === poolName)) {
+          nextDevice.dhcpPools = [...pools, { name: poolName }];
+        }
+        resetSubModeContext();
+        nextDevice.activeDhcpPool = poolName;
+        setMode('dhcp_pool');
+      }
+    }
+  } else if (lower.startsWith('no ip dhcp pool ')) {
+    if (isConfigSubMode && nextDevice.dhcpPools) {
+      const poolName = cmd.split(/\s+/).slice(4).join('_').trim();
+      nextDevice.dhcpPools = nextDevice.dhcpPools.filter(p => p.name !== poolName);
+      if (nextDevice.cliMode === 'dhcp_pool' && nextDevice.activeDhcpPool === poolName) {
+        resetSubModeContext();
+        setMode('global');
+      }
+    }
+  } else if (nextDevice.cliMode === 'dhcp_pool' && nextDevice.activeDhcpPool) {
+    const pool = (nextDevice.dhcpPools || []).find(p => p.name === nextDevice.activeDhcpPool);
+    if (!pool) {
+      out.push('% Active DHCP pool not found.');
+    } else if (lower.startsWith('network ')) {
+      const parts = cmd.split(/\s+/);
+      const net = parts[1];
+      const mask = parts[2];
+      if (!net || !mask || !isValidIp(net) || !isValidMask(mask)) {
+        out.push('% Usage: network <network-ip> <subnet-mask>');
+      } else {
+        pool.network = getNetworkAddress(net, mask);
+        pool.mask = mask;
+      }
+    } else if (lower === 'no network') {
+      pool.network = undefined;
+      pool.mask = undefined;
+    } else if (lower.startsWith('default-router ')) {
+      const gw = cmd.split(/\s+/)[1];
+      if (!gw || !isValidIp(gw)) out.push('% Usage: default-router <gateway-ip>');
+      else pool.defaultRouter = gw;
+    } else if (lower === 'no default-router') {
+      pool.defaultRouter = undefined;
+    } else if (lower.startsWith('dns-server ')) {
+      const dns = cmd.split(/\s+/)[1];
+      if (!dns || !isValidIp(dns)) out.push('% Usage: dns-server <dns-ip>');
+      else pool.dnsServer = dns;
+    } else if (lower === 'no dns-server') {
+      pool.dnsServer = undefined;
+    } else if (lower.startsWith('domain-name ')) {
+      const dom = cmd.split(/\s+/)[1];
+      if (dom) pool.domainName = dom;
+    } else if (lower === 'no domain-name') {
+      pool.domainName = undefined;
+    } else if (lower.startsWith('lease ')) {
+      pool.lease = cmd.split(/\s+/).slice(1).join(' ');
+    } else if (lower === 'no lease') {
+      pool.lease = undefined;
+    } else {
+      out.push('% Invalid DHCP pool command. Type "?" for options.');
+    }
+  } else if (lower.startsWith('access-list ')) {
+    if (!isConfigSubMode) {
+      out.push('% Enter Global Configuration mode ("conf t") first.');
+    } else {
+      const parts = cmd.split(/\s+/);
+      const aclNum = Number(parts[1]);
+      const action = (parts[2] || '').toLowerCase();
+      const rest = parts.slice(3).join(' ').trim();
+      if (
+        !Number.isInteger(aclNum) ||
+        aclNum < 1 ||
+        aclNum > 199 ||
+        !['permit', 'deny', 'remark'].includes(action) ||
+        !rest
+      ) {
+        out.push('% Usage: access-list <1-199> <permit|deny|remark> <rule>');
+      } else {
+        const aclId = String(aclNum);
+        const type: 'standard' | 'extended' = aclNum >= 100 ? 'extended' : 'standard';
+        const acls = nextDevice.accessLists || [];
+        let targetAcl = acls.find(a => a.id === aclId);
+        if (!targetAcl) {
+          targetAcl = { id: aclId, type, entries: [] };
+          nextDevice.accessLists = [...acls, targetAcl];
+        }
+        const entry = `${action} ${rest}`;
+        if (!targetAcl.entries.includes(entry)) {
+          targetAcl.entries.push(entry);
+        }
+      }
+    }
+  } else if (lower.startsWith('no access-list ')) {
+    if (isConfigSubMode && nextDevice.accessLists) {
+      const aclId = cmd.split(/\s+/)[2];
+      nextDevice.accessLists = nextDevice.accessLists.filter(a => a.id !== aclId);
+    }
+  } else if (/^ip\s+access-list\s+(std|standard|ext|extended)\s+\S+/i.test(lower)) {
+    if (!isConfigSubMode) {
+      out.push('% Enter Global Configuration mode ("conf t") first.');
+    } else {
+      const parts = cmd.split(/\s+/);
+      const typeToken = parts[2].toLowerCase();
+      const aclType: 'standard' | 'extended' = typeToken.startsWith('ext') ? 'extended' : 'standard';
+      const aclName = parts.slice(3).join('_');
+      const acls = nextDevice.accessLists || [];
+      if (!acls.some(a => a.id === aclName)) {
+        nextDevice.accessLists = [...acls, { id: aclName, type: aclType, entries: [] }];
+      }
+      resetSubModeContext();
+      nextDevice.activeAclName = aclName;
+      setMode('acl');
+    }
+  } else if (/^no\s+ip\s+access-list\s+(std|standard|ext|extended)\s+\S+/i.test(lower)) {
+    if (isConfigSubMode && nextDevice.accessLists) {
+      const parts = cmd.split(/\s+/);
+      const aclName = parts.slice(4).join('_');
+      nextDevice.accessLists = nextDevice.accessLists.filter(a => a.id !== aclName);
+      if (nextDevice.cliMode === 'acl' && nextDevice.activeAclName === aclName) {
+        resetSubModeContext();
+        setMode('global');
+      }
+    }
+  } else if (nextDevice.cliMode === 'acl' && nextDevice.activeAclName) {
+    const targetAcl = (nextDevice.accessLists || []).find(a => a.id === nextDevice.activeAclName);
+    if (!targetAcl) {
+      out.push('% Active access-list not found.');
+    } else if (/^(permit|deny|remark)\s+.+/i.test(lower)) {
+      const entry = cmd.replace(/\s+/g, ' ').trim();
+      if (!targetAcl.entries.includes(entry)) {
+        targetAcl.entries.push(entry);
+      }
+    } else if (lower.startsWith('no ')) {
+      const arg = cmd.slice(3).trim();
+      const seqNum = Number(arg);
+      if (Number.isInteger(seqNum) && seqNum >= 10 && seqNum % 10 === 0) {
+        const idx = seqNum / 10 - 1;
+        if (idx >= 0 && idx < targetAcl.entries.length) {
+          targetAcl.entries.splice(idx, 1);
+        }
+      } else {
+        targetAcl.entries = targetAcl.entries.filter(
+          e => e.toLowerCase() !== arg.toLowerCase()
+        );
+      }
+    } else {
+      out.push('% Invalid ACL command. Use "permit <rule>", "deny <rule>", "remark <text>", or "no <rule>".');
+    }
   } else if (
     lower.startsWith('line console ') ||
     lower.startsWith('line con ') ||
@@ -1825,6 +2105,7 @@ export function executeDeviceCommand(
     if (nextDevice.cliMode === 'user' || nextDevice.cliMode === 'privileged') {
       out.push('% Enter Global Configuration mode ("conf t") first.');
     } else {
+      resetSubModeContext();
       nextDevice.activeLine = lower.includes('vty') ? 'vty' : 'console';
       nextDevice.lineConfig = nextDevice.lineConfig || {};
       if (nextDevice.activeLine === 'console' && !nextDevice.lineConfig.console) {
@@ -1860,25 +2141,21 @@ export function executeDeviceCommand(
     } else {
       out.push('% Invalid line configuration command. Type "?" for options.');
     }
-  } else if (
-    lower.startsWith('interface range ') ||
-    lower.startsWith('int range ') ||
-    lower.startsWith('int r ')
-  ) {
+  } else if (/^(interface|inter|int)\s+(range|ra|r)\s+/i.test(lower)) {
     if (nextDevice.cliMode === 'user' || nextDevice.cliMode === 'privileged') {
       out.push('% Enter Global Configuration mode ("conf t") first.');
     } else {
-      const spec = cmd.replace(/^(interface|int)\s+(range|r)\s+/i, '');
+      const spec = cmd.replace(/^(interface|inter|int)\s+(range|ra|r)\s+/i, '');
       const matched = parseInterfaceRangeSpec(nextDevice, spec);
       if (matched.length === 0) {
         out.push(`% Invalid interface range "${spec}". Example: int range fa0/1 - 4`);
       } else {
-        nextDevice.activeInterfaceName = undefined;
+        resetSubModeContext();
         nextDevice.activeInterfaceRange = matched.map(m => m.name);
         setMode('interface_range');
       }
     }
-  } else if (lower.startsWith('interface ') || lower.startsWith('int ')) {
+  } else if (/^(interface|inter|int)\s+/i.test(lower)) {
     if (nextDevice.cliMode === 'user' || nextDevice.cliMode === 'privileged') {
       out.push('% Enter Global Configuration mode ("conf t") first.');
     } else {
@@ -1890,7 +2167,7 @@ export function executeDeviceCommand(
         if (resolved.createdSubIf) {
           nextDevice.interfaces.push(resolved.createdSubIf);
         }
-        nextDevice.activeInterfaceRange = undefined;
+        resetSubModeContext();
         nextDevice.activeInterfaceName = resolved.iface.name;
         setMode('interface');
       }
@@ -1910,6 +2187,37 @@ export function executeDeviceCommand(
     if (targets.length > 0) {
       targets.forEach(t => {
         t.description = undefined;
+      });
+    }
+  } else if (lower === 'cdp enable' || lower === 'no cdp enable') {
+    const targets = getTargetInterfaces();
+    if (targets.length === 0) {
+      out.push('% Enter interface configuration mode first.');
+    } else {
+      targets.forEach(t => {
+        t.cdpEnabled = lower === 'cdp enable';
+      });
+    }
+  } else if (/^ip\s+access-group\s+\S+\s+(in|out)$/i.test(lower)) {
+    const targets = getTargetInterfaces();
+    if (targets.length === 0) {
+      out.push('% Enter interface configuration mode first.');
+    } else {
+      const parts = cmd.split(/\s+/);
+      const aclName = parts[2];
+      const dir = parts[3].toLowerCase();
+      targets.forEach(t => {
+        if (dir === 'in') t.ipAccessGroupIn = aclName;
+        else t.ipAccessGroupOut = aclName;
+      });
+    }
+  } else if (/^no\s+ip\s+access-group\s+\S+\s+(in|out)$/i.test(lower)) {
+    const targets = getTargetInterfaces();
+    if (targets.length > 0) {
+      const dir = cmd.split(/\s+/)[4]?.toLowerCase();
+      targets.forEach(t => {
+        if (dir === 'in') t.ipAccessGroupIn = undefined;
+        else if (dir === 'out') t.ipAccessGroupOut = undefined;
       });
     }
   } else if (lower.startsWith('duplex ')) {
@@ -1948,7 +2256,7 @@ export function executeDeviceCommand(
     if (targets.length === 0) out.push('% Enter serial interface configuration mode first.');
     else if (!Number.isFinite(rate) || rate <= 0) out.push('% Invalid clock rate.');
     else targets.forEach(t => (t.clockRate = rate));
-  } else if (lower.startsWith('encapsulation dot1q ') || lower.startsWith('encap dot1q ')) {
+  } else if (/^(encapsulation|encapsul|encap|enc)\s+dot1q\s+/i.test(lower)) {
     if (nextDevice.cliMode !== 'interface' || !nextDevice.activeInterfaceName) {
       out.push('% Enter an interface/subinterface first.');
     } else {
@@ -1960,7 +2268,7 @@ export function executeDeviceCommand(
         targetIf.dot1qVlan = vlanNum;
       }
     }
-  } else if (lower.startsWith('ip address ') || lower.startsWith('ip addr ')) {
+  } else if (/^ip\s+(address|addre|addr|add)\s+/i.test(lower)) {
     if (nextDevice.cliMode !== 'interface' || !nextDevice.activeInterfaceName) {
       out.push('% Must be inside single interface configuration mode.');
     } else {
@@ -1977,7 +2285,7 @@ export function executeDeviceCommand(
         }
       }
     }
-  } else if (lower === 'no ip address' || lower === 'no ip addr') {
+  } else if (/^no\s+ip\s+(address|addre|addr|add)$/i.test(lower)) {
     if (nextDevice.cliMode === 'interface' && nextDevice.activeInterfaceName) {
       const targetIf = nextDevice.interfaces.find(i => i.name === nextDevice.activeInterfaceName);
       if (targetIf) {
@@ -1985,7 +2293,7 @@ export function executeDeviceCommand(
         targetIf.mask = '';
       }
     }
-  } else if (lower === 'no shutdown' || lower === 'no shut' || lower === 'no sh') {
+  } else if (/^no\s+sh(u|ut|utd|utdo|utdow|utdown)?$/i.test(lower)) {
     const targets = getTargetInterfaces();
     if (targets.length === 0) {
       out.push('% Must be inside interface configuration mode.');
@@ -1995,7 +2303,7 @@ export function executeDeviceCommand(
         out.push(`%LINK-3-UPDOWN: Interface ${t.name}, changed state to up`);
       });
     }
-  } else if (lower === 'shutdown' || lower === 'shut') {
+  } else if (/^sh(u|ut|utd|utdo|utdow|utdown)$/i.test(lower)) {
     const targets = getTargetInterfaces();
     if (targets.length === 0) {
       out.push('% Must be inside interface configuration mode.');
@@ -2044,6 +2352,7 @@ export function executeDeviceCommand(
       } else {
         nextDevice.ospf.processId = pid;
       }
+      resetSubModeContext();
       setMode('router_ospf');
     }
   } else if (lower.startsWith('no router ospf')) {
@@ -2149,6 +2458,7 @@ export function executeDeviceCommand(
         if (!nextDevice.vlans.some(v => v.id === vid)) {
           nextDevice.vlans.push({ id: vid, name: `VLAN${String(vid).padStart(4, '0')}` });
         }
+        resetSubModeContext();
         nextDevice.activeVlanId = vid;
         setMode('vlan_db');
       }
@@ -2173,16 +2483,17 @@ export function executeDeviceCommand(
       const vObj = nextDevice.vlans.find(v => v.id === nextDevice.activeVlanId);
       if (vObj && vName) vObj.name = vName;
     }
-  } else if (lower === 'switchport mode access' || lower === 'switchport mode trunk') {
+  } else if (/^(switchport|sw)\s+m(o|od|ode)?\s+(a(cc|cce|cces|ccess)?|t(r|ru|run|runk)?)$/i.test(lower)) {
     const targets = getTargetInterfaces();
     if (nextDevice.type !== 'switch' || targets.length === 0) {
       out.push('% Enter switch interface configuration mode first.');
     } else {
+      const isTrunk = /\s+t(r|ru|run|runk)?$/i.test(lower);
       targets.forEach(t => {
-        t.switchportMode = lower.endsWith('trunk') ? 'trunk' : 'access';
+        t.switchportMode = isTrunk ? 'trunk' : 'access';
       });
     }
-  } else if (lower.startsWith('switchport access vlan ')) {
+  } else if (/^(switchport|sw)\s+acc(ess)?\s+vlan\s+\d+$/i.test(lower)) {
     const targets = getTargetInterfaces();
     if (nextDevice.type !== 'switch' || targets.length === 0) {
       out.push('% Enter switch interface configuration mode first.');
@@ -2200,14 +2511,14 @@ export function executeDeviceCommand(
         out.push('% Invalid VLAN ID (1-4094).');
       }
     }
-  } else if (lower === 'no switchport access vlan') {
+  } else if (/^no\s+(switchport|sw)\s+acc(ess)?\s+vlan$/i.test(lower)) {
     const targets = getTargetInterfaces();
     if (nextDevice.type === 'switch' && targets.length > 0) {
       targets.forEach(t => {
         t.accessVlan = 1;
       });
     }
-  } else if (lower.startsWith('switchport trunk native vlan ')) {
+  } else if (/^(switchport|sw)\s+tr(unk)?\s+nat(ive)?\s+vlan\s+\d+$/i.test(lower)) {
     const targets = getTargetInterfaces();
     const vid = Number(cmd.split(/\s+/)[4]);
     if (nextDevice.type !== 'switch' || targets.length === 0) {
@@ -2219,7 +2530,7 @@ export function executeDeviceCommand(
         t.trunkNativeVlan = vid;
       });
     }
-  } else if (lower.startsWith('switchport trunk allowed vlan ')) {
+  } else if (/^(switchport|sw)\s+tr(unk)?\s+all(owed)?\s+vlan\s+.+$/i.test(lower)) {
     const targets = getTargetInterfaces();
     if (nextDevice.type !== 'switch' || targets.length === 0) {
       out.push('% Enter switch interface configuration mode first.');
@@ -2263,7 +2574,7 @@ export function executeDeviceCommand(
         }
       }
     }
-  } else if (lower.startsWith('switchport port-security')) {
+  } else if (/^(switchport|sw)\s+port-security(\s+.*)?$/i.test(lower)) {
     const targets = getTargetInterfaces();
     if (nextDevice.type !== 'switch' || targets.length === 0) {
       out.push('% Enter switch interface configuration mode first.');
@@ -2289,7 +2600,7 @@ export function executeDeviceCommand(
         }
       });
     }
-  } else if (lower === 'no switchport port-security') {
+  } else if (/^no\s+(switchport|sw)\s+port-security$/i.test(lower)) {
     const targets = getTargetInterfaces();
     targets.forEach(t => {
       if (t.portSecurity) t.portSecurity.enabled = false;
@@ -2316,8 +2627,15 @@ export function executeDeviceCommand(
         t.bpduGuard = true;
       });
     }
+  } else if (lower === 'no spanning-tree bpduguard enable') {
+    const targets = getTargetInterfaces();
+    targets.forEach(t => {
+      t.bpduGuard = false;
+    });
   } else {
-    out.push(`% Invalid input detected. Type "?" or press Tab for supported Cisco IOS commands.`);
+    const caretOffset = `${prompt} `.length;
+    out.push(`${' '.repeat(caretOffset)}^`);
+    out.push(`% Invalid input detected at '^' marker. Type "?" or press Tab for supported Cisco IOS commands.`);
   }
 
   return {
@@ -2385,7 +2703,70 @@ export function getDevicePortPosition(
   return { x: dev.x, y: dev.y };
 }
 
+export interface LinkConnectorEndpoints {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  fromDownClearance: number;
+  toDownClearance: number;
+}
+
+function getDownwardLabelClearance(dev: SimDevice): number {
+  const ox = typeof dev.labelOffsetX === 'number' && Number.isFinite(dev.labelOffsetX) ? dev.labelOffsetX : 0;
+  const oy = typeof dev.labelOffsetY === 'number' && Number.isFinite(dev.labelOffsetY) ? dev.labelOffsetY : 0;
+  // If label was manually dragged away from directly below the device icon, use icon clearance
+  if (Math.abs(ox) > 42 || oy < -24 || oy > 46) {
+    return 38;
+  }
+  const hasIp = dev.interfaces.some(i => isValidIp(i.ip));
+  const hasCustomSub = Boolean(dev.customLabel?.trim() && dev.useCustomLabel !== false && dev.customLabel.trim() !== dev.name);
+  const lines = 1 + (hasIp ? 1 : 0) + (hasCustomSub ? 1 : 0);
+  return 44 + lines * 14 + Math.max(0, oy);
+}
+
+export function getLinkConnectorEndpoints(
+  link: SimLink,
+  fromDev: SimDevice,
+  toDev: SimDevice,
+  allLinks: SimLink[]
+): LinkConnectorEndpoints {
+  const dx = toDev.x - fromDev.x;
+  const dy = toDev.y - fromDev.y;
+  const len = Math.hypot(dx, dy) || 1;
+
+  // Find parallel links connecting the same device pair (regardless of direction)
+  const siblings = allLinks.filter(
+    l =>
+      (l.fromDeviceId === fromDev.id && l.toDeviceId === toDev.id) ||
+      (l.fromDeviceId === toDev.id && l.toDeviceId === fromDev.id)
+  );
+
+  let offset = 0;
+  if (siblings.length > 1) {
+    const idx = siblings.findIndex(l => l.id === link.id);
+    if (idx >= 0) {
+      offset = (idx - (siblings.length - 1) / 2) * 14;
+    }
+  }
+
+  // Canonicalize perpendicular normal direction by sorted device IDs so reversed links don't collide
+  const flipNormal = fromDev.id > toDev.id ? -1 : 1;
+  const nx = (-dy / len) * flipNormal;
+  const ny = (dx / len) * flipNormal;
+
+  return {
+    x1: fromDev.x + nx * offset,
+    y1: fromDev.y + ny * offset,
+    x2: toDev.x + nx * offset,
+    y2: toDev.y + ny * offset,
+    fromDownClearance: getDownwardLabelClearance(fromDev),
+    toDownClearance: getDownwardLabelClearance(toDev)
+  };
+}
+
 export interface CableVisualGeometry {
+  pathD: string;
   x1Led: number;
   y1Led: number;
   x2Led: number;
@@ -2402,7 +2783,12 @@ export function computeCableGeometry(
   fromY: number,
   toX: number,
   toY: number,
-  options?: { anchored?: boolean }
+  options?: {
+    anchored?: boolean;
+    cableType?: SimCableType;
+    fromDownClearance?: number;
+    toDownClearance?: number;
+  }
 ): CableVisualGeometry {
   const dx = toX - fromX;
   const dy = toY - fromY;
@@ -2410,22 +2796,61 @@ export function computeCableGeometry(
   const ux = dx / len;
   const uy = dy / len;
 
-  const endpointClearance = (rayY: number) => {
+  const endpointClearance = (rayY: number, downClearance: number) => {
     if (options?.anchored) {
       return Math.min(13, len * 0.28);
     }
-    const target = rayY > 0.25 ? 42 + rayY * 24 : 44;
-    const maxFraction = rayY > 0.25 ? 0.34 : 0.30;
-    return Math.min(target, len * maxFraction);
+    if (rayY > 0.35) {
+      // Smoothly clear bottom device label pill along downward vertical/diagonal rays
+      const target = 38 + ((rayY - 0.35) / 0.65) * Math.max(0, downClearance - 38);
+      return Math.min(target, len * 0.42);
+    }
+    if (rayY < -0.3) {
+      return Math.min(36, len * 0.34);
+    }
+    return Math.min(40, len * 0.32);
   };
 
-  const fromOffset = endpointClearance(uy);
-  const toOffset = endpointClearance(-uy);
+  const fromOffset = endpointClearance(uy, options?.fromDownClearance ?? 76);
+  const toOffset = endpointClearance(-uy, options?.toDownClearance ?? 76);
 
-  const x1Led = fromX + ux * fromOffset;
-  const y1Led = fromY + uy * fromOffset;
-  const x2Led = toX - ux * toOffset;
-  const y2Led = toY - uy * toOffset;
+  let pathD = `M ${fromX.toFixed(1)} ${fromY.toFixed(1)} L ${toX.toFixed(1)} ${toY.toFixed(1)}`;
+  let x1Led = fromX + ux * fromOffset;
+  let y1Led = fromY + uy * fromOffset;
+  let x2Led = toX - ux * toOffset;
+  let y2Led = toY - uy * toOffset;
+
+  if (options?.cableType === 'serial' && len >= 48) {
+    const midX = (fromX + toX) / 2;
+    const midY = (fromY + toY) / 2;
+    let bnx = -uy;
+    let bny = ux;
+    if ((Math.abs(bny) > 0.25 && bny > 0) || (Math.abs(bny) <= 0.25 && bnx > 0)) {
+      bnx = -bnx;
+      bny = -bny;
+    }
+    const boltAlong = Math.min(9, len * 0.06);
+    const boltAmp = Math.min(12, len * 0.10);
+    const p1x = midX + ux * boltAlong + bnx * boltAmp;
+    const p1y = midY + uy * boltAlong + bny * boltAmp;
+    const p2x = midX - ux * boltAlong - bnx * boltAmp;
+    const p2y = midY - uy * boltAlong - bny * boltAmp;
+
+    pathD = `M ${fromX.toFixed(1)} ${fromY.toFixed(1)} L ${p1x.toFixed(1)} ${p1y.toFixed(1)} L ${p2x.toFixed(1)} ${p2y.toFixed(1)} L ${toX.toFixed(1)} ${toY.toFixed(1)}`;
+
+    // Keep link LEDs dead-center on the angled serial lightning segments
+    const s1dx = p1x - fromX;
+    const s1dy = p1y - fromY;
+    const s1Len = Math.hypot(s1dx, s1dy) || 1;
+    x1Led = fromX + (s1dx / s1Len) * Math.min(fromOffset, s1Len * 0.82);
+    y1Led = fromY + (s1dy / s1Len) * Math.min(fromOffset, s1Len * 0.82);
+
+    const s2dx = p2x - toX;
+    const s2dy = p2y - toY;
+    const s2Len = Math.hypot(s2dx, s2dy) || 1;
+    x2Led = toX + (s2dx / s2Len) * Math.min(toOffset, s2Len * 0.82);
+    y2Led = toY + (s2dy / s2Len) * Math.min(toOffset, s2Len * 0.82);
+  }
 
   let nx = -uy;
   let ny = ux;
@@ -2441,6 +2866,7 @@ export function computeCableGeometry(
 
   if (Math.abs(nx) < 0.32) {
     return {
+      pathD,
       x1Led,
       y1Led,
       x2Led,
@@ -2454,6 +2880,7 @@ export function computeCableGeometry(
   }
 
   return {
+    pathD,
     x1Led,
     y1Led,
     x2Led,

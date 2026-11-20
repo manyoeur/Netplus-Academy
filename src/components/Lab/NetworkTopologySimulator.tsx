@@ -104,7 +104,7 @@ import {
   getCliPrompt,
   getCliTabCompletions,
   getDevicePortAnchors,
-  getDevicePortPosition,
+  getLinkConnectorEndpoints,
   isPortCompatibleWithCable,
   isValidIp,
   simulatePing
@@ -342,7 +342,6 @@ const CABLE_META: Record<
     label: 'Serial DCE/DTE',
     short: 'Serial WAN',
     stroke: '#ef4444',
-    dash: '3 3',
     hint: 'Router Serial0/0/x <-> Router Serial0/0/x'
   }
 };
@@ -3600,6 +3599,51 @@ export const NetworkTopologySimulator: React.FC = () => {
     const targetDevice = consoleDevice || selectedDevice;
     if (!targetDevice) return;
 
+    if (e.ctrlKey && !e.metaKey && !e.altKey) {
+      const ctrlKey = e.key.toLowerCase();
+      if (ctrlKey === 'z') {
+        e.preventDefault();
+        if (
+          targetDevice.type !== 'pc' &&
+          targetDevice.type !== 'server' &&
+          targetDevice.cliMode !== 'user' &&
+          targetDevice.cliMode !== 'privileged'
+        ) {
+          handleRunCliCommand(undefined, 'end');
+          setCliInput('');
+          setCmdCursor(-1);
+        }
+        return;
+      }
+      if (ctrlKey === 'c') {
+        const inputEl = e.currentTarget;
+        const hasInputSelection =
+          inputEl.selectionStart !== null &&
+          inputEl.selectionEnd !== null &&
+          inputEl.selectionStart !== inputEl.selectionEnd;
+        const hasWindowSelection = Boolean(window.getSelection()?.toString());
+        if (!hasInputSelection && !hasWindowSelection) {
+          e.preventDefault();
+          const prompt = getCliPrompt(targetDevice);
+          setDevices(prev =>
+            prev.map(d =>
+              d.id === targetDevice.id
+                ? { ...d, cliHistory: [...d.cliHistory, `${prompt} ${cliInput}^C`] }
+                : d
+            )
+          );
+          setCliInput('');
+          setCmdCursor(-1);
+        }
+        return;
+      }
+      if (ctrlKey === 'l') {
+        e.preventDefault();
+        handleRunCliCommand(undefined, 'clear');
+        return;
+      }
+    }
+
     if (e.key === 'Tab') {
       e.preventDefault();
       const { completed, suggestions } = getCliTabCompletions(targetDevice, cliInput);
@@ -4922,12 +4966,12 @@ export const NetworkTopologySimulator: React.FC = () => {
                   renderIcon: () => (
                     <svg viewBox="0 0 24 24" className="w-5 h-5" aria-hidden="true">
                       <path
-                        d="M5 18l5-6-3-2 7-5-2 6 3 2-5 5"
+                        d="M3 16 L13 7 L11 17 L21 8"
                         fill="none"
                         stroke="#ef4444"
-                        strokeWidth="2.2"
+                        strokeWidth="2.3"
                         strokeLinecap="round"
-                        strokeLinejoin="round"
+                        strokeLinejoin="miter"
                       />
                     </svg>
                   )
@@ -6416,15 +6460,19 @@ export const NetworkTopologySimulator: React.FC = () => {
                     animStepIndex !== null &&
                     lastPingResult?.hops[animStepIndex]?.linkId === link.id;
 
-                  // Compute anchored endpoint socket coordinates and per-interface label geometry
-                  const fromAnchor = getDevicePortPosition(fromDev, link.fromPort);
-                  const toAnchor = getDevicePortPosition(toDev, link.toPort);
+                  // Auto-adjust cable endpoints to the middle of connected devices (with parallel-link offset)
+                  const endpoints = getLinkConnectorEndpoints(link, fromDev, toDev, links);
                   const geom = computeCableGeometry(
-                    fromAnchor.x,
-                    fromAnchor.y,
-                    toAnchor.x,
-                    toAnchor.y,
-                    { anchored: true }
+                    endpoints.x1,
+                    endpoints.y1,
+                    endpoints.x2,
+                    endpoints.y2,
+                    {
+                      anchored: false,
+                      cableType: link.cableType,
+                      fromDownClearance: endpoints.fromDownClearance,
+                      toDownClearance: endpoints.toDownClearance
+                    }
                   );
 
                   const fromIf = fromDev.interfaces.find(i => i.name === link.fromPort);
@@ -6435,11 +6483,9 @@ export const NetworkTopologySimulator: React.FC = () => {
                   return (
                     <g key={link.id}>
                       {/* Invisible wide hit-area for clicking/deleting links */}
-                      <line
-                        x1={fromAnchor.x}
-                        y1={fromAnchor.y}
-                        x2={toAnchor.x}
-                        y2={toAnchor.y}
+                      <path
+                        d={geom.pathD}
+                        fill="none"
                         stroke="transparent"
                         strokeWidth={18}
                         className="pointer-events-auto cursor-pointer"
@@ -6462,43 +6508,26 @@ export const NetworkTopologySimulator: React.FC = () => {
                         }}
                       />
 
-                      {/* Visible Link Line Anchored to Port Sockets */}
-                      <line
-                        x1={fromAnchor.x}
-                        y1={fromAnchor.y}
-                        x2={toAnchor.x}
-                        y2={toAnchor.y}
+                      {/* Visible Link Path Auto-Adjusted to Device Centers (Serial renders solid red lightning bolt) */}
+                      <path
+                        d={geom.pathD}
+                        fill="none"
                         stroke={
                           isActivePacketLink
                             ? '#10b981'
                             : isSelected
                             ? '#2563eb'
+                            : link.cableType === 'serial'
+                            ? meta.stroke
                             : isUp
                             ? meta.stroke
                             : '#94a3b8'
                         }
                         strokeWidth={isActivePacketLink || isSelected ? 4 : 2.5}
                         strokeDasharray={meta.dash}
-                        strokeOpacity={isUp || isSelected ? 0.95 : 0.6}
+                        strokeOpacity={isUp || isSelected ? 0.95 : link.cableType === 'serial' ? 0.72 : 0.6}
                         strokeLinecap="round"
-                      />
-
-                      {/* Port Socket Anchor Pins */}
-                      <circle
-                        cx={fromAnchor.x}
-                        cy={fromAnchor.y}
-                        r={3.3}
-                        fill={isSelected ? '#2563eb' : isUp ? meta.stroke : '#64748b'}
-                        stroke="#ffffff"
-                        strokeWidth={1.1}
-                      />
-                      <circle
-                        cx={toAnchor.x}
-                        cy={toAnchor.y}
-                        r={3.3}
-                        fill={isSelected ? '#2563eb' : isUp ? meta.stroke : '#64748b'}
-                        stroke="#ffffff"
-                        strokeWidth={1.1}
+                        strokeLinejoin="miter"
                       />
 
                       {/* Endpoint Link LEDs (Green = Up, Red = Down/Mismatch) */}
@@ -6564,12 +6593,27 @@ export const NetworkTopologySimulator: React.FC = () => {
                     liveCableDraw.snapTarget?.cableType ||
                     (cableToolMode === 'auto' ? 'straight' : selectedCableType);
                   const previewMeta = CABLE_META[previewType];
-                  const endX = liveCableDraw.snapTarget
+                  const srcDev = devices.find(d => d.id === liveCableDraw.fromDeviceId);
+                  const dstDev = liveCableDraw.snapTarget
+                    ? devices.find(d => d.id === liveCableDraw.snapTarget!.deviceId)
+                    : undefined;
+                  const startX = liveCableDraw.fromPortLocked || !srcDev ? liveCableDraw.fromX : srcDev.x;
+                  const startY = liveCableDraw.fromPortLocked || !srcDev ? liveCableDraw.fromY : srcDev.y;
+                  const endX = dstDev
+                    ? dstDev.x
+                    : liveCableDraw.snapTarget
                     ? liveCableDraw.snapTarget.x
                     : liveCableDraw.cursorX;
-                  const endY = liveCableDraw.snapTarget
+                  const endY = dstDev
+                    ? dstDev.y
+                    : liveCableDraw.snapTarget
                     ? liveCableDraw.snapTarget.y
                     : liveCableDraw.cursorY;
+
+                  const previewGeom = computeCableGeometry(startX, startY, endX, endY, {
+                    anchored: false,
+                    cableType: previewType
+                  });
 
                   return (
                     <g>
@@ -6585,20 +6629,19 @@ export const NetworkTopologySimulator: React.FC = () => {
                           strokeOpacity={0.55}
                         />
                       )}
-                      <line
-                        x1={liveCableDraw.fromX}
-                        y1={liveCableDraw.fromY}
-                        x2={endX}
-                        y2={endY}
+                      <path
+                        d={previewGeom.pathD}
+                        fill="none"
                         stroke={liveCableDraw.blockedTarget ? '#ef4444' : previewMeta.stroke}
                         strokeWidth={liveCableDraw.snapTarget ? 3.2 : 2.5}
                         strokeDasharray={previewMeta.dash || (liveCableDraw.snapTarget ? undefined : '5 4')}
                         strokeOpacity={0.95}
                         strokeLinecap="round"
+                        strokeLinejoin="miter"
                       />
                       <circle
-                        cx={liveCableDraw.fromX}
-                        cy={liveCableDraw.fromY}
+                        cx={startX}
+                        cy={startY}
                         r={6.5}
                         fill="none"
                         stroke={previewMeta.stroke}
@@ -6606,8 +6649,8 @@ export const NetworkTopologySimulator: React.FC = () => {
                         strokeOpacity={0.75}
                       />
                       <circle
-                        cx={liveCableDraw.fromX}
-                        cy={liveCableDraw.fromY}
+                        cx={startX}
+                        cy={startY}
                         r={3.8}
                         fill={previewMeta.stroke}
                         stroke="#ffffff"
@@ -7769,9 +7812,9 @@ export const NetworkTopologySimulator: React.FC = () => {
                           >
                             {consoleDevice.cliHistory.map((line, i) => (
                               <div key={i} className="whitespace-pre-wrap break-words">
-                                {line.startsWith(consoleDevice.name) ? (
+                                {/^[A-Za-z0-9_.-]+(\([^)]+\))?[>#]\s/.test(line) ? (
                                   <span className="text-amber-300 font-semibold">{line}</span>
-                                ) : line.startsWith('%') ? (
+                                ) : line.startsWith('%') || /^\s*\^$/.test(line) ? (
                                   <span className="text-red-300">{line}</span>
                                 ) : (
                                   <span className="text-slate-300">{line}</span>
@@ -7790,7 +7833,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                                 onChange={(e) => setCliInput(e.target.value)}
                                 onKeyDown={handleCliKeyDown}
                                 autoFocus
-                                placeholder="Type command, ? for help, or Tab to autocomplete..."
+                                placeholder="Type command, ? for help, Tab to complete, Ctrl+Z to end..."
                                 className="flex-1 bg-transparent border-none outline-none text-cyan-300 font-mono text-xs p-0 placeholder-slate-600"
                               />
                             </form>

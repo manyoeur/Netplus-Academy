@@ -9,7 +9,7 @@ import { getCiscoDeviceInnerSvg } from '../components/Lab/CiscoDeviceIcon';
 import {
   computeCableGeometry,
   evaluateLinkStatus,
-  getDevicePortPosition,
+  getLinkConnectorEndpoints,
   isValidIp,
   maskToPrefix
 } from '../components/Lab/networkSimEngine';
@@ -39,7 +39,7 @@ const EXPORT_CABLE_STYLE: Record<
   straight: { label: 'Straight', stroke: '#0284c7' },
   crossover: { label: 'Crossover', stroke: '#0ea5e9', dash: '6 4' },
   fiber: { label: 'Fiber', stroke: '#f59e0b' },
-  serial: { label: 'Serial', stroke: '#ef4444', dash: '3 3' }
+  serial: { label: 'Serial', stroke: '#ef4444' }
 };
 
 function escapeXml(value: string): string {
@@ -141,14 +141,18 @@ export function buildTopologySvgString(
       const isUp = status.isUp;
       const style = EXPORT_CABLE_STYLE[link.cableType];
 
-      const fromAnchor = getDevicePortPosition(fromDev, link.fromPort);
-      const toAnchor = getDevicePortPosition(toDev, link.toPort);
-      const x1 = fromAnchor.x;
-      const y1 = fromAnchor.y + headerH;
-      const x2 = toAnchor.x;
-      const y2 = toAnchor.y + headerH;
+      const endpoints = getLinkConnectorEndpoints(link, fromDev, toDev, links);
+      const x1 = endpoints.x1;
+      const y1 = endpoints.y1 + headerH;
+      const x2 = endpoints.x2;
+      const y2 = endpoints.y2 + headerH;
 
-      const geom = computeCableGeometry(x1, y1, x2, y2, { anchored: true });
+      const geom = computeCableGeometry(x1, y1, x2, y2, {
+        anchored: false,
+        cableType: link.cableType,
+        fromDownClearance: endpoints.fromDownClearance,
+        toDownClearance: endpoints.toDownClearance
+      });
 
       const fromIf = fromDev.interfaces.find(i => i.name === link.fromPort);
       const toIf = toDev.interfaces.find(i => i.name === link.toPort);
@@ -176,19 +180,25 @@ export function buildTopologySvgString(
         `;
       };
 
+      const linkStroke =
+        link.cableType === 'serial'
+          ? style.stroke
+          : isUp
+          ? style.stroke
+          : palette.downStroke;
+
       return `
         <g>
-          <line
-            x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}"
-            x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"
-            stroke="${isUp ? style.stroke : palette.downStroke}"
+          <path
+            d="${geom.pathD}"
+            fill="none"
+            stroke="${linkStroke}"
             stroke-width="2.6"
             ${style.dash ? `stroke-dasharray="${style.dash}"` : ''}
-            stroke-opacity="${isUp ? '0.95' : '0.65'}"
+            stroke-opacity="${isUp ? '0.95' : link.cableType === 'serial' ? '0.72' : '0.65'}"
             stroke-linecap="round"
+            stroke-linejoin="miter"
           />
-          <circle cx="${x1.toFixed(1)}" cy="${y1.toFixed(1)}" r="3.1" fill="${isUp ? style.stroke : palette.downStroke}" stroke="${palette.ledBorder}" stroke-width="1" />
-          <circle cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3.1" fill="${isUp ? style.stroke : palette.downStroke}" stroke="${palette.ledBorder}" stroke-width="1" />
           <circle cx="${geom.x1Led.toFixed(1)}" cy="${geom.y1Led.toFixed(1)}" r="4.2" fill="${isUp ? '#10b981' : '#ef4444'}" stroke="${palette.ledBorder}" stroke-width="1.2" />
           <circle cx="${geom.x2Led.toFixed(1)}" cy="${geom.y2Led.toFixed(1)}" r="4.2" fill="${isUp ? '#10b981' : '#ef4444'}" stroke="${palette.ledBorder}" stroke-width="1.2" />
           ${renderEndpointLabel(fromPortText, geom.fromLabelX, geom.fromLabelY)}
@@ -473,7 +483,7 @@ export function buildTopologySvgString(
     <line x1="210" y1="-3" x2="230" y2="-3" stroke="#f59e0b" stroke-width="2.5" />
     <text x="237" y="0">Fiber</text>
 
-    <line x1="290" y1="-3" x2="310" y2="-3" stroke="#ef4444" stroke-width="2.5" stroke-dasharray="3 3" />
+    <path d="M 290 -3 L 302 -7 L 298 1 L 310 -3" fill="none" stroke="#ef4444" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="miter" />
     <text x="317" y="0">Serial WAN</text>
 
     <circle cx="418" cy="-3" r="4" fill="#10b981" />
