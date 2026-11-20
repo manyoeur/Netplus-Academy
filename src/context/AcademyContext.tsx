@@ -398,6 +398,12 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const dailyStudyGoal = computeDailyStudyGoal(studyGoalData);
 
+  useEffect(() => {
+    if (dailyStudyGoal.totalSecondsToday > 0 && !learningStreak.studiedToday) {
+      recordLearningActivity('Study Session');
+    }
+  }, [currentUser.id, dailyStudyGoal.totalSecondsToday, learningStreak.studiedToday]);
+
   const [personalFlashcards, setPersonalFlashcards] = useState<PersonalFlashcard[]>(() =>
     loadLocalPersonalFlashcards(currentUser.id)
   );
@@ -1630,7 +1636,7 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return next;
     });
 
-    if (seconds >= 15 || moduleId) {
+    if (seconds > 0 && !learningStreak.studiedToday) {
       recordLearningActivity(
         source === 'lab' ? 'Lab Simulation' : source === 'practice' ? 'Practice Lab' : 'Course Study'
       );

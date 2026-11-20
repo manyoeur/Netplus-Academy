@@ -30,6 +30,7 @@ import {
   formatEnrollmentDateRange,
   getEnrollmentExpirationInfo
 } from '../../utils/enrollmentDates';
+import { formatStudyDuration } from '../../utils/studyGoal';
 
 interface StudentDashboardProps {
   onSelectCourse: (courseId: string) => void;
@@ -123,19 +124,64 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <div
-            title={`${learningStreak.badge.title}: ${learningStreak.badge.subtitle}`}
-            className={`px-3 py-1.5 rounded-xl backdrop-blur-md border text-xs font-mono flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+          <button
+            type="button"
+            onClick={() => {
+              document
+                .getElementById('learning-streak-tracker')
+                ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }}
+            title={`Learning Streak: ${learningStreak.currentStreak} consecutive ${
+              learningStreak.currentStreak === 1 ? 'day' : 'days'
+            } with logged study time · Today: ${
+              dailyStudyGoal.totalSecondsToday > 0
+                ? formatStudyDuration(dailyStudyGoal.totalSecondsToday)
+                : learningStreak.studiedToday
+                ? 'Checked in'
+                : 'Not logged yet'
+            } · Best: ${learningStreak.longestStreak}d (${learningStreak.badge.title})`}
+            aria-label={`Learning Streak: ${learningStreak.currentStreak} consecutive ${
+              learningStreak.currentStreak === 1 ? 'day' : 'days'
+            }`}
+            className={`px-3 py-1.5 rounded-xl backdrop-blur-md border text-xs font-mono flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
               learningStreak.studiedToday
-                ? 'bg-amber-500/20 border-amber-400/40 text-amber-200'
-                : 'bg-white/10 border-white/15 text-slate-200'
+                ? 'bg-amber-500/20 border-amber-400/50 text-amber-100 hover:bg-amber-500/30'
+                : learningStreak.streakAtRisk
+                ? 'bg-amber-500/15 border-amber-400/35 text-amber-200 hover:bg-amber-500/25'
+                : 'bg-white/10 border-white/15 text-slate-200 hover:bg-white/15'
             }`}
           >
-            <Flame className={`w-4 h-4 ${learningStreak.currentStreak > 0 ? 'text-amber-400' : 'text-slate-300'}`} />
-            <span className="font-bold tabular-nums">{learningStreak.currentStreak}d Streak</span>
-            <span className="text-white/40">·</span>
-            <span className="font-semibold text-cyan-200">{learningStreak.badge.title}</span>
-          </div>
+            <Flame
+              className={`w-4 h-4 shrink-0 ${
+                learningStreak.currentStreak > 0 ? 'text-amber-400' : 'text-slate-300'
+              }`}
+            />
+            <span className="font-semibold text-slate-200">Learning Streak</span>
+            <span className="font-bold tabular-nums text-white">
+              {learningStreak.currentStreak}{' '}
+              {learningStreak.currentStreak === 1 ? 'day' : 'days'}
+            </span>
+            <span className="text-white/35" aria-hidden="true">
+              ·
+            </span>
+            {learningStreak.studiedToday ? (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                {dailyStudyGoal.totalSecondsToday > 0
+                  ? formatStudyDuration(dailyStudyGoal.totalSecondsToday)
+                  : 'Today'}
+              </span>
+            ) : learningStreak.streakAtRisk ? (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                Log today
+              </span>
+            ) : (
+              <span className="text-[11px] font-semibold text-cyan-200">
+                {learningStreak.badge.title}
+              </span>
+            )}
+          </button>
 
           {currentUser.subscription.tier === 'free' ? (
             <button
@@ -157,6 +203,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {/* Daily Learning Streak & Achievement Badge */}
       <DailyStreakCard
         streak={learningStreak}
+        todayStudySeconds={dailyStudyGoal.totalSecondsToday}
         onLogTodayStudy={() => recordLearningActivity('Daily study check-in')}
       />
 

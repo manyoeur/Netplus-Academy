@@ -186,7 +186,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
           </div>
 
           <h1 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight">
-            Master High-Availability Networks & Routing Protocols
+            High Network Education Academy
           </h1>
 
           <p className="text-sm sm:text-base text-slate-300 leading-relaxed">

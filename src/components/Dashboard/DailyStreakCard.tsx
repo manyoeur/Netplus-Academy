@@ -12,9 +12,11 @@ import {
   Zap,
 } from 'lucide-react';
 import { ComputedLearningStreak, StreakBadgeTier } from '../../utils/learningStreak';
+import { formatStudyDuration } from '../../utils/studyGoal';
 
 interface DailyStreakCardProps {
   streak: ComputedLearningStreak;
+  todayStudySeconds?: number;
   onLogTodayStudy: () => void;
 }
 
@@ -69,6 +71,7 @@ function renderBadgeIcon(tone: StreakBadgeTier['tone'], className = 'w-3.5 h-3.5
 
 export const DailyStreakCard: React.FC<DailyStreakCardProps> = ({
   streak,
+  todayStudySeconds = 0,
   onLogTodayStudy,
 }) => {
   const [showMilestones, setShowMilestones] = useState(false);
@@ -78,6 +81,7 @@ export const DailyStreakCard: React.FC<DailyStreakCardProps> = ({
 
   return (
     <section
+      id="learning-streak-tracker"
       aria-label="Daily learning streak and achievement badge"
       className="rounded-2xl bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden"
     >
@@ -99,7 +103,7 @@ export const DailyStreakCard: React.FC<DailyStreakCardProps> = ({
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white font-mono tabular-nums">
-                {streak.currentStreak} {streakUnit} Streak
+                {streak.currentStreak} {streakUnit} Learning Streak
               </h2>
 
               {/* Small Badge of Achievement */}
@@ -117,7 +121,13 @@ export const DailyStreakCard: React.FC<DailyStreakCardProps> = ({
             <p className="text-xs text-slate-600 dark:text-slate-400">
               {streak.studiedToday ? (
                 <>
-                  Today&apos;s study activity is logged.
+                  {todayStudySeconds > 0 ? (
+                    <>
+                      Logged <strong className="text-emerald-600 dark:text-emerald-400 tabular-nums">{formatStudyDuration(todayStudySeconds)}</strong> of study time today.
+                    </>
+                  ) : (
+                    <>Today&apos;s study activity is logged.</>
+                  )}
                   {streak.daysToNextBadge !== null && streak.badge.nextMilestoneTitle && (
                     <span className="ml-1 text-slate-500 dark:text-slate-400">
                       · <strong className="text-slate-700 dark:text-slate-200 tabular-nums">{streak.daysToNextBadge}</strong>{' '}
@@ -128,16 +138,16 @@ export const DailyStreakCard: React.FC<DailyStreakCardProps> = ({
                 </>
               ) : streak.streakAtRisk ? (
                 <span>
-                  Your streak from yesterday is active — complete a module, quiz, or check in today to reach{' '}
+                  Your streak from yesterday is active — log study time in a course, lab, or check in today to reach{' '}
                   <strong className="text-amber-600 dark:text-amber-400 tabular-nums">
-                    {streak.currentStreak + 1} days
+                    {streak.currentStreak + 1} consecutive days
                   </strong>
                   .
                 </span>
               ) : (
                 <span>
-                  Complete a course module, quiz, flashcard session, or check in today to earn your{' '}
-                  <strong className="text-emerald-600 dark:text-emerald-400">Link Up</strong> badge.
+                  Log study time in a course, lab, or flashcard session today to start your consecutive-day streak and earn{' '}
+                  <strong className="text-emerald-600 dark:text-emerald-400">Link Up</strong>.
                 </span>
               )}
             </p>
