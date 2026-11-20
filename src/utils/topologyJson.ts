@@ -14,6 +14,10 @@ import {
 } from '../components/Lab/networkSimTypes';
 import { createDefaultDevice } from '../components/Lab/networkSimEngine';
 import {
+  MAX_LAB_CANVAS_HEIGHT,
+  MAX_LAB_CANVAS_WIDTH,
+  computeRequiredCanvasSize,
+  normalizeCanvasDimensions,
   sanitizeLabelsForStorage,
   sanitizeShapesForStorage
 } from './labPersistence';
@@ -27,6 +31,10 @@ export interface ExportedTopologyJson {
   title: string;
   status: 'in_progress' | 'completed';
   presetId: string;
+  canvasSize?: {
+    width: number;
+    height: number;
+  };
   exportedAt: string;
   studentEmail?: string;
   objectivesSummary?: {
@@ -53,6 +61,10 @@ export type TopologyImportParseResult =
         title?: string;
         status: 'in_progress' | 'completed';
         presetId: string;
+        canvasSize: {
+          width: number;
+          height: number;
+        };
         devices: SimDevice[];
         links: SimLink[];
         shapes: SimTopologyShape[];
@@ -299,7 +311,11 @@ function normalizeLineSettings(raw: unknown): SimLineSettings | undefined {
   return settings;
 }
 
-export function normalizeDeviceForJson(dev: SimDevice): SimDevice {
+export function normalizeDeviceForJson(
+  dev: SimDevice,
+  maxWidth: number = MAX_LAB_CANVAS_WIDTH,
+  maxHeight: number = MAX_LAB_CANVAS_HEIGHT
+): SimDevice {
   const rawRot = Number(dev.rotation);
   const normRot = Number.isFinite(rawRot) ? ((Math.round(rawRot) % 360) + 360) % 360 : 0;
   const rawLx = Number(dev.labelOffsetX);
@@ -312,8 +328,8 @@ export function normalizeDeviceForJson(dev: SimDevice): SimDevice {
     id: String(dev.id).slice(0, 128),
     name: String(dev.name || 'Device').slice(0, 64),
     model: String(dev.model || '').slice(0, 80),
-    x: clampInt(dev.x, 20, 980, 500),
-    y: clampInt(dev.y, 20, 560, 290),
+    x: clampInt(dev.x, 20, maxWidth - 20, 500),
+    y: clampInt(dev.y, 20, maxHeight - 20, 290),
     rotation: normRot !== 0 ? normRot : undefined,
     labelOffsetX: normLx !== 0 ? normLx : undefined,
     labelOffsetY: normLy !== 0 ? normLy : undefined,
@@ -330,6 +346,7 @@ export function buildTopologyJsonPayload(params: {
   title: string;
   status: 'in_progress' | 'completed';
   presetId: string;
+  canvasSize?: { width: number; height: number };
   studentEmail?: string;
   objectivesSummary?: {
     passed: number;
@@ -341,7 +358,16 @@ export function buildTopologyJsonPayload(params: {
   shapes?: SimTopologyShape[];
   labels?: SimDiagramLabel[];
 }): ExportedTopologyJson {
-  const cleanDevices = params.devices.map(normalizeDeviceForJson);
+  const cleanShapes = sanitizeShapesForStorage(params.shapes);
+  const cleanLabels = sanitizeLabelsForStorage(params.labels);
+  const cleanDevices = params.devices.map(d => normalizeDeviceForJson(d));
+  const resolvedCanvasSize = computeRequiredCanvasSize(
+    cleanDevices,
+    cleanShapes,
+    cleanLabels,
+    params.canvasSize?.width,
+    params.canvasSize?.height
+  );
   const cleanLinks = params.links.map(link =>
     stripUndefinedDeep({
       id: String(link.id).slice(0, 128),
@@ -352,8 +378,6 @@ export function buildTopologyJsonPayload(params: {
       toPort: String(link.toPort).slice(0, 64)
     })
   );
-  const cleanShapes = sanitizeShapesForStorage(params.shapes);
-  const cleanLabels = sanitizeLabelsForStorage(params.labels);
 
   return stripUndefinedDeep({
     format: TOPOLOGY_JSON_FORMAT,
@@ -361,6 +385,7 @@ export function buildTopologyJsonPayload(params: {
     title: params.title.trim().slice(0, 120) || 'Network Topology',
     status: params.status,
     presetId: params.presetId || 'blank-sandbox',
+    canvasSize: resolvedCanvasSize,
     exportedAt: new Date().toISOString(),
     ...(params.studentEmail ? { studentEmail: params.studentEmail } : {}),
     ...(params.objectivesSummary ? { objectivesSummary: params.objectivesSummary } : {}),
@@ -470,8 +495,18 @@ export function parseAndValidateTopologyJson(
 
     const fallbackX = 200 + (idx % 4) * 180;
     const fallbackY = 150 + Math.floor(idx / 4) * 140;
-    const x = clampInt(item.x, 20, 980, clampInt(fallbackX, 20, 980, 500));
-    const y = clampInt(item.y, 20, 560, clampInt(fallbackY, 20, 560, 290));
+    const x = clampInt(
+      item.x,
+      20,
+      MAX_LAB_CANVAS_WIDTH - 20,
+      clampInt(fallbackX, 20, MAX_LAB_CANVAS_WIDTH - 20, 500)
+    );
+    const y = clampInt(
+      item.y,
+      20,
+      MAX_LAB_CANVAS_HEIGHT - 20,
+      clampInt(fallbackY, 20, MAX_LAB_CANVAS_HEIGHT - 20, 290)
+    );
 
     const defaultNames: Record<SimDeviceType, string> = {
       router: `R-${idx + 1}`,
@@ -726,12 +761,26 @@ export function parseAndValidateTopologyJson(
   const status: 'in_progress' | 'completed' =
     root.status === 'completed' ? 'completed' : 'in_progress';
 
+  const rawCanvasObj =
+    root.canvasSize && typeof root.canvasSize === 'object' && !Array.isArray(root.canvasSize)
+      ? (root.canvasSize as Record<string, unknown>)
+      : null;
+  const requestedCanvas = normalizeCanvasDimensions(rawCanvasObj?.width, rawCanvasObj?.height);
+  const resolvedCanvasSize = computeRequiredCanvasSize(
+    normalizedDevices,
+    rawShapes,
+    rawLabels,
+    requestedCanvas.width,
+    requestedCanvas.height
+  );
+
   return {
     ok: true,
     data: {
       ...(title ? { title } : {}),
       status,
       presetId: resolvedPresetId,
+      canvasSize: resolvedCanvasSize,
       devices: normalizedDevices,
       links: normalizedLinks,
       shapes: rawShapes,

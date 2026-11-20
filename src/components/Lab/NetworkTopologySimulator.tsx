@@ -53,8 +53,13 @@ import {
   saveLabTopologyToFirestore
 } from '../../firebase';
 import {
+  DEFAULT_LAB_CANVAS_HEIGHT,
+  DEFAULT_LAB_CANVAS_WIDTH,
+  MAX_LAB_CANVAS_HEIGHT,
+  MAX_LAB_CANVAS_WIDTH,
   SavedLabRecord,
   clearActiveLabDraftFromIdb,
+  computeRequiredCanvasSize,
   deleteSavedLabFromIdb,
   listSavedLabsFromIdb,
   loadActiveLabDraftFromIdb,
@@ -170,6 +175,18 @@ const snapClampedToGrid = (
   }
   return Math.min(maxGrid, Math.max(minGrid, snapToStep(val, step)));
 };
+
+const WORKSPACE_SIZE_PRESETS: Array<{
+  id: string;
+  label: string;
+  width: number;
+  height: number;
+}> = [
+  { id: 'standard', label: 'Standard', width: 1000, height: 580 },
+  { id: 'medium', label: 'Medium', width: 1500, height: 870 },
+  { id: 'large', label: 'Large', width: 2000, height: 1160 },
+  { id: 'enterprise', label: 'Enterprise', width: 2800, height: 1620 }
+];
 
 const SHAPE_FILL_PRESETS: Array<{ label: string; value: string }> = [
   { label: 'None', value: 'transparent' },
@@ -350,11 +367,15 @@ function chunkEvenly<T>(items: T[], maxPerRow: number): T[][] {
 function computeAutoLayoutPositions(
   currentDevices: SimDevice[],
   currentLinks: SimLink[],
-  mode: AutoLayoutMode
+  mode: AutoLayoutMode,
+  canvasWidth: number = DEFAULT_LAB_CANVAS_WIDTH,
+  canvasHeight: number = DEFAULT_LAB_CANVAS_HEIGHT
 ): SimDevice[] {
+  const centerX = Math.round(canvasWidth / 2);
+  const centerY = Math.round(canvasHeight / 2);
   if (currentDevices.length === 0) return currentDevices;
   if (currentDevices.length === 1) {
-    return currentDevices.map(d => ({ ...d, x: 500, y: 288 }));
+    return currentDevices.map(d => ({ ...d, x: centerX, y: centerY }));
   }
 
   const deviceById = new Map(currentDevices.map(d => [d.id, d]));
@@ -410,13 +431,15 @@ function computeAutoLayoutPositions(
     }
 
     const n = ordered.length;
-    const rx = n <= 3 ? 210 : Math.min(355, 190 + n * 16);
-    const ry = n <= 3 ? 135 : Math.min(198, 125 + n * 8);
+    const maxRx = Math.max(210, canvasWidth * 0.41);
+    const maxRy = Math.max(135, canvasHeight * 0.39);
+    const rx = n <= 3 ? Math.min(maxRx, 210 + (canvasWidth - 1000) * 0.12) : Math.min(maxRx, 190 + n * 24);
+    const ry = n <= 3 ? Math.min(maxRy, 135 + (canvasHeight - 580) * 0.12) : Math.min(maxRy, 125 + n * 14);
 
     ordered.forEach((dev, idx) => {
       const angle = -Math.PI / 2 + (idx * 2 * Math.PI) / n;
-      const x = Math.round(Math.min(925, Math.max(75, 500 + rx * Math.cos(angle))));
-      const y = Math.round(Math.min(505, Math.max(70, 288 + ry * Math.sin(angle))));
+      const x = Math.round(Math.min(canvasWidth - 75, Math.max(75, centerX + rx * Math.cos(angle))));
+      const y = Math.round(Math.min(canvasHeight - 75, Math.max(70, centerY + ry * Math.sin(angle))));
       positions.set(dev.id, { x, y });
     });
   } else {
@@ -460,33 +483,34 @@ function computeAutoLayoutPositions(
         return a.name.localeCompare(b.name);
       });
 
-    const MAX_PER_ROW = 5;
+    const maxPerRow = Math.max(5, Math.floor((canvasWidth - 150) / 175));
     const rows: SimDevice[][] = [
-      ...chunkEvenly(routers, MAX_PER_ROW),
-      ...chunkEvenly(switches, MAX_PER_ROW),
-      ...chunkEvenly(endpoints, MAX_PER_ROW)
+      ...chunkEvenly(routers, maxPerRow),
+      ...chunkEvenly(switches, maxPerRow),
+      ...chunkEvenly(endpoints, maxPerRow)
     ];
 
     const minY = 92;
-    const maxY = 486;
+    const maxY = Math.max(minY + 120, canvasHeight - 94);
     const rowCount = rows.length;
 
     rows.forEach((row, rIdx) => {
       const y =
         rowCount === 1
-          ? 288
+          ? centerY
           : rowCount === 2
           ? rIdx === 0
-            ? 175
-            : 400
+            ? Math.round(canvasHeight * 0.3)
+            : Math.round(canvasHeight * 0.69)
           : Math.round(minY + (rIdx * (maxY - minY)) / (rowCount - 1));
 
       const count = row.length;
-      const colStep = count > 1 ? Math.min(185, 810 / (count - 1)) : 0;
-      const startX = 500 - ((count - 1) * colStep) / 2;
+      const usableW = Math.max(200, canvasWidth - 190);
+      const colStep = count > 1 ? Math.min(230, usableW / (count - 1)) : 0;
+      const startX = centerX - ((count - 1) * colStep) / 2;
 
       row.forEach((dev, cIdx) => {
-        const x = Math.round(Math.min(925, Math.max(75, startX + cIdx * colStep)));
+        const x = Math.round(Math.min(canvasWidth - 75, Math.max(75, startX + cIdx * colStep)));
         positions.set(dev.id, { x, y });
       });
     });
@@ -512,6 +536,12 @@ export const NetworkTopologySimulator: React.FC = () => {
   }, []);
 
   const [activePresetId, setActivePresetId] = useState<string>(initialPresetState.presetId);
+  const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({
+    width: DEFAULT_LAB_CANVAS_WIDTH,
+    height: DEFAULT_LAB_CANVAS_HEIGHT
+  });
+  const canvasSizeRef = useRef<{ width: number; height: number }>(canvasSize);
+  canvasSizeRef.current = canvasSize;
   const [devices, setDevices] = useState<SimDevice[]>(initialPresetState.devices);
   const [links, setLinks] = useState<SimLink[]>(initialPresetState.links);
   const [shapes, setShapes] = useState<SimTopologyShape[]>([]);
@@ -916,11 +946,21 @@ export const NetworkTopologySimulator: React.FC = () => {
       if (cancelled) return;
 
       if (draft) {
+        const draftShapes = Array.isArray(draft.shapes) ? draft.shapes : [];
+        const draftLabels = Array.isArray(draft.labels) ? draft.labels : [];
+        const restoredSize = computeRequiredCanvasSize(
+          draft.devices,
+          draftShapes,
+          draftLabels,
+          draft.canvasWidth,
+          draft.canvasHeight
+        );
         setActivePresetId(draft.presetId);
+        setCanvasSize(restoredSize);
         setDevices(draft.devices);
         setLinks(draft.links);
-        setShapes(Array.isArray(draft.shapes) ? draft.shapes : []);
-        setDiagramLabels(Array.isArray(draft.labels) ? draft.labels : []);
+        setShapes(draftShapes);
+        setDiagramLabels(draftLabels);
         setActiveSavedLabId(draft.activeSavedLabId || null);
         const firstId = draft.devices[0]?.id || null;
         setSelectedDeviceId(firstId);
@@ -934,6 +974,7 @@ export const NetworkTopologySimulator: React.FC = () => {
         setLastAutoSavedAt(draft.updatedAt);
       } else {
         setActivePresetId('blank-sandbox');
+        setCanvasSize({ width: DEFAULT_LAB_CANVAS_WIDTH, height: DEFAULT_LAB_CANVAS_HEIGHT });
         setDevices([]);
         setLinks([]);
         setShapes([]);
@@ -1016,7 +1057,9 @@ export const NetworkTopologySimulator: React.FC = () => {
       shapes.length > 0 ||
       diagramLabels.length > 0 ||
       activeSavedLabId !== null ||
-      activePresetId !== 'blank-sandbox';
+      activePresetId !== 'blank-sandbox' ||
+      canvasSize.width > DEFAULT_LAB_CANVAS_WIDTH ||
+      canvasSize.height > DEFAULT_LAB_CANVAS_HEIGHT;
 
     if (!hasWorkspaceContent) return;
 
@@ -1031,6 +1074,8 @@ export const NetworkTopologySimulator: React.FC = () => {
         userId: ownerScopeId,
         activeSavedLabId: activeSavedLabId || undefined,
         presetId: activePresetId,
+        canvasWidth: canvasSize.width,
+        canvasHeight: canvasSize.height,
         devices,
         links,
         shapes,
@@ -1046,7 +1091,7 @@ export const NetworkTopologySimulator: React.FC = () => {
         window.clearTimeout(saveTimerRef.current);
       }
     };
-  }, [activePresetId, activeSavedLabId, ownerScopeId, devices, links, shapes, diagramLabels, workspaceView]);
+  }, [activePresetId, activeSavedLabId, canvasSize, ownerScopeId, devices, links, shapes, diagramLabels, workspaceView]);
 
   // Keep pingSourceId valid
   useEffect(() => {
@@ -1167,7 +1212,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       const sensitivity = e.ctrlKey ? 0.008 : 0.0016;
       const nextZoom = Math.min(
         2.75,
-        Math.max(0.4, Number((curZoom * Math.exp(-clampedDelta * sensitivity)).toFixed(4)))
+        Math.max(0.2, Number((curZoom * Math.exp(-clampedDelta * sensitivity)).toFixed(4)))
       );
       if (nextZoom === curZoom) return;
 
@@ -1194,10 +1239,13 @@ export const NetworkTopologySimulator: React.FC = () => {
 
   // Pointer drag, viewport pan, & marquee selection box handling for topology canvas nodes
   useEffect(() => {
-    const clientToCanvas = (clientX: number, clientY: number, rect: DOMRect) => ({
-      x: Math.min(1000, Math.max(0, ((clientX - rect.left) / rect.width) * 1000)),
-      y: Math.min(580, Math.max(0, ((clientY - rect.top) / rect.height) * 580))
-    });
+    const clientToCanvas = (clientX: number, clientY: number, rect: DOMRect) => {
+      const { width: canvasW, height: canvasH } = canvasSizeRef.current;
+      return {
+        x: Math.min(canvasW, Math.max(0, ((clientX - rect.left) / rect.width) * canvasW)),
+        y: Math.min(canvasH, Math.max(0, ((clientY - rect.top) / rect.height) * canvasH))
+      };
+    };
 
     const clampConsoleOffset = (offset: { x: number; y: number }) => {
       const viewportEl = viewportRef.current;
@@ -1290,6 +1338,7 @@ export const NetworkTopologySimulator: React.FC = () => {
         return;
       }
 
+      const { width: canvasW, height: canvasH } = canvasSizeRef.current;
       const snapActive = snapToGridRef.current && !e.altKey;
       const step = gridSizeRef.current;
 
@@ -1306,14 +1355,14 @@ export const NetworkTopologySimulator: React.FC = () => {
         const nextX = snapClampedToGrid(
           diagramLabelDrag.initX + (curr.x - diagramLabelDrag.startCanvasX),
           25,
-          975,
+          canvasW - 25,
           step,
           snapActive
         );
         const nextY = snapClampedToGrid(
           diagramLabelDrag.initY + (curr.y - diagramLabelDrag.startCanvasY),
           18,
-          562,
+          canvasH - 18,
           step,
           snapActive
         );
@@ -1338,9 +1387,9 @@ export const NetworkTopologySimulator: React.FC = () => {
         const rawDx = curr.x - labelDrag.startCanvasX;
         const rawDy = curr.y - labelDrag.startCanvasY;
         const minOx = Math.max(-220, 42 - labelDrag.devX);
-        const maxOx = Math.min(220, 958 - labelDrag.devX);
+        const maxOx = Math.min(220, canvasW - 42 - labelDrag.devX);
         const minOy = Math.max(-180, 14 - (labelDrag.devY + 34));
-        const maxOy = Math.min(180, 558 - (labelDrag.devY + 34));
+        const maxOy = Math.min(180, canvasH - 22 - (labelDrag.devY + 34));
         const nextOx = Math.round(Math.min(maxOx, Math.max(minOx, labelDrag.initOffsetX + rawDx)));
         const nextOy = Math.round(Math.min(maxOy, Math.max(minOy, labelDrag.initOffsetY + rawDy)));
         setDevices(prev =>
@@ -1385,9 +1434,9 @@ export const NetworkTopologySimulator: React.FC = () => {
         });
 
         const minDx = 60 - minInitX;
-        const maxDx = 940 - maxInitX;
+        const maxDx = canvasW - 60 - maxInitX;
         const minDy = 60 - minInitY;
-        const maxDy = 520 - maxInitY;
+        const maxDy = canvasH - 60 - maxInitY;
 
         const leadInit =
           drag.initialPositions.find(p => p.id === drag.leadId) || drag.initialPositions[0];
@@ -1521,13 +1570,13 @@ export const NetworkTopologySimulator: React.FC = () => {
           left = snapClampedToGrid(initLeft + dx, 4, initRight - minW, step, snapActive);
         }
         if (shapeResize.handle.includes('e')) {
-          right = snapClampedToGrid(initRight + dx, initLeft + minW, 996, step, snapActive);
+          right = snapClampedToGrid(initRight + dx, initLeft + minW, canvasW - 4, step, snapActive);
         }
         if (shapeResize.handle.includes('n')) {
           top = snapClampedToGrid(initTop + dy, 4, initBottom - minH, step, snapActive);
         }
         if (shapeResize.handle.includes('s')) {
-          bottom = snapClampedToGrid(initBottom + dy, initTop + minH, 576, step, snapActive);
+          bottom = snapClampedToGrid(initBottom + dy, initTop + minH, canvasH - 4, step, snapActive);
         }
 
         if (
@@ -1545,14 +1594,14 @@ export const NetworkTopologySimulator: React.FC = () => {
             if (shapeResize.handle.includes('n')) {
               top = Math.max(4, bottom - adjH);
             } else {
-              bottom = Math.min(576, top + adjH);
+              bottom = Math.min(canvasH - 4, top + adjH);
             }
           } else {
             const adjW = Math.max(minW, nextH * ratio);
             if (shapeResize.handle.includes('w')) {
               left = Math.max(4, right - adjW);
             } else {
-              right = Math.min(996, left + adjW);
+              right = Math.min(canvasW - 4, left + adjW);
             }
           }
         }
@@ -1592,14 +1641,14 @@ export const NetworkTopologySimulator: React.FC = () => {
         const nextX = snapClampedToGrid(
           shapeDrag.initX + rawDx,
           4,
-          996 - shapeDrag.width,
+          canvasW - 4 - shapeDrag.width,
           step,
           snapActive
         );
         const nextY = snapClampedToGrid(
           shapeDrag.initY + rawDy,
           4,
-          576 - shapeDrag.height,
+          canvasH - 4 - shapeDrag.height,
           step,
           snapActive
         );
@@ -1760,13 +1809,14 @@ export const NetworkTopologySimulator: React.FC = () => {
       const rect = canvas.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return;
 
+      const { width: canvasW, height: canvasH } = canvasSizeRef.current;
       const startCanvasX = Math.min(
-        1000,
-        Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000)
+        canvasW,
+        Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasW)
       );
       const startCanvasY = Math.min(
-        580,
-        Math.max(0, ((e.clientY - rect.top) / rect.height) * 580)
+        canvasH,
+        Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasH)
       );
 
       const activeSet = new Set(selectedDeviceIds);
@@ -1821,13 +1871,14 @@ export const NetworkTopologySimulator: React.FC = () => {
       const rect = canvas.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return;
 
+      const { width: canvasW, height: canvasH } = canvasSizeRef.current;
       const startCanvasX = Math.min(
-        1000,
-        Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000)
+        canvasW,
+        Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasW)
       );
       const startCanvasY = Math.min(
-        580,
-        Math.max(0, ((e.clientY - rect.top) / rect.height) * 580)
+        canvasH,
+        Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasH)
       );
       const startPointerAngleDeg =
         Math.atan2(startCanvasY - pivotY, startCanvasX - pivotX) * (180 / Math.PI);
@@ -1880,7 +1931,7 @@ export const NetworkTopologySimulator: React.FC = () => {
   };
 
   const zoomAtViewportCenter = useCallback((targetZoom: number) => {
-    const nextZoom = Math.min(2.75, Math.max(0.4, Number(targetZoom.toFixed(4))));
+    const nextZoom = Math.min(2.75, Math.max(0.2, Number(targetZoom.toFixed(4))));
     const curZoom = zoomRef.current;
     const curPan = panRef.current;
     const viewport = stageBoxRef.current || viewportRef.current;
@@ -1911,6 +1962,26 @@ export const NetworkTopologySimulator: React.FC = () => {
     setPan({ x: 0, y: 0 });
   }, []);
 
+  const fitSheetToViewport = useCallback((targetWidth: number, targetHeight: number) => {
+    const fitZoom = Math.max(
+      0.2,
+      Math.min(
+        1,
+        Number(
+          Math.min(
+            DEFAULT_LAB_CANVAS_WIDTH / targetWidth,
+            DEFAULT_LAB_CANVAS_HEIGHT / targetHeight
+          ).toFixed(4)
+        )
+      )
+    );
+    const nextPan = { x: 0, y: 0 };
+    zoomRef.current = fitZoom;
+    panRef.current = nextPan;
+    setZoom(fitZoom);
+    setPan(nextPan);
+  }, []);
+
   const handleFitToView = useCallback(() => {
     const viewport = stageBoxRef.current || viewportRef.current;
     if (!viewport) {
@@ -1923,7 +1994,11 @@ export const NetworkTopologySimulator: React.FC = () => {
       return;
     }
     if (devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0) {
-      handleResetZoomPan();
+      if (canvasSize.width > DEFAULT_LAB_CANVAS_WIDTH || canvasSize.height > DEFAULT_LAB_CANVAS_HEIGHT) {
+        fitSheetToViewport(canvasSize.width, canvasSize.height);
+      } else {
+        handleResetZoomPan();
+      }
       return;
     }
 
@@ -1956,15 +2031,15 @@ export const NetworkTopologySimulator: React.FC = () => {
       return;
     }
 
-    const baseScaleX = vRect.width / 1000;
-    const baseScaleY = vRect.height / 580;
+    const baseScaleX = vRect.width / DEFAULT_LAB_CANVAS_WIDTH;
+    const baseScaleY = vRect.height / DEFAULT_LAB_CANVAS_HEIGHT;
     const contentPxW = Math.max(60, (maxX - minX) * baseScaleX);
     const contentPxH = Math.max(60, (maxY - minY) * baseScaleY);
 
     const fitZoom = Math.min(
       2.0,
       Math.max(
-        0.4,
+        0.2,
         Number(
           Math.min((vRect.width * 0.88) / contentPxW, (vRect.height * 0.88) / contentPxH).toFixed(4)
         )
@@ -1982,14 +2057,67 @@ export const NetworkTopologySimulator: React.FC = () => {
     panRef.current = nextPan;
     setZoom(fitZoom);
     setPan(nextPan);
-  }, [devices, shapes, diagramLabels, handleResetZoomPan]);
+  }, [devices, shapes, diagramLabels, canvasSize, fitSheetToViewport, handleResetZoomPan]);
+
+  const handleChangeWorkspaceSize = useCallback(
+    (nextWidth: number, nextHeight: number) => {
+      const clampedW = Math.round(
+        Math.min(MAX_LAB_CANVAS_WIDTH, Math.max(DEFAULT_LAB_CANVAS_WIDTH, nextWidth))
+      );
+      const clampedH = Math.round(
+        Math.min(MAX_LAB_CANVAS_HEIGHT, Math.max(DEFAULT_LAB_CANVAS_HEIGHT, nextHeight))
+      );
+      if (clampedW === canvasSize.width && clampedH === canvasSize.height) return;
+
+      const occupied = computeRequiredCanvasSize(
+        devices,
+        shapes,
+        diagramLabels,
+        DEFAULT_LAB_CANVAS_WIDTH,
+        DEFAULT_LAB_CANVAS_HEIGHT
+      );
+      if (clampedW < occupied.width || clampedH < occupied.height) {
+        flashBanner(
+          `Items currently extend to ${occupied.width}×${occupied.height} — run Auto-Layout or move items inward before shrinking to ${clampedW}×${clampedH}.`,
+          'error'
+        );
+        return;
+      }
+
+      const nextSize = { width: clampedW, height: clampedH };
+      canvasSizeRef.current = nextSize;
+      setCanvasSize(nextSize);
+      fitSheetToViewport(clampedW, clampedH);
+
+      if (clampedW > DEFAULT_LAB_CANVAS_WIDTH || clampedH > DEFAULT_LAB_CANVAS_HEIGHT) {
+        flashBanner(
+          `Workspace set to ${clampedW}×${clampedH} — hold Space+drag or use Pan to navigate, or Zoom in for 1:1 editing`
+        );
+      } else {
+        flashBanner('Workspace reset to Standard (1000×580)');
+      }
+    },
+    [canvasSize, devices, diagramLabels, fitSheetToViewport, shapes]
+  );
+
+  const handleExpandWorkspace = useCallback(() => {
+    const nextW = Math.min(MAX_LAB_CANVAS_WIDTH, canvasSize.width + 500);
+    const nextH = Math.min(MAX_LAB_CANVAS_HEIGHT, canvasSize.height + 290);
+    if (nextW === canvasSize.width && nextH === canvasSize.height) {
+      flashBanner(`Workspace is already at maximum size (${MAX_LAB_CANVAS_WIDTH}×${MAX_LAB_CANVAS_HEIGHT})`);
+      return;
+    }
+    handleChangeWorkspaceSize(nextW, nextH);
+  }, [canvasSize, handleChangeWorkspaceSize]);
 
   // Load or reset preset
   const handleSelectPreset = (presetId: string) => {
     const preset = NETWORK_LAB_PRESETS.find(p => p.id === presetId);
     if (!preset) return;
     const built = preset.buildInitialState();
+    const requiredSize = computeRequiredCanvasSize(built.devices, [], []);
     setActivePresetId(preset.id);
+    setCanvasSize(requiredSize);
     setDevices(built.devices);
     setLinks(built.links);
     setShapes([]);
@@ -2020,14 +2148,16 @@ export const NetworkTopologySimulator: React.FC = () => {
       }
       const mode = modeOverride ?? autoLayoutMode;
       dragStateRef.current = null;
-      setDevices(prev => computeAutoLayoutPositions(prev, links, mode));
+      setDevices(prev =>
+        computeAutoLayoutPositions(prev, links, mode, canvasSize.width, canvasSize.height)
+      );
       flashBanner(
         `Arranged ${devices.length} device${devices.length === 1 ? '' : 's'} in ${
           mode === 'grid' ? 'Grid' : 'Circular'
         } layout`
       );
     },
-    [autoLayoutMode, devices.length, links]
+    [autoLayoutMode, canvasSize.height, canvasSize.width, devices.length, links]
   );
 
   // Add device to canvas (via palette click or drag-and-drop)
@@ -2040,14 +2170,15 @@ export const NetworkTopologySimulator: React.FC = () => {
     };
     const sameTypeCount = devices.filter(d => d.type === type).length + 1;
     const name = `${prefixMap[type]}-${sameTypeCount}`;
-    const offset = (devices.length % 6) * 42;
-    const rawX = dropX !== undefined ? dropX : 240 + (devices.length % 4) * 165;
-    const rawY = dropY !== undefined ? dropY : 140 + offset;
+    const cols = Math.max(4, Math.floor((canvasSize.width - 260) / 165));
+    const offset = (Math.floor(devices.length / cols) * 65) % Math.max(180, canvasSize.height - 220);
+    const rawX = dropX !== undefined ? dropX : 180 + (devices.length % cols) * 165;
+    const rawY = dropY !== undefined ? dropY : 130 + offset;
     const newDev = createDefaultDevice(
       type,
       name,
-      snapClampedToGrid(rawX, 60, 940, gridSize, snapToGrid),
-      snapClampedToGrid(rawY, 60, 520, gridSize, snapToGrid)
+      snapClampedToGrid(rawX, 60, canvasSize.width - 60, gridSize, snapToGrid),
+      snapClampedToGrid(rawY, 60, canvasSize.height - 60, gridSize, snapToGrid)
     );
     setDevices(prev => [...prev, newDev]);
     setSelectedDeviceId(null);
@@ -2060,10 +2191,22 @@ export const NetworkTopologySimulator: React.FC = () => {
   };
 
   const handleAddShape = (kind: SimShapeKind) => {
-    let x = snapClampedToGrid(280 + ((shapes.length * 36) % 240), 4, 720, gridSize, snapToGrid);
-    let y = snapClampedToGrid(140 + ((shapes.length * 28) % 180), 4, 360, gridSize, snapToGrid);
-    let width = snapClampedToGrid(kind === 'circle' ? 210 : 260, 80, 400, gridSize, snapToGrid);
-    let height = snapClampedToGrid(kind === 'circle' ? 210 : 160, 80, 400, gridSize, snapToGrid);
+    let x = snapClampedToGrid(
+      280 + ((shapes.length * 36) % Math.max(240, canvasSize.width - 520)),
+      4,
+      canvasSize.width - 260,
+      gridSize,
+      snapToGrid
+    );
+    let y = snapClampedToGrid(
+      140 + ((shapes.length * 28) % Math.max(180, canvasSize.height - 340)),
+      4,
+      canvasSize.height - 200,
+      gridSize,
+      snapToGrid
+    );
+    let width = snapClampedToGrid(kind === 'circle' ? 210 : 260, 80, 420, gridSize, snapToGrid);
+    let height = snapClampedToGrid(kind === 'circle' ? 210 : 160, 80, 420, gridSize, snapToGrid);
 
     if (selectedDeviceIds.length > 0) {
       const selectedSet = new Set(selectedDeviceIds);
@@ -2076,10 +2219,22 @@ export const NetworkTopologySimulator: React.FC = () => {
         const padX = kind === 'circle' ? 85 : 70;
         const padTop = kind === 'circle' ? 75 : 62;
         const padBottom = kind === 'circle' ? 85 : 68;
-        x = snapClampedToGrid(minX - padX, 8, 840, gridSize, snapToGrid);
-        y = snapClampedToGrid(minY - padTop, 8, 440, gridSize, snapToGrid);
-        width = snapClampedToGrid(maxX - minX + padX * 2, 140, 992 - x, gridSize, snapToGrid);
-        height = snapClampedToGrid(maxY - minY + padTop + padBottom, 120, 572 - y, gridSize, snapToGrid);
+        x = snapClampedToGrid(minX - padX, 8, canvasSize.width - 160, gridSize, snapToGrid);
+        y = snapClampedToGrid(minY - padTop, 8, canvasSize.height - 140, gridSize, snapToGrid);
+        width = snapClampedToGrid(
+          maxX - minX + padX * 2,
+          140,
+          canvasSize.width - 8 - x,
+          gridSize,
+          snapToGrid
+        );
+        height = snapClampedToGrid(
+          maxY - minY + padTop + padBottom,
+          120,
+          canvasSize.height - 8 - y,
+          gridSize,
+          snapToGrid
+        );
       }
     }
 
@@ -2126,18 +2281,24 @@ export const NetworkTopologySimulator: React.FC = () => {
     const copy: SimTopologyShape = {
       ...selectedShape,
       id: `shape-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      x: Math.min(992 - selectedShape.width, selectedShape.x + 28),
-      y: Math.min(572 - selectedShape.height, selectedShape.y + 24),
+      x: Math.min(canvasSize.width - 8 - selectedShape.width, selectedShape.x + 28),
+      y: Math.min(canvasSize.height - 8 - selectedShape.height, selectedShape.y + 24),
       label: selectedShape.label ? `${selectedShape.label} Copy` : undefined
     };
     setShapes(prev => [...prev, copy]);
     setSelectedShapeId(copy.id);
-  }, [selectedShape]);
+  }, [canvasSize.height, canvasSize.width, selectedShape]);
 
   const handleAddDiagramLabel = () => {
     const newId = `label-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    const x = 360 + ((diagramLabels.length * 42) % 280);
-    const y = 160 + ((diagramLabels.length * 32) % 220);
+    const x = Math.min(
+      canvasSize.width - 60,
+      360 + ((diagramLabels.length * 42) % Math.max(280, canvasSize.width - 520))
+    );
+    const y = Math.min(
+      canvasSize.height - 30,
+      160 + ((diagramLabels.length * 32) % Math.max(220, canvasSize.height - 300))
+    );
     const newLabel: SimDiagramLabel = {
       id: newId,
       text: 'Label',
@@ -2193,12 +2354,12 @@ export const NetworkTopologySimulator: React.FC = () => {
     const copy: SimDiagramLabel = {
       ...selectedDiagramLabel,
       id: `label-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      x: Math.min(975, selectedDiagramLabel.x + 28),
-      y: Math.min(560, selectedDiagramLabel.y + 24)
+      x: Math.min(canvasSize.width - 25, selectedDiagramLabel.x + 28),
+      y: Math.min(canvasSize.height - 20, selectedDiagramLabel.y + 24)
     };
     setDiagramLabels(prev => [...prev, copy]);
     setSelectedDiagramLabelId(copy.id);
-  }, [selectedDiagramLabel]);
+  }, [canvasSize.height, canvasSize.width, selectedDiagramLabel]);
 
   const handleDeleteDevice = useCallback(
     (deviceId: string) => {
@@ -2709,8 +2870,9 @@ export const NetworkTopologySimulator: React.FC = () => {
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
 
-    const currX = Math.min(1000, Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000));
-    const currY = Math.min(580, Math.max(0, ((e.clientY - rect.top) / rect.height) * 580));
+    const { width: canvasW, height: canvasH } = canvasSizeRef.current;
+    const currX = Math.min(canvasW, Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasW));
+    const currY = Math.min(canvasH, Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasH));
 
     const currentLinks = linksRef.current;
     const isBusy = (devId: string, pName: string) =>
@@ -3079,6 +3241,7 @@ export const NetworkTopologySimulator: React.FC = () => {
   const handleStartNewBlankLab = () => {
     const blankPreset = NETWORK_LAB_PRESETS.find(p => p.id === 'blank-sandbox') || NETWORK_LAB_PRESETS[0];
     setActivePresetId(blankPreset.id);
+    setCanvasSize({ width: DEFAULT_LAB_CANVAS_WIDTH, height: DEFAULT_LAB_CANVAS_HEIGHT });
     setDevices([]);
     setLinks([]);
     setShapes([]);
@@ -3152,10 +3315,21 @@ export const NetworkTopologySimulator: React.FC = () => {
         }
       : undefined;
 
+    const exportCanvasSize = record
+      ? computeRequiredCanvasSize(
+          targetDevices,
+          targetShapes,
+          targetLabels,
+          record.canvasWidth,
+          record.canvasHeight
+        )
+      : canvasSize;
+
     const payload = buildTopologyJsonPayload({
       title: exportTitle,
       status: resolvedStatus,
       presetId: record?.presetId || activePresetId,
+      canvasSize: exportCanvasSize,
       studentEmail: currentUser.email,
       ...(objectivesSummary ? { objectivesSummary } : {}),
       devices: targetDevices,
@@ -3213,6 +3387,16 @@ export const NetworkTopologySimulator: React.FC = () => {
       .filter(Boolean)
       .join(' · ');
 
+    const exportCanvasSize = record
+      ? computeRequiredCanvasSize(
+          targetDevices,
+          targetShapes,
+          targetLabels,
+          record.canvasWidth,
+          record.canvasHeight
+        )
+      : canvasSize;
+
     const options = {
       title,
       subtitle,
@@ -3220,6 +3404,8 @@ export const NetworkTopologySimulator: React.FC = () => {
       links: targetLinks,
       shapes: targetShapes,
       labels: targetLabels,
+      canvasWidth: exportCanvasSize.width,
+      canvasHeight: exportCanvasSize.height,
       isDark: isDarkTheme
     };
 
@@ -3232,7 +3418,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     setIsExportingImage(true);
     try {
       const filename = await exportTopologyAsPng(options);
-      flashBanner(`Exported high-resolution PNG diagram 2000×1380 (${filename})`);
+      flashBanner(`Exported high-resolution PNG diagram (${filename})`);
     } catch {
       flashBanner('Could not export PNG diagram in this browser; try SVG export');
     } finally {
@@ -3252,6 +3438,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       title,
       status,
       presetId,
+      canvasSize: importedCanvasSize,
       devices: importedDevices,
       links: importedLinks,
       shapes: importedShapes,
@@ -3260,6 +3447,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     } = parsed.data;
 
     setActivePresetId(presetId);
+    setCanvasSize(importedCanvasSize);
     setDevices(importedDevices);
     setLinks(importedLinks);
     setShapes(importedShapes);
@@ -3292,7 +3480,14 @@ export const NetworkTopologySimulator: React.FC = () => {
     setSaveTitleInput(resolvedTitle);
     setSaveStatusInput(status);
 
-    handleResetZoomPan();
+    if (
+      importedCanvasSize.width > DEFAULT_LAB_CANVAS_WIDTH ||
+      importedCanvasSize.height > DEFAULT_LAB_CANVAS_HEIGHT
+    ) {
+      fitSheetToViewport(importedCanvasSize.width, importedCanvasSize.height);
+    } else {
+      handleResetZoomPan();
+    }
     setWorkspaceView('editor');
 
     const countParts = [
@@ -3369,6 +3564,8 @@ export const NetworkTopologySimulator: React.FC = () => {
       userId: ownerScopeId,
       title: trimmedTitle.slice(0, 120),
       presetId: activePresetId,
+      canvasWidth: canvasSize.width,
+      canvasHeight: canvasSize.height,
       devices: cleanDevices,
       links: cleanLinks,
       shapes: cleanShapes,
@@ -3411,9 +3608,11 @@ export const NetworkTopologySimulator: React.FC = () => {
         }
         await clearActiveLabDraftFromIdb(ownerScopeId);
         setActivePresetId('blank-sandbox');
+        setCanvasSize({ width: DEFAULT_LAB_CANVAS_WIDTH, height: DEFAULT_LAB_CANVAS_HEIGHT });
         setDevices([]);
         setLinks([]);
         setShapes([]);
+        setDiagramLabels([]);
         setActiveSavedLabId(null);
         setSelectedDeviceId(null);
         setSelectedDeviceIds([]);
@@ -3446,11 +3645,21 @@ export const NetworkTopologySimulator: React.FC = () => {
 
   const handleResumeSavedLab = (record: SavedLabRecord) => {
     if (record.userId !== ownerScopeId) return;
+    const recordShapes = Array.isArray(record.shapes) ? record.shapes : [];
+    const recordLabels = Array.isArray(record.labels) ? record.labels : [];
+    const restoredSize = computeRequiredCanvasSize(
+      record.devices,
+      recordShapes,
+      recordLabels,
+      record.canvasWidth,
+      record.canvasHeight
+    );
     setActivePresetId(record.presetId);
+    setCanvasSize(restoredSize);
     setDevices(record.devices);
     setLinks(record.links);
-    setShapes(Array.isArray(record.shapes) ? record.shapes : []);
-    setDiagramLabels(Array.isArray(record.labels) ? record.labels : []);
+    setShapes(recordShapes);
+    setDiagramLabels(recordLabels);
     setActiveSavedLabId(record.id);
     setSaveTitleInput(record.title);
     const firstId = record.devices[0]?.id || null;
@@ -3466,7 +3675,14 @@ export const NetworkTopologySimulator: React.FC = () => {
     clearLiveCableDraw();
     setLastPingResult(null);
     setRecentlySavedProjectId(null);
-    handleResetZoomPan();
+    if (
+      restoredSize.width > DEFAULT_LAB_CANVAS_WIDTH ||
+      restoredSize.height > DEFAULT_LAB_CANVAS_HEIGHT
+    ) {
+      fitSheetToViewport(restoredSize.width, restoredSize.height);
+    } else {
+      handleResetZoomPan();
+    }
     setWorkspaceView('editor');
     flashBanner(`Opened lab project "${record.title}"`);
   };
@@ -3615,11 +3831,11 @@ export const NetworkTopologySimulator: React.FC = () => {
       pivotX: (minX + maxX) / 2,
       pivotY: (minY + maxY) / 2,
       left: Math.max(8, minX - 48),
-      right: Math.min(992, maxX + 48),
+      right: Math.min(canvasSize.width - 8, maxX + 48),
       top: Math.max(8, minY - 46),
-      bottom: Math.min(572, maxY + 52)
+      bottom: Math.min(canvasSize.height - 8, maxY + 52)
     };
-  }, [devices, selectedDeviceIds, tool]);
+  }, [canvasSize.height, canvasSize.width, devices, selectedDeviceIds, tool]);
 
   const hasRotatedSelection = useMemo(() => {
     if (selectedDeviceIds.length === 0) return false;
@@ -4594,9 +4810,9 @@ export const NetworkTopologySimulator: React.FC = () => {
                 )}
               </div>
 
-              {/* Cable Legend & Workspace Fullscreen Controls */}
-              <div className="flex items-center gap-2.5 shrink-0">
-                <div className="hidden sm:flex items-center gap-3 text-[11px] font-mono text-slate-500 dark:text-slate-400">
+              {/* Cable Legend, Workspace Size & Fullscreen Controls */}
+              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                <div className="hidden lg:flex items-center gap-3 text-[11px] font-mono text-slate-500 dark:text-slate-400">
                   <span className="inline-flex items-center gap-1">
                     <span className="w-3 h-0.5 bg-sky-600 inline-block" /> Straight
                   </span>
@@ -4616,6 +4832,58 @@ export const NetworkTopologySimulator: React.FC = () => {
                     {objectiveProgress.passedCount}/{objectiveProgress.totalCount} goals
                   </span>
                 )}
+
+                <div className="inline-flex items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden shrink-0">
+                  <select
+                    aria-label="Workspace canvas size"
+                    title="Choose logical workspace dimensions for small or large topologies"
+                    value={
+                      WORKSPACE_SIZE_PRESETS.some(
+                        p => p.width === canvasSize.width && p.height === canvasSize.height
+                      )
+                        ? `${canvasSize.width}x${canvasSize.height}`
+                        : 'custom'
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === 'custom') return;
+                      const [wStr, hStr] = val.split('x');
+                      const w = Number(wStr);
+                      const h = Number(hStr);
+                      if (Number.isFinite(w) && Number.isFinite(h)) {
+                        handleChangeWorkspaceSize(w, h);
+                      }
+                    }}
+                    className="px-2 py-1 bg-transparent text-[11px] font-mono font-semibold tabular-nums text-slate-700 dark:text-slate-200 focus:outline-none cursor-pointer"
+                  >
+                    {WORKSPACE_SIZE_PRESETS.map(p => (
+                      <option key={p.id} value={`${p.width}x${p.height}`}>
+                        {p.width}×{p.height} ({p.label})
+                      </option>
+                    ))}
+                    {!WORKSPACE_SIZE_PRESETS.some(
+                      p => p.width === canvasSize.width && p.height === canvasSize.height
+                    ) && (
+                      <option value="custom">
+                        {canvasSize.width}×{canvasSize.height} (Expanded)
+                      </option>
+                    )}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleExpandWorkspace}
+                    disabled={
+                      canvasSize.width >= MAX_LAB_CANVAS_WIDTH &&
+                      canvasSize.height >= MAX_LAB_CANVAS_HEIGHT
+                    }
+                    title="Expand workspace canvas (+500×290) without shrinking icons"
+                    aria-label="Expand workspace canvas"
+                    className="inline-flex items-center gap-1 px-2 py-1 border-l border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-blue-600 dark:text-cyan-400 hover:bg-blue-50 dark:hover:bg-slate-700/70 disabled:opacity-40 disabled:pointer-events-none transition-colors whitespace-nowrap shrink-0"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Expand</span>
+                  </button>
+                </div>
 
                 <button
                   type="button"
@@ -4661,10 +4929,10 @@ export const NetworkTopologySimulator: React.FC = () => {
                   if (!canvas) return;
                   const rect = canvas.getBoundingClientRect();
                   if (rect.width <= 0 || rect.height <= 0) return;
-                  const rawX = ((e.clientX - rect.left) / rect.width) * 1000;
-                  const rawY = ((e.clientY - rect.top) / rect.height) * 580;
-                  const x = snapClampedToGrid(rawX, 60, 940, gridSize, snapToGrid);
-                  const y = snapClampedToGrid(rawY, 60, 520, gridSize, snapToGrid);
+                  const rawX = ((e.clientX - rect.left) / rect.width) * canvasSize.width;
+                  const rawY = ((e.clientY - rect.top) / rect.height) * canvasSize.height;
+                  const x = snapClampedToGrid(rawX, 60, canvasSize.width - 60, gridSize, snapToGrid);
+                  const y = snapClampedToGrid(rawY, 60, canvasSize.height - 60, gridSize, snapToGrid);
                   setPaletteDropPreview(prev =>
                     prev && prev.type === activeType && prev.x === x && prev.y === y
                       ? prev
@@ -4719,8 +4987,8 @@ export const NetworkTopologySimulator: React.FC = () => {
                   handleAddDevice(dropType);
                   return;
                 }
-                const rawX = ((e.clientX - rect.left) / rect.width) * 1000;
-                const rawY = ((e.clientY - rect.top) / rect.height) * 580;
+                const rawX = ((e.clientX - rect.left) / rect.width) * canvasSize.width;
+                const rawY = ((e.clientY - rect.top) / rect.height) * canvasSize.height;
                 handleAddDevice(dropType, rawX, rawY);
               }}
               onPointerDownCapture={(e) => {
@@ -4771,12 +5039,12 @@ export const NetworkTopologySimulator: React.FC = () => {
                   e.stopPropagation();
                   e.preventDefault();
                   const startCanvasX = Math.min(
-                    1000,
-                    Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000)
+                    canvasSize.width,
+                    Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasSize.width)
                   );
                   const startCanvasY = Math.min(
-                    580,
-                    Math.max(0, ((e.clientY - rect.top) / rect.height) * 580)
+                    canvasSize.height,
+                    Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasSize.height)
                   );
 
                   marqueeStateRef.current = {
@@ -4815,8 +5083,14 @@ export const NetworkTopologySimulator: React.FC = () => {
                 const rect = canvas.getBoundingClientRect();
                 if (rect.width <= 0 || rect.height <= 0) return;
 
-                const startCanvasX = Math.min(1000, Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000));
-                const startCanvasY = Math.min(580, Math.max(0, ((e.clientY - rect.top) / rect.height) * 580));
+                const startCanvasX = Math.min(
+                  canvasSize.width,
+                  Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasSize.width)
+                );
+                const startCanvasY = Math.min(
+                  canvasSize.height,
+                  Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasSize.height)
+                );
 
                 marqueeStateRef.current = {
                   startClientX: e.clientX,
@@ -4871,14 +5145,16 @@ export const NetworkTopologySimulator: React.FC = () => {
               <div
                 ref={canvasRef}
                 style={{
+                  width: `${(canvasSize.width / DEFAULT_LAB_CANVAS_WIDTH) * 100}%`,
+                  height: `${(canvasSize.height / DEFAULT_LAB_CANVAS_HEIGHT) * 100}%`,
                   transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                   transformOrigin: '0 0'
                 }}
-                className="relative w-full h-full bg-slate-50 dark:bg-[#090f1d] shadow-xs ring-1 ring-slate-200/70 dark:ring-slate-800/70"
+                className="relative bg-slate-50 dark:bg-[#090f1d] shadow-xs ring-1 ring-slate-200/70 dark:ring-slate-800/70"
               >
               {/* True-Coordinate Logical SVG Grid Backdrop */}
               <svg
-                viewBox="0 0 1000 580"
+                viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`}
                 className="absolute inset-0 w-full h-full pointer-events-none z-0"
                 preserveAspectRatio="none"
                 aria-hidden="true"
@@ -4907,13 +5183,13 @@ export const NetworkTopologySimulator: React.FC = () => {
                     )}
                   </pattern>
                 </defs>
-                <rect width="1000" height="580" fill="url(#sim-snap-grid-pattern)" />
+                <rect width={canvasSize.width} height={canvasSize.height} fill="url(#sim-snap-grid-pattern)" />
                 {activeSnapGuides?.x !== undefined && (
                   <line
                     x1={activeSnapGuides.x}
                     y1={0}
                     x2={activeSnapGuides.x}
-                    y2={580}
+                    y2={canvasSize.height}
                     stroke="#0ea5e9"
                     strokeWidth={1.1}
                     strokeDasharray="4 4"
@@ -4924,7 +5200,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                   <line
                     x1={0}
                     y1={activeSnapGuides.y}
-                    x2={1000}
+                    x2={canvasSize.width}
                     y2={activeSnapGuides.y}
                     stroke="#0ea5e9"
                     strokeWidth={1.1}
@@ -4936,7 +5212,7 @@ export const NetworkTopologySimulator: React.FC = () => {
               {/* SVG Grouping Shapes Layer (Rendered Behind Cables & Devices) */}
               {shapes.length > 0 && (
                 <svg
-                  viewBox="0 0 1000 580"
+                  viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`}
                   className="absolute inset-0 w-full h-full pointer-events-none z-[1]"
                   preserveAspectRatio="none"
                 >
@@ -4972,12 +5248,12 @@ export const NetworkTopologySimulator: React.FC = () => {
                       if (rect.width <= 0 || rect.height <= 0) return;
 
                       const startCanvasX = Math.min(
-                        1000,
-                        Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000)
+                        canvasSize.width,
+                        Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasSize.width)
                       );
                       const startCanvasY = Math.min(
-                        580,
-                        Math.max(0, ((e.clientY - rect.top) / rect.height) * 580)
+                        canvasSize.height,
+                        Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasSize.height)
                       );
 
                       setSelectedShapeId(shape.id);
@@ -5103,10 +5379,10 @@ export const NetworkTopologySimulator: React.FC = () => {
                 <div
                   className="absolute border border-blue-500/80 dark:border-cyan-400/80 pointer-events-none z-[5]"
                   style={{
-                    left: `${(selectedShape.x / 1000) * 100}%`,
-                    top: `${(selectedShape.y / 580) * 100}%`,
-                    width: `${(selectedShape.width / 1000) * 100}%`,
-                    height: `${(selectedShape.height / 580) * 100}%`
+                    left: `${(selectedShape.x / canvasSize.width) * 100}%`,
+                    top: `${(selectedShape.y / canvasSize.height) * 100}%`,
+                    width: `${(selectedShape.width / canvasSize.width) * 100}%`,
+                    height: `${(selectedShape.height / canvasSize.height) * 100}%`
                   }}
                 >
                   {(
@@ -5135,12 +5411,12 @@ export const NetworkTopologySimulator: React.FC = () => {
                         if (rect.width <= 0 || rect.height <= 0) return;
 
                         const startCanvasX = Math.min(
-                          1000,
-                          Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000)
+                          canvasSize.width,
+                          Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasSize.width)
                         );
                         const startCanvasY = Math.min(
-                          580,
-                          Math.max(0, ((e.clientY - rect.top) / rect.height) * 580)
+                          canvasSize.height,
+                          Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasSize.height)
                         );
 
                         shapeResizeStateRef.current = {
@@ -5171,8 +5447,8 @@ export const NetworkTopologySimulator: React.FC = () => {
               {activeShapeResizeInfo && (
                 <div
                   style={{
-                    left: `${(activeShapeResizeInfo.x / 1000) * 100}%`,
-                    top: `${Math.max(4, ((activeShapeResizeInfo.y - 12) / 580) * 100)}%`
+                    left: `${(activeShapeResizeInfo.x / canvasSize.width) * 100}%`,
+                    top: `${Math.max(2, ((activeShapeResizeInfo.y - 12) / canvasSize.height) * 100)}%`
                   }}
                   className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[11px] font-mono font-bold tabular-nums shadow-md pointer-events-none z-40 whitespace-nowrap"
                 >
@@ -5184,8 +5460,8 @@ export const NetworkTopologySimulator: React.FC = () => {
               {activeSnapGuides?.readout && (
                 <div
                   style={{
-                    left: `${(activeSnapGuides.readout.x / 1000) * 100}%`,
-                    top: `${Math.max(5, (activeSnapGuides.readout.y / 580) * 100)}%`
+                    left: `${(activeSnapGuides.readout.x / canvasSize.width) * 100}%`,
+                    top: `${Math.max(2, (activeSnapGuides.readout.y / canvasSize.height) * 100)}%`
                   }}
                   className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 text-[10px] font-mono font-bold tabular-nums shadow-md pointer-events-none z-40 whitespace-nowrap"
                 >
@@ -5198,15 +5474,15 @@ export const NetworkTopologySimulator: React.FC = () => {
                 <div
                   className="absolute border-2 border-dashed border-blue-600 bg-blue-500/12 dark:border-cyan-400 dark:bg-cyan-400/15 rounded-md pointer-events-none z-30"
                   style={{
-                    left: `${(Math.min(selectionBox.startX, selectionBox.currentX) / 1000) * 100}%`,
-                    top: `${(Math.min(selectionBox.startY, selectionBox.currentY) / 580) * 100}%`,
-                    width: `${(Math.abs(selectionBox.currentX - selectionBox.startX) / 1000) * 100}%`,
-                    height: `${(Math.abs(selectionBox.currentY - selectionBox.startY) / 580) * 100}%`
+                    left: `${(Math.min(selectionBox.startX, selectionBox.currentX) / canvasSize.width) * 100}%`,
+                    top: `${(Math.min(selectionBox.startY, selectionBox.currentY) / canvasSize.height) * 100}%`,
+                    width: `${(Math.abs(selectionBox.currentX - selectionBox.startX) / canvasSize.width) * 100}%`,
+                    height: `${(Math.abs(selectionBox.currentY - selectionBox.startY) / canvasSize.height) * 100}%`
                   }}
                 >
                   <div
                     className={`absolute ${
-                      Math.max(selectionBox.startY, selectionBox.currentY) > 540
+                      Math.max(selectionBox.startY, selectionBox.currentY) > canvasSize.height - 40
                         ? '-top-6'
                         : '-bottom-6'
                     } right-0 px-2 py-0.5 rounded-md bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 text-[10px] font-mono font-bold tabular-nums shadow-md whitespace-nowrap`}
@@ -5221,10 +5497,10 @@ export const NetworkTopologySimulator: React.FC = () => {
                 <div
                   className="absolute border-2 border-dashed border-blue-500/80 dark:border-cyan-400/80 bg-blue-500/[0.03] dark:bg-cyan-400/[0.04] rounded-2xl pointer-events-none z-20"
                   style={{
-                    left: `${(selectedGroupBounds.left / 1000) * 100}%`,
-                    top: `${(selectedGroupBounds.top / 580) * 100}%`,
-                    width: `${((selectedGroupBounds.right - selectedGroupBounds.left) / 1000) * 100}%`,
-                    height: `${((selectedGroupBounds.bottom - selectedGroupBounds.top) / 580) * 100}%`
+                    left: `${(selectedGroupBounds.left / canvasSize.width) * 100}%`,
+                    top: `${(selectedGroupBounds.top / canvasSize.height) * 100}%`,
+                    width: `${((selectedGroupBounds.right - selectedGroupBounds.left) / canvasSize.width) * 100}%`,
+                    height: `${((selectedGroupBounds.bottom - selectedGroupBounds.top) / canvasSize.height) * 100}%`
                   }}
                 >
                   <div
@@ -5266,7 +5542,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                     onPointerDown={(e) => startGroupDrag(e)}
                     onClick={(e) => e.stopPropagation()}
                     className={`absolute left-1/2 -translate-x-1/2 ${
-                      selectedGroupBounds.bottom > 542
+                      selectedGroupBounds.bottom > canvasSize.height - 38
                         ? 'top-1.5'
                         : selectedGroupBounds.top < 36
                         ? '-top-3.5'
@@ -5283,8 +5559,8 @@ export const NetworkTopologySimulator: React.FC = () => {
               {activeRotationInfo && (
                 <div
                   style={{
-                    left: `${(activeRotationInfo.x / 1000) * 100}%`,
-                    top: `${Math.max(4, ((activeRotationInfo.y - 54) / 580) * 100)}%`
+                    left: `${(activeRotationInfo.x / canvasSize.width) * 100}%`,
+                    top: `${Math.max(2, ((activeRotationInfo.y - 54) / canvasSize.height) * 100)}%`
                   }}
                   className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[11px] font-mono font-bold tabular-nums shadow-md pointer-events-none z-40 whitespace-nowrap"
                 >
@@ -5308,7 +5584,7 @@ export const NetworkTopologySimulator: React.FC = () => {
 
               {/* SVG Links & Packet Flow Layer */}
               <svg
-                viewBox="0 0 1000 580"
+                viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`}
                 className="absolute inset-0 w-full h-full pointer-events-none z-[2]"
                 preserveAspectRatio="none"
               >
@@ -5573,7 +5849,7 @@ export const NetworkTopologySimulator: React.FC = () => {
               {/* Magnetic Interface Port Socket Overlay during Cable Mode */}
               {tool === 'cable' && (
                 <svg
-                  viewBox="0 0 1000 580"
+                  viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`}
                   className="absolute inset-0 w-full h-full pointer-events-none z-[25]"
                   preserveAspectRatio="none"
                 >
@@ -5696,8 +5972,8 @@ export const NetworkTopologySimulator: React.FC = () => {
                     return (
                       <div
                         style={{
-                          left: `${(st.x / 1000) * 100}%`,
-                          top: `${Math.max(4, ((st.y - 16) / 580) * 100)}%`
+                          left: `${(st.x / canvasSize.width) * 100}%`,
+                          top: `${Math.max(2, ((st.y - 16) / canvasSize.height) * 100)}%`
                         }}
                         className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 text-[10px] font-mono font-bold shadow-md pointer-events-none z-40 whitespace-nowrap"
                       >
@@ -5710,8 +5986,8 @@ export const NetworkTopologySimulator: React.FC = () => {
                     return (
                       <div
                         style={{
-                          left: `${(bt.x / 1000) * 100}%`,
-                          top: `${Math.max(4, ((bt.y - 38) / 580) * 100)}%`
+                          left: `${(bt.x / canvasSize.width) * 100}%`,
+                          top: `${Math.max(2, ((bt.y - 38) / canvasSize.height) * 100)}%`
                         }}
                         className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-mono font-bold shadow-md pointer-events-none z-40 whitespace-nowrap"
                       >
@@ -5731,8 +6007,8 @@ export const NetworkTopologySimulator: React.FC = () => {
                     return (
                       <div
                         style={{
-                          left: `${(hAnchor.x / 1000) * 100}%`,
-                          top: `${Math.max(4, ((hAnchor.y - 14) / 580) * 100)}%`
+                          left: `${(hAnchor.x / canvasSize.width) * 100}%`,
+                          top: `${Math.max(2, ((hAnchor.y - 14) / canvasSize.height) * 100)}%`
                         }}
                         className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 text-[10px] font-mono font-bold shadow-md pointer-events-none z-40 whitespace-nowrap"
                       >
@@ -5768,7 +6044,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                     {/* Dashed association line when dragging or viewing a custom-positioned label */}
                     {(draggingLabelDeviceId === dev.id || (isSelected && hasCustomLabelOffset)) && (
                       <svg
-                        viewBox="0 0 1000 580"
+                        viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`}
                         preserveAspectRatio="none"
                         className="absolute inset-0 w-full h-full pointer-events-none z-[9]"
                       >
@@ -5789,8 +6065,8 @@ export const NetworkTopologySimulator: React.FC = () => {
                     <div
                       data-device-id={dev.id}
                       style={{
-                        left: `${(dev.x / 1000) * 100}%`,
-                        top: `${(dev.y / 580) * 100}%`
+                        left: `${(dev.x / canvasSize.width) * 100}%`,
+                        top: `${(dev.y / canvasSize.height) * 100}%`
                       }}
                       title={
                         tool === 'cable'
@@ -5818,8 +6094,14 @@ export const NetworkTopologySimulator: React.FC = () => {
                         const rect = canvas.getBoundingClientRect();
                         if (rect.width <= 0 || rect.height <= 0) return;
 
-                        const startCanvasX = Math.min(1000, Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000));
-                        const startCanvasY = Math.min(580, Math.max(0, ((e.clientY - rect.top) / rect.height) * 580));
+                        const startCanvasX = Math.min(
+                          canvasSize.width,
+                          Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasSize.width)
+                        );
+                        const startCanvasY = Math.min(
+                          canvasSize.height,
+                          Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasSize.height)
+                        );
 
                         const activeGroupIds = selectedDeviceIds.includes(dev.id)
                           ? selectedDeviceIds
@@ -5932,8 +6214,8 @@ export const NetworkTopologySimulator: React.FC = () => {
                     {/* Independently Movable & Editable Device Label Pill */}
                     <div
                       style={{
-                        left: `${((dev.x + labelOx) / 1000) * 100}%`,
-                        top: `${((dev.y + 34 + labelOy) / 580) * 100}%`
+                        left: `${((dev.x + labelOx) / canvasSize.width) * 100}%`,
+                        top: `${((dev.y + 34 + labelOy) / canvasSize.height) * 100}%`
                       }}
                       className={`absolute -translate-x-1/2 ${
                         editingDeviceLabelId === dev.id || draggingLabelDeviceId === dev.id
@@ -5981,8 +6263,14 @@ export const NetworkTopologySimulator: React.FC = () => {
                             const rect = canvas.getBoundingClientRect();
                             if (rect.width <= 0 || rect.height <= 0) return;
 
-                            const startCanvasX = Math.min(1000, Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000));
-                            const startCanvasY = Math.min(580, Math.max(0, ((e.clientY - rect.top) / rect.height) * 580));
+                            const startCanvasX = Math.min(
+                              canvasSize.width,
+                              Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasSize.width)
+                            );
+                            const startCanvasY = Math.min(
+                              canvasSize.height,
+                              Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasSize.height)
+                            );
 
                             setSelectedDeviceIds([dev.id]);
                             setSelectedDeviceId(dev.id);
@@ -6061,8 +6349,8 @@ export const NetworkTopologySimulator: React.FC = () => {
               {paletteDropPreview && (
                 <div
                   style={{
-                    left: `${(paletteDropPreview.x / 1000) * 100}%`,
-                    top: `${(paletteDropPreview.y / 580) * 100}%`
+                    left: `${(paletteDropPreview.x / canvasSize.width) * 100}%`,
+                    top: `${(paletteDropPreview.y / canvasSize.height) * 100}%`
                   }}
                   className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none z-40"
                 >
@@ -6089,8 +6377,8 @@ export const NetworkTopologySimulator: React.FC = () => {
                   <div
                     key={lbl.id}
                     style={{
-                      left: `${(lbl.x / 1000) * 100}%`,
-                      top: `${(lbl.y / 580) * 100}%`
+                      left: `${(lbl.x / canvasSize.width) * 100}%`,
+                      top: `${(lbl.y / canvasSize.height) * 100}%`
                     }}
                     className={`absolute -translate-x-1/2 -translate-y-1/2 ${
                       isEditing || isLblSelected ? 'z-[26]' : 'z-[24]'
@@ -6139,8 +6427,14 @@ export const NetworkTopologySimulator: React.FC = () => {
                           const rect = canvas.getBoundingClientRect();
                           if (rect.width <= 0 || rect.height <= 0) return;
 
-                          const startCanvasX = Math.min(1000, Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000));
-                          const startCanvasY = Math.min(580, Math.max(0, ((e.clientY - rect.top) / rect.height) * 580));
+                          const startCanvasX = Math.min(
+                            canvasSize.width,
+                            Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasSize.width)
+                          );
+                          const startCanvasY = Math.min(
+                            canvasSize.height,
+                            Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasSize.height)
+                          );
 
                           setSelectedDiagramLabelId(lbl.id);
                           setSelectedShapeId(null);
@@ -6290,7 +6584,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                   type="button"
                   aria-label="Zoom out"
                   title="Zoom out"
-                  disabled={zoom <= 0.41}
+                  disabled={zoom <= 0.21}
                   onClick={() => zoomAtViewportCenter(zoom - 0.15)}
                   className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
                 >

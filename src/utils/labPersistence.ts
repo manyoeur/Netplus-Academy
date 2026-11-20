@@ -1,11 +1,18 @@
 import { SimDevice, SimDiagramLabel, SimLink, SimTopologyShape } from '../components/Lab/networkSimTypes';
 
+export const DEFAULT_LAB_CANVAS_WIDTH = 1000;
+export const DEFAULT_LAB_CANVAS_HEIGHT = 580;
+export const MAX_LAB_CANVAS_WIDTH = 4000;
+export const MAX_LAB_CANVAS_HEIGHT = 2500;
+
 export interface ActiveLabDraft {
   draftKey: string;
   userId: string;
   activeSavedLabId?: string;
   title?: string;
   presetId: string;
+  canvasWidth?: number;
+  canvasHeight?: number;
   devices: SimDevice[];
   links: SimLink[];
   shapes?: SimTopologyShape[];
@@ -18,6 +25,8 @@ export interface SavedLabRecord {
   userId: string;
   title: string;
   presetId: string;
+  canvasWidth?: number;
+  canvasHeight?: number;
   devices: SimDevice[];
   links: SimLink[];
   shapes?: SimTopologyShape[];
@@ -30,6 +39,55 @@ export interface SavedLabRecord {
   createdAt: string;
   updatedAt: string;
   syncStatus: 'cloud' | 'local';
+}
+
+export function normalizeCanvasDimensions(
+  rawWidth?: unknown,
+  rawHeight?: unknown
+): { width: number; height: number } {
+  const wNum = Number(rawWidth);
+  const hNum = Number(rawHeight);
+  const width = Number.isFinite(wNum)
+    ? Math.round(Math.min(MAX_LAB_CANVAS_WIDTH, Math.max(DEFAULT_LAB_CANVAS_WIDTH, wNum)))
+    : DEFAULT_LAB_CANVAS_WIDTH;
+  const height = Number.isFinite(hNum)
+    ? Math.round(Math.min(MAX_LAB_CANVAS_HEIGHT, Math.max(DEFAULT_LAB_CANVAS_HEIGHT, hNum)))
+    : DEFAULT_LAB_CANVAS_HEIGHT;
+  return { width, height };
+}
+
+export function computeRequiredCanvasSize(
+  devices: SimDevice[] = [],
+  shapes: SimTopologyShape[] = [],
+  labels: SimDiagramLabel[] = [],
+  requestedWidth?: number,
+  requestedHeight?: number
+): { width: number; height: number } {
+  const base = normalizeCanvasDimensions(requestedWidth, requestedHeight);
+  let reqW = base.width;
+  let reqH = base.height;
+
+  devices.forEach(dev => {
+    if (Number.isFinite(dev.x)) reqW = Math.max(reqW, Math.ceil(dev.x + 60));
+    if (Number.isFinite(dev.y)) reqH = Math.max(reqH, Math.ceil(dev.y + 60));
+  });
+  shapes.forEach(shape => {
+    if (Number.isFinite(shape.x) && Number.isFinite(shape.width)) {
+      reqW = Math.max(reqW, Math.ceil(shape.x + shape.width + 12));
+    }
+    if (Number.isFinite(shape.y) && Number.isFinite(shape.height)) {
+      reqH = Math.max(reqH, Math.ceil(shape.y + shape.height + 12));
+    }
+  });
+  labels.forEach(lbl => {
+    if (Number.isFinite(lbl.x)) reqW = Math.max(reqW, Math.ceil(lbl.x + 40));
+    if (Number.isFinite(lbl.y)) reqH = Math.max(reqH, Math.ceil(lbl.y + 24));
+  });
+
+  return {
+    width: Math.min(MAX_LAB_CANVAS_WIDTH, Math.max(DEFAULT_LAB_CANVAS_WIDTH, reqW)),
+    height: Math.min(MAX_LAB_CANVAS_HEIGHT, Math.max(DEFAULT_LAB_CANVAS_HEIGHT, reqH))
+  };
 }
 
 const IDB_NAME = 'netplus_academy_labs_idb_v1';
@@ -59,7 +117,7 @@ function stripUndefinedDeep<T>(val: T): T {
 }
 
 export function sanitizeDevicesForStorage(devices: SimDevice[]): SimDevice[] {
-  return devices.slice(0, 40).map(dev => {
+  return devices.slice(0, 80).map(dev => {
     const rawRot = Number(dev.rotation);
     const normRot = Number.isFinite(rawRot) ? ((Math.round(rawRot) % 360) + 360) % 360 : 0;
     const rawLx = Number(dev.labelOffsetX);
@@ -87,7 +145,7 @@ export function sanitizeDevicesForStorage(devices: SimDevice[]): SimDevice[] {
 }
 
 export function sanitizeLinksForStorage(links: SimLink[]): SimLink[] {
-  return links.slice(0, 80).map(link =>
+  return links.slice(0, 160).map(link =>
     stripUndefinedDeep({
       id: String(link.id).slice(0, 128),
       cableType: link.cableType,
@@ -99,16 +157,22 @@ export function sanitizeLinksForStorage(links: SimLink[]): SimLink[] {
   );
 }
 
-export function sanitizeShapesForStorage(shapes: SimTopologyShape[] | undefined): SimTopologyShape[] {
+export function sanitizeShapesForStorage(
+  shapes: SimTopologyShape[] | undefined,
+  maxWidth: number = MAX_LAB_CANVAS_WIDTH,
+  maxHeight: number = MAX_LAB_CANVAS_HEIGHT
+): SimTopologyShape[] {
   if (!Array.isArray(shapes)) return [];
-  return shapes.slice(0, 40).map(shape =>
+  const safeMaxW = Math.max(DEFAULT_LAB_CANVAS_WIDTH, Math.min(MAX_LAB_CANVAS_WIDTH, maxWidth));
+  const safeMaxH = Math.max(DEFAULT_LAB_CANVAS_HEIGHT, Math.min(MAX_LAB_CANVAS_HEIGHT, maxHeight));
+  return shapes.slice(0, 60).map(shape =>
     stripUndefinedDeep({
       id: String(shape.id).slice(0, 128),
       kind: shape.kind === 'circle' ? ('circle' as const) : ('rectangle' as const),
-      x: Math.round(Math.min(980, Math.max(0, Number(shape.x) || 0))),
-      y: Math.round(Math.min(560, Math.max(0, Number(shape.y) || 0))),
-      width: Math.round(Math.min(990, Math.max(50, Number(shape.width) || 180))),
-      height: Math.round(Math.min(570, Math.max(40, Number(shape.height) || 120))),
+      x: Math.round(Math.min(safeMaxW - 20, Math.max(0, Number(shape.x) || 0))),
+      y: Math.round(Math.min(safeMaxH - 20, Math.max(0, Number(shape.y) || 0))),
+      width: Math.round(Math.min(safeMaxW - 10, Math.max(50, Number(shape.width) || 180))),
+      height: Math.round(Math.min(safeMaxH - 10, Math.max(40, Number(shape.height) || 120))),
       fillColor: String(shape.fillColor || 'transparent').slice(0, 32),
       fillOpacity: Math.min(1, Math.max(0, Number.isFinite(Number(shape.fillOpacity)) ? Number(shape.fillOpacity) : 0.32)),
       borderColor: String(shape.borderColor || '#64748b').slice(0, 32),
@@ -125,16 +189,22 @@ export function sanitizeShapesForStorage(shapes: SimTopologyShape[] | undefined)
   );
 }
 
-export function sanitizeLabelsForStorage(labels: SimDiagramLabel[] | undefined): SimDiagramLabel[] {
+export function sanitizeLabelsForStorage(
+  labels: SimDiagramLabel[] | undefined,
+  maxWidth: number = MAX_LAB_CANVAS_WIDTH,
+  maxHeight: number = MAX_LAB_CANVAS_HEIGHT
+): SimDiagramLabel[] {
   if (!Array.isArray(labels)) return [];
+  const safeMaxW = Math.max(DEFAULT_LAB_CANVAS_WIDTH, Math.min(MAX_LAB_CANVAS_WIDTH, maxWidth));
+  const safeMaxH = Math.max(DEFAULT_LAB_CANVAS_HEIGHT, Math.min(MAX_LAB_CANVAS_HEIGHT, maxHeight));
   return labels
-    .slice(0, 60)
+    .slice(0, 80)
     .map(item =>
       stripUndefinedDeep({
         id: String(item.id).slice(0, 128),
         text: String(item.text || '').slice(0, 160),
-        x: Math.round(Math.min(980, Math.max(20, Number(item.x) || 500))),
-        y: Math.round(Math.min(565, Math.max(15, Number(item.y) || 290))),
+        x: Math.round(Math.min(safeMaxW - 20, Math.max(20, Number(item.x) || 500))),
+        y: Math.round(Math.min(safeMaxH - 15, Math.max(15, Number(item.y) || 290))),
         color: typeof item.color === 'string' && item.color.trim() ? item.color.trim().slice(0, 32) : undefined,
         bgColor: typeof item.bgColor === 'string' && item.bgColor.trim() ? item.bgColor.trim().slice(0, 32) : undefined,
         fontSize: Math.min(20, Math.max(10, Math.round(Number(item.fontSize) || 12))),

@@ -1759,18 +1759,12 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                     ? 'Show Course Outline'
                     : 'Collapse Course Outline'
                 }
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:border-emerald-500 dark:hover:border-emerald-400 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                className="inline-flex items-center justify-center p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:border-emerald-500 dark:hover:border-emerald-400 text-slate-700 dark:text-slate-200 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
               >
                 {isOutlineSidebarCollapsed ? (
-                  <>
-                    <PanelLeftOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                    <span>Course Outline</span>
-                  </>
+                  <PanelLeftOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                 ) : (
-                  <>
-                    <PanelLeftClose className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-                    <span className="hidden sm:inline">Collapse Outline</span>
-                  </>
+                  <PanelLeftClose className="w-4 h-4 text-slate-600 dark:text-slate-300" />
                 )}
               </button>
 

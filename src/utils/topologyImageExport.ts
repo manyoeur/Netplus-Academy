@@ -14,6 +14,8 @@ import {
   maskToPrefix
 } from '../components/Lab/networkSimEngine';
 
+import { computeRequiredCanvasSize } from './labPersistence';
+
 interface TopologyExportOptions {
   title: string;
   subtitle?: string;
@@ -21,6 +23,8 @@ interface TopologyExportOptions {
   links: SimLink[];
   shapes?: SimTopologyShape[];
   labels?: SimDiagramLabel[];
+  canvasWidth?: number;
+  canvasHeight?: number;
   isDark?: boolean;
 }
 
@@ -56,15 +60,32 @@ export function buildTopologySvgString(
   options: TopologyExportOptions,
   pixelScale: number = 1
 ): string {
-  const { title, subtitle, devices, links, shapes = [], labels = [], isDark = false } = options;
+  const {
+    title,
+    subtitle,
+    devices,
+    links,
+    shapes = [],
+    labels = [],
+    canvasWidth,
+    canvasHeight,
+    isDark = false
+  } = options;
 
-  const logicalW = 1000;
+  const resolvedSize = computeRequiredCanvasSize(
+    devices,
+    shapes,
+    labels,
+    canvasWidth,
+    canvasHeight
+  );
+  const logicalW = resolvedSize.width;
   const headerH = 64;
-  const canvasH = 580;
+  const canvasH = resolvedSize.height;
   const footerH = 46;
-  const logicalH = headerH + canvasH + footerH; // 690
-  const outputW = logicalW * pixelScale;
-  const outputH = logicalH * pixelScale;
+  const logicalH = headerH + canvasH + footerH;
+  const outputW = Math.round(logicalW * pixelScale);
+  const outputH = Math.round(logicalH * pixelScale);
 
   const palette = isDark
     ? {
@@ -449,7 +470,16 @@ export function exportTopologyAsSvg(options: TopologyExportOptions): string {
 }
 
 export async function exportTopologyAsPng(options: TopologyExportOptions): Promise<string> {
-  const scale = 2; // High-resolution 2000 x 1380 PNG
+  const resolvedSize = computeRequiredCanvasSize(
+    options.devices,
+    options.shapes,
+    options.labels,
+    options.canvasWidth,
+    options.canvasHeight
+  );
+  const logicalW = resolvedSize.width;
+  const logicalH = 64 + resolvedSize.height + 46;
+  const scale = logicalW > 2000 ? 1.5 : 2;
   const svgContent = buildTopologySvgString(options, scale);
   const filename = `${toDiagramFileSlug(options.title)}.png`;
 
@@ -465,8 +495,8 @@ export async function exportTopologyAsPng(options: TopologyExportOptions): Promi
     });
 
     const canvas = document.createElement('canvas');
-    canvas.width = 1000 * scale;
-    canvas.height = 690 * scale;
+    canvas.width = Math.round(logicalW * scale);
+    canvas.height = Math.round(logicalH * scale);
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       throw new Error('Canvas 2D context unavailable');
