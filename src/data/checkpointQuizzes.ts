@@ -497,173 +497,9 @@ const MODULE_CHECKPOINT_QUESTIONS: Record<string, { title: string; questions: Qu
   }
 };
 
-const CATEGORY_FALLBACK_QUESTIONS: Record<Course['category'], QuizQuestion[]> = {
-  'Enterprise Routing & Switching': [
-    {
-      id: 'fb-routing-1',
-      question: 'Which protocol dynamically computes shortest-path trees inside an enterprise OSPF domain?',
-      options: ['Bellman-Ford', 'Dijkstra SPF', 'Spanning Tree', 'ARP'],
-      correctAnswerIndex: 1,
-      explanation: 'OSPF is a link-state routing protocol that runs Dijkstra Shortest Path First (SPF) against the LSDB.'
-    },
-    {
-      id: 'fb-routing-2',
-      question: 'Which IEEE standard tags frames belonging to multiple VLANs across a single switch trunk link?',
-      options: ['IEEE 802.1Q', 'IEEE 802.11ax', 'IEEE 802.3af', 'IEEE 802.1X'],
-      correctAnswerIndex: 0,
-      explanation: 'IEEE 802.1Q inserts a 4-byte VLAN tag header into Ethernet frames traversing trunk links.'
-    },
-    {
-      id: 'fb-routing-3',
-      question: 'Which Cisco IOS command provides an immediate summary of interface IP addresses and Layer 1/Layer 2 up/down status?',
-      options: ['show ip interface brief', 'show version', 'show arp', 'show vlan id 1'],
-      correctAnswerIndex: 0,
-      explanation: 'show ip interface brief summarizes every interface’s IP address, physical status, and line protocol state in one table.'
-    },
-    {
-      id: 'fb-routing-4',
-      question: 'Which protocol prevents Layer 2 switching loops by placing redundant switch links into a blocking state?',
-      options: ['DHCP', 'Rapid Spanning Tree Protocol (802.1w)', 'SNMPv3', 'BGP'],
-      correctAnswerIndex: 1,
-      explanation: 'RSTP (802.1w) elects a Root Bridge and blocks redundant forwarding paths to prevent broadcast storms and MAC table instability.'
-    }
-  ],
-  'Network Security & Firewalls': [
-    {
-      id: 'fb-sec-1',
-      question: 'In an IPsec VPN, which phase negotiates the encrypted SA used to protect actual user data traffic?',
-      options: ['IKE Phase 1', 'IKEv2 / IPsec Phase 2 (Quick / Child SA)', 'ARP Resolution', 'TCP Syn-Flood Mitigation'],
-      correctAnswerIndex: 1,
-      explanation: 'Phase 1 establishes the secure control channel (ISAKMP/IKE SA), and Phase 2 establishes the IPsec SA that encrypts user payloads.'
-    },
-    {
-      id: 'fb-sec-2',
-      question: 'Which encryption cipher provides both confidentiality and integrity authentication in modern IPsec suites?',
-      options: ['DES-CBC', 'RC4', 'AES-256-GCM', 'ROT13'],
-      correctAnswerIndex: 2,
-      explanation: 'AES-GCM is an authenticated encryption (AEAD) cipher recommended for high-throughput IKEv2 IPsec tunnels.'
-    },
-    {
-      id: 'fb-sec-3',
-      question: 'What is the default action at the end of any Cisco Access Control List when a packet matches no prior rules?',
-      options: ['Permit any', 'Implicit deny any', 'Forward to default gateway', 'Enable NAT overload'],
-      correctAnswerIndex: 1,
-      explanation: 'Every Cisco ACL appends an invisible implicit deny any statement at the bottom.'
-    },
-    {
-      id: 'fb-sec-4',
-      question: 'Which stateful firewall inspection behavior allows legitimate return traffic back through an untrusted interface?',
-      options: [
-        'Dynamic session state tracking',
-        'Disabling reverse path forwarding',
-        'Converting TCP packets to UDP',
-        'Static ARP poisoning'
-      ],
-      correctAnswerIndex: 0,
-      explanation: 'Stateful firewalls maintain a connection state table so return packets matching an active outbound flow are permitted dynamically.'
-    }
-  ],
-  'Cloud & SD-WAN': [
-    {
-      id: 'fb-sdwan-1',
-      question: 'In Cisco Catalyst SD-WAN, which component distributes routing, policy, and security keys across the control plane using OMP?',
-      options: ['vEdge', 'vSmart', 'vManage', 'BGP Route Reflector only'],
-      correctAnswerIndex: 1,
-      explanation: 'vSmart controllers form DTLS/TLS control connections with edge routers and distribute OMP routes and policies.'
-    },
-    {
-      id: 'fb-sdwan-2',
-      question: 'What capability allows SD-WAN edge routers to route SaaS traffic locally out to the internet instead of backhauling to HQ?',
-      options: ['Direct Internet Access (DIA)', 'Spanning Tree Root Guard', 'Private VLANs', 'Proxy ARP'],
-      correctAnswerIndex: 0,
-      explanation: 'Direct Internet Access (DIA) breaks out trusted cloud/SaaS flows locally at the branch to reduce latency and WAN congestion.'
-    },
-    {
-      id: 'fb-sdwan-3',
-      question: 'Which mechanism allows SD-WAN policies to shift voice traffic off a degraded MPLS link automatically?',
-      options: ['Application-Aware Routing with BFD SLA probes', 'Static default routes only', 'Port security sticky MAC', 'Disabling NAT'],
-      correctAnswerIndex: 0,
-      explanation: 'Application-Aware Routing monitors BFD loss, latency, and jitter metrics to steer SLA-sensitive traffic across healthy transports.'
-    },
-    {
-      id: 'fb-sdwan-4',
-      question: 'Which cloud interconnect service provides dedicated private Layer 2/Layer 3 connectivity directly into AWS VPCs?',
-      options: ['AWS Direct Connect', 'Amazon S3 Glacier', 'AWS CloudTrail', 'Route 53 Public DNS'],
-      correctAnswerIndex: 0,
-      explanation: 'AWS Direct Connect establishes a dedicated private physical link between an on-premises network or colocation facility and AWS.'
-    }
-  ],
-  'Packet Analysis & Forensics': [
-    {
-      id: 'fb-pcap-1',
-      question: 'In Wireshark, which TCP flag sequence represents a healthy three-way handshake?',
-      options: ['FIN -> ACK -> RST', 'SYN -> SYN, ACK -> ACK', 'PSH -> URG -> FIN', 'ACK -> SYN -> RST'],
-      correctAnswerIndex: 1,
-      explanation: 'A standard TCP connection initiates with SYN from client, SYN-ACK from server, and final ACK from client.'
-    },
-    {
-      id: 'fb-pcap-2',
-      question: 'What condition is indicated by consecutive TCP ZeroWindow frames in a packet capture?',
-      options: [
-        'DNS resolution succeeded immediately',
-        'The receiving host buffer is full and cannot accept more incoming TCP bytes',
-        'A router elected itself as OSPF DR',
-        'TLS 1.3 key exchange finished'
-      ],
-      correctAnswerIndex: 1,
-      explanation: 'TCP ZeroWindow signals that the receiver’s receive buffer has reached capacity and the sender must pause transmission.'
-    },
-    {
-      id: 'fb-pcap-3',
-      question: 'Which Wireshark display filter isolates all traffic involving IP host 10.0.0.1 regardless of direction?',
-      options: ['ip.addr == 10.0.0.1', 'ip.src != 10.0.0.1', 'tcp.port == 10', 'arp.opcode == 1'],
-      correctAnswerIndex: 0,
-      explanation: 'ip.addr == 10.0.0.1 matches packets where 10.0.0.1 appears as either source or destination.'
-    },
-    {
-      id: 'fb-pcap-4',
-      question: 'Which Wireshark display filter isolates DNS queries that returned a domain-not-found (NXDOMAIN) error?',
-      options: ['dns.flags.rcode == 3', 'tcp.port == 53 && tcp.flags.syn == 1', 'http.response.code == 200', 'icmp.type == 8'],
-      correctAnswerIndex: 0,
-      explanation: 'DNS response code (rcode) 3 corresponds to NXDOMAIN (Non-Existent Domain).'
-    }
-  ],
-  'Automation & NetDevOps': [
-    {
-      id: 'fb-auto-1',
-      question: 'Why are idempotent automation playbooks essential when pushing changes to production routers?',
-      options: [
-        'They reboot devices on every run',
-        'Running them repeatedly produces the same desired state without unintended drift',
-        'They disable SSH and RESTCONF',
-        'They require manual CLI copy-paste per device'
-      ],
-      correctAnswerIndex: 1,
-      explanation: 'Idempotency guarantees that applying a playbook multiple times converges to the target configuration safely.'
-    },
-    {
-      id: 'fb-auto-2',
-      question: 'Which protocol pairs YANG data models with structured JSON/XML over HTTPS for network device automation?',
-      options: ['Telnet', 'TFTP', 'RESTCONF', 'CDP'],
-      correctAnswerIndex: 2,
-      explanation: 'RESTCONF exposes YANG-modeled configuration and operational data via standard HTTP methods over TLS.'
-    },
-    {
-      id: 'fb-auto-3',
-      question: 'Which HTTP method in RESTCONF is typically used to retrieve operational state or configuration data without modifying the device?',
-      options: ['POST', 'GET', 'DELETE', 'PATCH'],
-      correctAnswerIndex: 1,
-      explanation: 'GET performs a safe, read-only query of YANG-modeled configuration or operational data.'
-    },
-    {
-      id: 'fb-auto-4',
-      question: 'Which protocol runs over SSH (port 830) and supports candidate datastores with atomic commit and rollback operations?',
-      options: ['SNMPv1', 'NETCONF', 'TFTP', 'Syslog'],
-      correctAnswerIndex: 1,
-      explanation: 'NETCONF uses RPCs over SSH (TCP 830) and provides running/candidate/startup datastores with validated commits and rollback.'
-    }
-  ]
-};
+export function hasModuleBuiltinCheckpoint(moduleId: string): boolean {
+  return Boolean(MODULE_CHECKPOINT_QUESTIONS[moduleId]);
+}
 
 export function getBetweenModuleQuiz(
   course: Course,
@@ -706,23 +542,14 @@ export function getBetweenModuleQuiz(
     };
   }
 
-  const fallback = CATEGORY_FALLBACK_QUESTIONS[course.category] || CATEGORY_FALLBACK_QUESTIONS['Enterprise Routing & Switching'];
-  return {
-    id: `${course.id}:${fromModule.id}->${toModule.id}`,
-    title: `Knowledge Check · ${fromModule.title}`,
-    subtitle: `Quick retention check before continuing to ${toModule.title}.`,
-    passingScore: 67,
-    questions: fallback.map((q, idx) => ({
-      ...q,
-      id: `${fromModule.id}-cp-${idx + 1}`
-    }))
-  };
+  // Do not synthesize generic fallback quizzes when the author did not add a quiz/checkpoint
+  return null;
 }
 
 /**
- * Resolves a multiple-choice quiz for ANY module in Quiz Mode (including dedicated quiz modules
- * and the final module of a course), sharing canonical storage keys with between-module checkpoints
- * so scores stay synchronized across Study Mode and Quiz Mode.
+ * Resolves a multiple-choice quiz for a module ONLY when the module is a dedicated quiz
+ * module or has an explicitly configured / built-in retention check that has not been disabled.
+ * Shares canonical storage keys with between-module checkpoints so scores stay synchronized.
  */
 export function getModuleQuiz(
   course: Course,
@@ -733,14 +560,25 @@ export function getModuleQuiz(
 
   const defaultPass = course.gradingCriteria?.quizPassingScore ?? 70;
 
-  if (module.type === 'quiz' && module.quiz && module.quiz.questions.length > 0) {
-    return {
-      id: `module:${module.id}`,
-      title: module.title,
-      subtitle: module.summary || `Complete this graded assessment for ${course.code}.`,
-      passingScore: module.quiz.passingScore || defaultPass,
-      questions: module.quiz.questions
-    };
+  if (module.type === 'quiz') {
+    if (module.quiz && module.quiz.questions.length > 0) {
+      return {
+        id: `module:${module.id}`,
+        title: module.title,
+        subtitle: module.summary || `Complete this graded assessment for ${course.code}.`,
+        passingScore: module.quiz.passingScore || defaultPass,
+        questions: module.quiz.questions
+      };
+    }
+    return null;
+  }
+
+  // Respect explicit removal at module or course level
+  if (module.disableCheckpoint === true) {
+    return null;
+  }
+  if (course.disableRetentionChecks && module.disableCheckpoint !== false) {
+    return null;
   }
 
   const nextModule =
@@ -749,7 +587,7 @@ export function getModuleQuiz(
       : undefined;
 
   const sharedBetweenId =
-    nextModule && !course.disableRetentionChecks && module.disableCheckpoint !== true && nextModule.type !== 'quiz'
+    nextModule && nextModule.type !== 'quiz'
       ? `${course.id}:${module.id}->${nextModule.id}`
       : `module-quiz:${course.id}:${module.id}`;
 
@@ -774,20 +612,8 @@ export function getModuleQuiz(
     };
   }
 
-  const fallback =
-    CATEGORY_FALLBACK_QUESTIONS[course.category] ||
-    CATEGORY_FALLBACK_QUESTIONS['Enterprise Routing & Switching'];
-
-  return {
-    id: sharedBetweenId,
-    title: `Module ${moduleIndex + 1} Quiz · ${module.title}`,
-    subtitle: `Test your understanding of ${module.title} with multiple-choice practice questions.`,
-    passingScore: course.gradingCriteria?.quizPassingScore ?? 75,
-    questions: fallback.map((q, idx) => ({
-      ...q,
-      id: `${module.id}-qm-${idx + 1}`
-    }))
-  };
+  // Only show module quizzes when authored or mapped in the built-in module bank
+  return null;
 }
 
 /**
@@ -818,5 +644,6 @@ export function getPostVideoModuleQuiz(
       : `Achieve at least ${baseQuiz.passingScore}% to verify lecture mastery and complete this module.`
   };
 }
+
 
 

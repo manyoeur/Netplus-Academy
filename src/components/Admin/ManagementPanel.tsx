@@ -40,7 +40,10 @@ import {
   Check
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
-import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
+import {
+  getBetweenModuleQuiz,
+  hasModuleBuiltinCheckpoint
+} from '../../data/checkpointQuizzes';
 import { CourseModuleBuilder } from './CourseModuleBuilder';
 import { CourseThumbnail } from '../Courses/CourseThumbnail';
 import {
@@ -707,13 +710,20 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
           explanation: 'RFC 7348 assigns UDP destination port 4789 for VXLAN encapsulated traffic.'
         }
       ],
-      disableCheckpoint: Boolean(targetCourse?.disableRetentionChecks)
+      disableCheckpoint: true
     });
   };
 
   const openEditModuleModal = (courseId: string, mod: CourseModule) => {
     const targetCourse = courses.find(c => c.id === courseId);
     const breadcrumb = targetCourse ? getModuleSectionBreadcrumb(targetCourse, mod.id) : null;
+    const hasRetentionSource =
+      Boolean(mod.checkpointQuiz?.questions?.length) || hasModuleBuiltinCheckpoint(mod.id);
+    const hasActiveCheckpoint =
+      hasRetentionSource &&
+      mod.disableCheckpoint !== true &&
+      !(targetCourse?.disableRetentionChecks && mod.disableCheckpoint !== false);
+
     setModuleModalCourseId(courseId);
     setEditingModuleId(mod.id);
     setModuleForm({
@@ -733,7 +743,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       labVerification: mod.lab?.verificationCheck || 'show ip route',
       quizPassingScore: mod.quiz?.passingScore ?? 70,
       quizQuestions: mod.quiz?.questions ? mod.quiz.questions.map(q => ({ ...q, options: [...q.options] })) : [],
-      disableCheckpoint: Boolean(mod.disableCheckpoint || (targetCourse?.disableRetentionChecks && mod.disableCheckpoint !== false))
+      disableCheckpoint: !hasActiveCheckpoint
     });
   };
 
@@ -1062,8 +1072,31 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       ? targetCourse?.modules.find(m => m.id === editingModuleId)
       : undefined;
 
+    const moduleId = editingModuleId || `mod-${Date.now()}`;
+    const shouldSeedCheckpoint =
+      moduleForm.type !== 'quiz' &&
+      !moduleForm.disableCheckpoint &&
+      !existingModule?.checkpointQuiz?.questions?.length &&
+      !hasModuleBuiltinCheckpoint(moduleId);
+
+    const resolvedCheckpointQuiz = shouldSeedCheckpoint
+      ? {
+          title: `Retention Check: ${moduleForm.title.trim()}`,
+          passingScore: targetCourse?.gradingCriteria?.quizPassingScore ?? 70,
+          questions: [
+            {
+              id: `cp-q-${Date.now()}`,
+              question: `Key concept check from ${moduleForm.title.trim()}:`,
+              options: ['Option A', 'Option B', 'Option C', 'Option D'],
+              correctAnswerIndex: 0,
+              explanation: 'Immediate feedback explanation shown after selecting an option.'
+            }
+          ]
+        }
+      : existingModule?.checkpointQuiz;
+
     const modulePayload: CourseModule = {
-      id: editingModuleId || `mod-${Date.now()}`,
+      id: moduleId,
       title: moduleForm.title.trim(),
       chapterTitle: moduleForm.chapterTitle.trim() || undefined,
       mainContentTitle: moduleForm.mainContentTitle.trim() || undefined,
@@ -1071,7 +1104,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       durationMin: Number(moduleForm.durationMin) || 30,
       summary: moduleForm.summary.trim(),
       contentMarkdown: moduleForm.contentMarkdown,
-      checkpointQuiz: existingModule?.checkpointQuiz,
+      checkpointQuiz: resolvedCheckpointQuiz,
       disableCheckpoint: moduleForm.disableCheckpoint,
       ...(moduleForm.type === 'video'
         ? {
@@ -2584,6 +2617,13 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                         const nextM = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
                         return Boolean(nextM && getBetweenModuleQuiz(course, m, nextM));
                       });
+                      const hasRestorableChecks = course.modules.some((m, idx) => {
+                        const nextM = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
+                        if (!nextM || m.type === 'quiz' || nextM.type === 'quiz') return false;
+                        return Boolean(
+                          m.checkpointQuiz?.questions?.length || hasModuleBuiltinCheckpoint(m.id)
+                        );
+                      });
 
                       return (
                         <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
@@ -2618,7 +2658,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                   <span>{allCardChaptersExpanded ? 'Collapse All' : 'Expand All'}</span>
                                 </button>
                               )}
-                              {course.modules.length > 1 && (
+                              {course.modules.length > 1 && (hasAnyChecks || hasRestorableChecks) && (
                                 <button
                                   type="button"
                                   onClick={() => handleToggleAllCourseCheckpoints(course, hasAnyChecks)}

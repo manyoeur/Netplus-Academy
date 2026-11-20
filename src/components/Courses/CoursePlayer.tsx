@@ -550,11 +550,17 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const isViewingLockedContent =
     isStudentPaymentRequired && activeModuleIndex > 0;
 
-  // Resolve multiple-choice quizzes for every module in the course
+  // Resolve quizzes only for modules that explicitly have one (dedicated quiz modules or checkpoints)
   const moduleQuizzes = useMemo(
     () => course.modules.map((mod, idx) => getModuleQuiz(course, mod, idx)),
     [course]
   );
+
+  const quizzableModuleIndices = useMemo(
+    () => moduleQuizzes.map((q, idx) => (q ? idx : -1)).filter(idx => idx >= 0),
+    [moduleQuizzes]
+  );
+  const totalQuizCount = quizzableModuleIndices.length;
 
   const postVideoQuizzes = useMemo(
     () =>
@@ -875,6 +881,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   };
 
   const handleOpenModuleQuiz = (moduleIndex: number, origin: 'manual' | 'next-step' = 'manual') => {
+    if (!moduleQuizzes[moduleIndex]) return;
     flushCurrentModuleProgress();
     setSelectedOutlineNode({ level: 'module' });
     setOpenModuleEditorOnSelect(false);
@@ -887,7 +894,13 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const handleSwitchPlayerMode = (nextMode: 'study' | 'quiz') => {
     if (nextMode === playerMode && selectedOutlineNode.level === 'module') return;
     if (nextMode === 'quiz') {
-      handleOpenModuleQuiz(activeModuleIndex, 'manual');
+      if (totalQuizCount === 0) return;
+      const targetQuizIndex = moduleQuizzes[activeModuleIndex]
+        ? activeModuleIndex
+        : quizzableModuleIndices[0];
+      if (typeof targetQuizIndex === 'number') {
+        handleOpenModuleQuiz(targetQuizIndex, 'manual');
+      }
     } else {
       setQuizOrigin('manual');
       setSelectedOutlineNode({ level: 'module' });
@@ -944,19 +957,31 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
         }
       }
 
-      const nextIdx = activeModuleIndex + 1;
-      if (nextIdx < course.modules.length) {
-        setActiveModuleIndex(nextIdx);
-        if (quizOrigin === 'next-step') {
+      if (quizOrigin === 'next-step') {
+        const nextIdx = activeModuleIndex + 1;
+        if (nextIdx < course.modules.length) {
+          setActiveModuleIndex(nextIdx);
           setPlayerMode('study');
           setQuizOrigin('manual');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          setPlayerMode('study');
+          setQuizOrigin('manual');
+          if (progressPercent === 100) {
+            onViewCertificates();
+          }
         }
-        window.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
-        setPlayerMode('study');
-        setQuizOrigin('manual');
-        if (progressPercent === 100) {
-          onViewCertificates();
+        const nextQuizIdx = quizzableModuleIndices.find(idx => idx > activeModuleIndex);
+        if (typeof nextQuizIdx === 'number') {
+          setActiveModuleIndex(nextQuizIdx);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          setPlayerMode('study');
+          setQuizOrigin('manual');
+          if (progressPercent === 100) {
+            onViewCertificates();
+          }
         }
       }
       return;
@@ -964,16 +989,15 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
     flushCurrentModuleProgress();
 
-    // Video lecture mastery gate: require passing the post-module quiz before marking complete or advancing
+    // Video lecture mastery gate: only require passing the post-module quiz when one exists
     if (activeModule.type === 'video') {
       const videoQuiz = postVideoQuizzes[activeModuleIndex] || activeModuleQuiz;
-      const isVideoMastered = videoQuiz
-        ? Boolean(checkpointStore[course.id]?.[videoQuiz.id]?.passed)
-        : false;
-
-      if (!isVideoMastered && !(currentUser.role !== 'student' && instructorMasteryBypass)) {
-        setPostQuizModalModuleIndex(activeModuleIndex);
-        return;
+      if (videoQuiz) {
+        const isVideoMastered = Boolean(checkpointStore[course.id]?.[videoQuiz.id]?.passed);
+        if (!isVideoMastered && !(currentUser.role !== 'student' && instructorMasteryBypass)) {
+          setPostQuizModalModuleIndex(activeModuleIndex);
+          return;
+        }
       }
 
       completeModule(course.id, activeModule.id);
@@ -1045,48 +1069,50 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
         {/* Mode Switcher, Progress & Actions */}
         <div className="flex flex-wrap items-center justify-between lg:justify-end gap-3 shrink-0">
-          {/* Segmented Study Mode / Quiz Mode Toggle */}
-          <div
-            role="tablist"
-            aria-label="Course player mode"
-            className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={playerMode === 'study'}
-              onClick={() => handleSwitchPlayerMode('study')}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                playerMode === 'study'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
+          {/* Segmented Study Mode / Quiz Mode Toggle (Quiz Mode shown when course has quizzes) */}
+          {totalQuizCount > 0 && (
+            <div
+              role="tablist"
+              aria-label="Course player mode"
+              className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
             >
-              <BookOpen className="w-3.5 h-3.5 shrink-0" />
-              <span>Study Mode</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={playerMode === 'quiz'}
-              onClick={() => handleSwitchPlayerMode('quiz')}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                playerMode === 'quiz'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              <CheckSquare className="w-3.5 h-3.5 shrink-0" />
-              <span>Quiz Mode</span>
-              <span
-                className={`font-mono text-[10px] tabular-nums ${
-                  playerMode === 'quiz' ? 'text-blue-100' : 'text-slate-400 dark:text-slate-500'
+              <button
+                type="button"
+                role="tab"
+                aria-selected={playerMode === 'study'}
+                onClick={() => handleSwitchPlayerMode('study')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                  playerMode === 'study'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                {quizMastery.passedCount}/{course.modules.length}
-              </span>
-            </button>
-          </div>
+                <BookOpen className="w-3.5 h-3.5 shrink-0" />
+                <span>Study Mode</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={playerMode === 'quiz'}
+                onClick={() => handleSwitchPlayerMode('quiz')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                  playerMode === 'quiz'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <CheckSquare className="w-3.5 h-3.5 shrink-0" />
+                <span>Quiz Mode</span>
+                <span
+                  className={`font-mono text-[10px] tabular-nums ${
+                    playerMode === 'quiz' ? 'text-blue-100' : 'text-slate-400 dark:text-slate-500'
+                  }`}
+                >
+                  {quizMastery.passedCount}/{totalQuizCount}
+                </span>
+              </button>
+            </div>
+          )}
 
           {!isViewingLockedContent && (
             <button
@@ -2075,7 +2101,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                     </h3>
                     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 tabular-nums">
                       <span>
-                        Passed <strong className="text-slate-800 dark:text-slate-200">{quizMastery.passedCount}/{course.modules.length}</strong> modules
+                        Passed <strong className="text-slate-800 dark:text-slate-200">{quizMastery.passedCount}/{totalQuizCount}</strong> {totalQuizCount === 1 ? 'quiz' : 'quizzes'}
                       </span>
                       <span aria-hidden="true">·</span>
                       <span>
@@ -2135,11 +2161,13 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                   </div>
                 </div>
 
-                {/* Module-by-Module Quiz Switcher */}
+                {/* Module-by-Module Quiz Switcher (only modules with an actual quiz) */}
                 <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
-                  {course.modules.map((mod, idx) => {
+                  {quizzableModuleIndices.map((idx) => {
+                    const mod = course.modules[idx];
                     const qConfig = moduleQuizzes[idx];
-                    const res = qConfig ? checkpointStore[course.id]?.[qConfig.id] : undefined;
+                    if (!mod || !qConfig) return null;
+                    const res = checkpointStore[course.id]?.[qConfig.id];
                     const isSelected = idx === activeModuleIndex;
                     const modBlocked =
                       Boolean(getBlockingVideoForModule(idx)) &&
@@ -2150,7 +2178,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                       <button
                         key={mod.id}
                         type="button"
-                        onClick={() => handleSelectModule(idx)}
+                        onClick={() => handleOpenModuleQuiz(idx, 'manual')}
                         title={mod.title}
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono tabular-nums transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                           isSelected
@@ -2174,9 +2202,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                         <span>M{idx + 1}</span>
                         {res ? (
                           <span className="opacity-90">· {res.score}%</span>
-                        ) : qConfig ? (
+                        ) : (
                           <span className="opacity-70">· {qConfig.questions.length} Qs</span>
-                        ) : null}
+                        )}
                       </button>
                     );
                   })}
@@ -2194,20 +2222,27 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 requirePassToContinue={activeModule.type === 'video'}
                 previousModuleTitle={activeModule.title}
                 onProgressChange={handleActiveQuizProgressChange}
-                nextModuleTitle={
-                  activeModuleIndex < course.modules.length - 1
-                    ? course.modules[activeModuleIndex + 1]?.title
-                    : undefined
-                }
-                continueLabel={
-                  activeModuleIndex < course.modules.length - 1
-                    ? quizOrigin === 'next-step'
-                      ? `Continue to Module ${activeModuleIndex + 2}`
-                      : `Next: Module ${activeModuleIndex + 2} Quiz`
-                    : progressPercent === 100
+                nextModuleTitle={(() => {
+                  if (quizOrigin === 'next-step') {
+                    return activeModuleIndex < course.modules.length - 1
+                      ? course.modules[activeModuleIndex + 1]?.title
+                      : undefined;
+                  }
+                  const nextQuizIdx = quizzableModuleIndices.find(idx => idx > activeModuleIndex);
+                  return typeof nextQuizIdx === 'number' ? course.modules[nextQuizIdx]?.title : undefined;
+                })()}
+                continueLabel={(() => {
+                  if (quizOrigin === 'next-step' && activeModuleIndex < course.modules.length - 1) {
+                    return `Continue to Module ${activeModuleIndex + 2}`;
+                  }
+                  const nextQuizIdx = quizzableModuleIndices.find(idx => idx > activeModuleIndex);
+                  if (typeof nextQuizIdx === 'number') {
+                    return `Next: Module ${nextQuizIdx + 1} Quiz`;
+                  }
+                  return progressPercent === 100
                     ? 'Finish & View Certificate'
-                    : 'Return to Study Mode'
-                }
+                    : 'Return to Study Mode';
+                })()}
                 previousResult={checkpointStore[course.id]?.[activeModuleQuiz.id] || null}
                 allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
                 onComplete={(result) => {
@@ -2261,6 +2296,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                       passingScore={
                         (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)?.passingScore ?? 75
                       }
+                      hasPostQuiz={Boolean(postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)}
                       isQuizPassed={Boolean(
                         (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) &&
                           checkpointStore[course.id]?.[
@@ -2275,7 +2311,11 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                       }
                       onLectureCompleted={() => {
                         markVideoWatched(course.id, activeModule.id);
-                        setPostQuizModalModuleIndex(activeModuleIndex);
+                        if (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) {
+                          setPostQuizModalModuleIndex(activeModuleIndex);
+                        } else if (!isStudentPaymentRequired) {
+                          completeModule(course.id, activeModule.id);
+                        }
                       }}
                       onOpenPostQuiz={() => setPostQuizModalModuleIndex(activeModuleIndex)}
                       onStudyTimeTick={(seconds, modId) => recordStudyTime(seconds, 'course', modId)}
@@ -2528,18 +2568,24 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                     {isStudentPaymentRequired
                       ? `Pay $${course.price} & Unlock Next Modules`
                       : playerMode === 'quiz'
-                      ? activeModuleIndex < course.modules.length - 1
+                      ? quizOrigin === 'next-step' && activeModuleIndex < course.modules.length - 1
                         ? `Proceed to Module ${activeModuleIndex + 2}`
-                        : progressPercent === 100
-                        ? 'Finish & View Certificate'
-                        : 'Return to Study Mode'
+                        : (() => {
+                            const nextQuizIdx = quizzableModuleIndices.find(
+                              idx => idx > activeModuleIndex
+                            );
+                            if (typeof nextQuizIdx === 'number') {
+                              return `Next: Module ${nextQuizIdx + 1} Quiz`;
+                            }
+                            return progressPercent === 100
+                              ? 'Finish & View Certificate'
+                              : 'Return to Study Mode';
+                          })()
                       : activeModule.type === 'video' &&
-                        !(
-                          (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) &&
-                          checkpointStore[course.id]?.[
-                            (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)!.id
-                          ]?.passed
-                        )
+                        Boolean(postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) &&
+                        !checkpointStore[course.id]?.[
+                          (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)!.id
+                        ]?.passed
                       ? 'Take Quiz to Unlock Next'
                       : activeModuleIndex === course.modules.length - 1
                       ? 'Finish & Generate Certificate'

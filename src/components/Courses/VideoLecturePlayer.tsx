@@ -20,6 +20,7 @@ interface VideoLecturePlayerProps {
   passingScore: number;
   isQuizPassed: boolean;
   hasWatchedVideo: boolean;
+  hasPostQuiz?: boolean;
   nextModuleTitle?: string;
   onLectureCompleted: () => void;
   onOpenPostQuiz: () => void;
@@ -128,6 +129,7 @@ export const VideoLecturePlayer: React.FC<VideoLecturePlayerProps> = ({
   passingScore,
   isQuizPassed,
   hasWatchedVideo,
+  hasPostQuiz = true,
   nextModuleTitle,
   onLectureCompleted,
   onOpenPostQuiz,
@@ -290,8 +292,12 @@ export const VideoLecturePlayer: React.FC<VideoLecturePlayerProps> = ({
             <span>Module {moduleIndex + 1} Video Lecture</span>
             <span aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">{module.videoDuration || formatClock(videoDuration)}</span>
-            <span aria-hidden="true">·</span>
-            <span>Mastery threshold {passingScore}%</span>
+            {hasPostQuiz && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>Mastery threshold {passingScore}%</span>
+              </>
+            )}
           </div>
           <h1 className="text-xl font-extrabold text-slate-900 dark:text-white leading-snug">
             {module.title}
@@ -299,7 +305,14 @@ export const VideoLecturePlayer: React.FC<VideoLecturePlayerProps> = ({
         </div>
 
         <div className="shrink-0">
-          {isQuizPassed ? (
+          {!hasPostQuiz ? (
+            hasWatchedVideo ? (
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>Lecture Completed</span>
+              </span>
+            ) : null
+          ) : isQuizPassed ? (
             <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
               <Unlock className="w-4 h-4 shrink-0" />
               <span>Mastery Verified</span>
@@ -488,7 +501,7 @@ export const VideoLecturePlayer: React.FC<VideoLecturePlayerProps> = ({
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
               >
                 <SkipForward className="w-3.5 h-3.5" />
-                <span>{hasWatchedVideo ? 'Launch Mastery Quiz' : 'Complete Lecture'}</span>
+                <span>{hasPostQuiz && hasWatchedVideo ? 'Launch Mastery Quiz' : 'Complete Lecture'}</span>
               </button>
             </div>
           </div>
@@ -520,41 +533,43 @@ export const VideoLecturePlayer: React.FC<VideoLecturePlayerProps> = ({
         })}
       </div>
 
-      {/* Post-Lecture Mastery Callout */}
-      <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-start gap-3 min-w-0">
-          {isQuizPassed ? (
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
-          ) : (
-            <Lock className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-          )}
-          <div className="space-y-0.5 min-w-0">
-            <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
-              {isQuizPassed
-                ? `Post-lecture mastery verified${nextModuleTitle ? ` — "${nextModuleTitle}" unlocked` : ''}`
-                : 'Post-Lecture Mastery Quiz triggers automatically when this video finishes'}
-            </p>
-            <p className="text-[11px] text-slate-600 dark:text-slate-400">
-              {isQuizPassed
-                ? 'You may continue to the next module or retake the post-lecture quiz anytime to improve your score.'
-                : `Score at least ${passingScore}% on the post-lecture quiz to unlock ${nextModuleTitle || 'the next segment'}.`}
-            </p>
+      {/* Post-Lecture Mastery Callout (only shown when a post-lecture quiz is configured) */}
+      {hasPostQuiz && (
+        <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3 min-w-0">
+            {isQuizPassed ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+            ) : (
+              <Lock className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+            )}
+            <div className="space-y-0.5 min-w-0">
+              <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                {isQuizPassed
+                  ? `Post-lecture mastery verified${nextModuleTitle ? ` — "${nextModuleTitle}" unlocked` : ''}`
+                  : 'Post-Lecture Mastery Quiz triggers automatically when this video finishes'}
+              </p>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                {isQuizPassed
+                  ? 'You may continue to the next module or retake the post-lecture quiz anytime to improve your score.'
+                  : `Score at least ${passingScore}% on the post-lecture quiz to unlock ${nextModuleTitle || 'the next segment'}.`}
+              </p>
+            </div>
           </div>
-        </div>
 
-        <button
-          type="button"
-          onClick={isQuizPassed ? onOpenPostQuiz : handleCompleteLectureNow}
-          className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-            isQuizPassed
-              ? 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-              : 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm'
-          }`}
-        >
-          <CheckSquare className="w-3.5 h-3.5" />
-          <span>{isQuizPassed ? 'Review Mastery Quiz' : 'Finish Video & Start Quiz'}</span>
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={isQuizPassed ? onOpenPostQuiz : handleCompleteLectureNow}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+              isQuizPassed
+                ? 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                : 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm'
+            }`}
+          >
+            <CheckSquare className="w-3.5 h-3.5" />
+            <span>{isQuizPassed ? 'Review Mastery Quiz' : 'Finish Video & Start Quiz'}</span>
+          </button>
+        </div>
+      )}
 
       {module.contentMarkdown && (
         <div className="text-xs text-slate-600 dark:text-slate-300 pt-3 border-t border-slate-100 dark:border-slate-800 whitespace-pre-wrap leading-relaxed">

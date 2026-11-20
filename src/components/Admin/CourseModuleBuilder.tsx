@@ -28,7 +28,10 @@ import {
   X
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
-import { getBetweenModuleQuiz } from '../../data/checkpointQuizzes';
+import {
+  getBetweenModuleQuiz,
+  hasModuleBuiltinCheckpoint
+} from '../../data/checkpointQuizzes';
 import {
   resolveCourseHierarchy,
   getModuleSectionBreadcrumb,
@@ -511,7 +514,17 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
       const resolved = getBetweenModuleQuiz(course, fromMod, toMod);
       const sourceQuestions = fromMod.checkpointQuiz?.questions?.length
         ? fromMod.checkpointQuiz.questions
-        : resolved?.questions || [];
+        : resolved?.questions?.length
+        ? resolved.questions
+        : [
+            {
+              id: `cp-q-${Date.now()}`,
+              question: `Quick retention check for ${fromMod.title}:`,
+              options: ['Option A', 'Option B', 'Option C', 'Option D'],
+              correctAnswerIndex: 0,
+              explanation: 'Immediate explanation shown after answer selection.'
+            }
+          ];
       setQuizDraft({
         title: fromMod.checkpointQuiz?.title || resolved?.title || `Retention Check: ${fromMod.title}`,
         passingScore: fromMod.checkpointQuiz?.passingScore ?? resolved?.passingScore ?? gradingForm.quizPassingScore,
@@ -555,6 +568,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     let labs = 0;
     let lessons = 0;
     let retentionChecks = 0;
+    let hasRestorableChecks = false;
     let totalMinutes = 0;
 
     course.modules.forEach((mod, idx) => {
@@ -568,10 +582,17 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
         if (getBetweenModuleQuiz(course, mod, next)) {
           retentionChecks += 1;
         }
+        if (
+          mod.type !== 'quiz' &&
+          next.type !== 'quiz' &&
+          (Boolean(mod.checkpointQuiz?.questions?.length) || hasModuleBuiltinCheckpoint(mod.id))
+        ) {
+          hasRestorableChecks = true;
+        }
       }
     });
 
-    return { quizzes, labs, lessons, retentionChecks, totalMinutes };
+    return { quizzes, labs, lessons, retentionChecks, hasRestorableChecks, totalMinutes };
   }, [course]);
 
   const handleSaveGradingCriteria = (e: React.FormEvent) => {
@@ -777,7 +798,28 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
   };
 
   const handleRestoreModuleCheckpoint = (fromMod: CourseModule, toMod: CourseModule) => {
-    updateModuleInCourse(course.id, fromMod.id, { disableCheckpoint: false });
+    const needsCustomQuestions =
+      !fromMod.checkpointQuiz?.questions?.length && !hasModuleBuiltinCheckpoint(fromMod.id);
+    updateModuleInCourse(course.id, fromMod.id, {
+      disableCheckpoint: false,
+      ...(needsCustomQuestions
+        ? {
+            checkpointQuiz: {
+              title: `Retention Check: ${fromMod.title}`,
+              passingScore: gradingForm.quizPassingScore,
+              questions: [
+                {
+                  id: `cp-q-${Date.now()}`,
+                  question: `Quick retention check for ${fromMod.title}:`,
+                  options: ['Option A', 'Option B', 'Option C', 'Option D'],
+                  correctAnswerIndex: 0,
+                  explanation: 'Immediate explanation shown after answer selection.'
+                }
+              ]
+            }
+          }
+        : {})
+    });
     setInspectorTarget({ kind: 'checkpoint', fromModuleId: fromMod.id, toModuleId: toMod.id });
     onToast(`Enabled retention check between "${fromMod.title}" and "${toMod.title}"`);
   };
@@ -965,29 +1007,30 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {course.modules.length > 1 && (
-            <button
-              type="button"
-              onClick={() => handleToggleAllRetentionChecks(moduleBreakdown.retentionChecks > 0)}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                moduleBreakdown.retentionChecks > 0
-                  ? 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-red-400 hover:text-red-600 dark:hover:text-red-400'
-                  : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-blue-600 dark:text-cyan-400 hover:border-blue-400'
-              }`}
-              title={
-                moduleBreakdown.retentionChecks > 0
-                  ? 'Remove all between-module Interactive Retention Checks'
-                  : 'Restore between-module Interactive Retention Checks'
-              }
-            >
-              <CheckSquare className="w-3.5 h-3.5" />
-              <span className="tabular-nums">
-                {moduleBreakdown.retentionChecks > 0
-                  ? `Clear All Checks (${moduleBreakdown.retentionChecks})`
-                  : 'Restore Checks'}
-              </span>
-            </button>
-          )}
+          {course.modules.length > 1 &&
+            (moduleBreakdown.retentionChecks > 0 || moduleBreakdown.hasRestorableChecks) && (
+              <button
+                type="button"
+                onClick={() => handleToggleAllRetentionChecks(moduleBreakdown.retentionChecks > 0)}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                  moduleBreakdown.retentionChecks > 0
+                    ? 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-red-400 hover:text-red-600 dark:hover:text-red-400'
+                    : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-blue-600 dark:text-cyan-400 hover:border-blue-400'
+                }`}
+                title={
+                  moduleBreakdown.retentionChecks > 0
+                    ? 'Remove all between-module Interactive Retention Checks'
+                    : 'Restore between-module Interactive Retention Checks'
+                }
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                <span className="tabular-nums">
+                  {moduleBreakdown.retentionChecks > 0
+                    ? `Clear All Checks (${moduleBreakdown.retentionChecks})`
+                    : 'Restore Checks'}
+                </span>
+              </button>
+            )}
           <button
             type="button"
             onClick={() => setInspectorTarget({ kind: 'grading' })}
