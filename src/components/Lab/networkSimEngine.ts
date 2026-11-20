@@ -2329,6 +2329,62 @@ export function executeDeviceCommand(
   };
 }
 
+export interface DevicePortAnchor {
+  name: string;
+  shortName: string;
+  kind: 'ethernet' | 'fiber' | 'serial';
+  x: number;
+  y: number;
+  angleDeg: number;
+}
+
+export function getDevicePortAnchors(dev: SimDevice): DevicePortAnchor[] {
+  const physicalPorts = dev.interfaces.filter(
+    (i): i is SimDeviceInterface & { kind: 'ethernet' | 'fiber' | 'serial' } =>
+      i.kind === 'ethernet' || i.kind === 'fiber' || i.kind === 'serial'
+  );
+  if (physicalPorts.length === 0) return [];
+
+  const rotRad = (((typeof dev.rotation === 'number' && Number.isFinite(dev.rotation) ? dev.rotation : 0) * Math.PI) / 180);
+  const rx = 31;
+  const ry = 25;
+  const startDeg = -184;
+  const endDeg = 4;
+  const count = physicalPorts.length;
+
+  return physicalPorts.map((iface, idx) => {
+    const baseDeg =
+      count === 1
+        ? -90
+        : startDeg + ((idx + 0.5) / count) * (endDeg - startDeg);
+    const baseRad = (baseDeg * Math.PI) / 180;
+    const localX = rx * Math.cos(baseRad);
+    const localY = ry * Math.sin(baseRad);
+    const rotX = localX * Math.cos(rotRad) - localY * Math.sin(rotRad);
+    const rotY = localX * Math.sin(rotRad) + localY * Math.cos(rotRad);
+    return {
+      name: iface.name,
+      shortName: iface.shortName,
+      kind: iface.kind,
+      x: Math.round((dev.x + rotX) * 10) / 10,
+      y: Math.round((dev.y + rotY) * 10) / 10,
+      angleDeg: baseDeg + (dev.rotation || 0)
+    };
+  });
+}
+
+export function getDevicePortPosition(
+  dev: SimDevice,
+  portName: string
+): { x: number; y: number } {
+  const anchors = getDevicePortAnchors(dev);
+  const match = anchors.find(a => a.name === portName);
+  if (match) {
+    return { x: match.x, y: match.y };
+  }
+  return { x: dev.x, y: dev.y };
+}
+
 export interface CableVisualGeometry {
   x1Led: number;
   y1Led: number;
@@ -2345,7 +2401,8 @@ export function computeCableGeometry(
   fromX: number,
   fromY: number,
   toX: number,
-  toY: number
+  toY: number,
+  options?: { anchored?: boolean }
 ): CableVisualGeometry {
   const dx = toX - fromX;
   const dy = toY - fromY;
@@ -2354,6 +2411,9 @@ export function computeCableGeometry(
   const uy = dy / len;
 
   const endpointClearance = (rayY: number) => {
+    if (options?.anchored) {
+      return Math.min(13, len * 0.28);
+    }
     const target = rayY > 0.25 ? 42 + rayY * 24 : 44;
     const maxFraction = rayY > 0.25 ? 0.34 : 0.30;
     return Math.min(target, len * maxFraction);
@@ -2405,4 +2465,5 @@ export function computeCableGeometry(
     textAnchor: nx > 0 ? 'start' : 'end'
   };
 }
+
 

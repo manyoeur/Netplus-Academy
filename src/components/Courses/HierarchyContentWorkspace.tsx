@@ -8,7 +8,6 @@ import {
   Eye,
   FileText,
   Heading2,
-  Layers,
   List,
   Plus,
   Save,
@@ -207,7 +206,6 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
 };
 
 export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps> = ({
-  courseCode,
   chapter,
   section,
   canEdit = false,
@@ -228,7 +226,6 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
   const targetSummary = section ? section.summary || '' : chapter.summary || '';
   const targetContent = section ? section.contentMarkdown || '' : chapter.contentMarkdown || '';
   const targetNumber = section ? section.sectionNumber : chapter.chapterNumber;
-  const levelLabel = isSectionLevel ? 'Second-Level Section' : 'First-Level Chapter';
 
   const [isEditing, setIsEditing] = useState<boolean>(canEdit && startInEditMode);
   const [editorTab, setEditorTab] = useState<'write' | 'preview'>('write');
@@ -306,47 +303,20 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
     <div className="space-y-4">
       {/* Main Chapter / Section Workspace Card */}
       <div className="p-6 sm:p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-        {/* Header & Breadcrumb */}
+        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-5 border-b border-slate-100 dark:border-slate-800">
-          <div className="space-y-2 min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono text-slate-500 dark:text-slate-400">
-              <span className="font-bold text-blue-600 dark:text-cyan-400">{courseCode}</span>
-              <ChevronRight className="w-3 h-3 shrink-0" />
-              <button
-                type="button"
-                onClick={() => onSelectChapter(chapter.id, false)}
-                className={`hover:text-blue-600 dark:hover:text-cyan-400 transition-colors text-left ${
-                  !isSectionLevel ? 'font-bold text-slate-800 dark:text-slate-200' : ''
-                }`}
-              >
-                {chapter.chapterNumber} {chapter.title}
-              </button>
-              {section && (
-                <>
-                  <ChevronRight className="w-3 h-3 shrink-0" />
-                  <span className="font-bold text-slate-800 dark:text-slate-200">
-                    {section.sectionNumber} {section.title}
-                  </span>
-                </>
-              )}
-            </div>
-
-            <div className="space-y-1">
-              <p className="text-[11px] font-mono uppercase tracking-wider font-semibold text-blue-600 dark:text-cyan-400">
-                {levelLabel} · {targetNumber}
+          <div className="space-y-1 min-w-0">
+            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+              <span className="tabular-nums mr-2 text-slate-500 dark:text-slate-400">
+                {targetNumber}
+              </span>
+              {targetTitle}
+            </h1>
+            {!isEditing && targetSummary && (
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed pt-1">
+                {targetSummary}
               </p>
-              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-                <span className="tabular-nums mr-2 text-slate-500 dark:text-slate-400">
-                  {targetNumber}
-                </span>
-                {targetTitle}
-              </h1>
-              {!isEditing && targetSummary && (
-                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed pt-1">
-                  {targetSummary}
-                </p>
-              )}
-            </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -564,7 +534,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                   <>
                     {isSectionLevel
                       ? 'Use the Course Outline or click Next below to explore lessons in '
-                      : 'Select a section below to explore '}
+                      : 'Use the Course Outline or click Next below to explore sections in '}
                     <strong className="text-slate-800 dark:text-slate-200">
                       {targetNumber} {targetTitle}
                     </strong>
@@ -586,61 +556,6 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
           </div>
         )}
       </div>
-
-      {/* Child Outline Navigation Cards (Level-1 Chapter only) */}
-      {!section && (
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-              <span>Sections in Chapter {chapter.chapterNumber}</span>
-            </h3>
-            <span className="text-[11px] font-mono tabular-nums text-slate-400">
-              {chapter.mainContents.length} sections
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {chapter.mainContents.map((mc) => (
-              <div
-                key={mc.id}
-                className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 flex items-start justify-between gap-3 hover:border-blue-400 dark:hover:border-cyan-500 transition-colors"
-              >
-                <button
-                  type="button"
-                  onClick={() => onSelectSection(chapter.id, mc.id, false)}
-                  className="flex-1 min-w-0 text-left space-y-1"
-                >
-                  <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <span className="font-mono tabular-nums text-blue-600 dark:text-cyan-400">
-                      {mc.sectionNumber}
-                    </span>
-                    <span className="truncate">{mc.title}</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2">
-                    {mc.summary ||
-                      (mc.contentMarkdown?.trim()
-                        ? 'Section notes available · Click to read.'
-                        : `${mc.items.length} lesson${mc.items.length === 1 ? '' : 's'} · Click to open section.`)}
-                  </p>
-                </button>
-
-                {canEdit && (
-                  <button
-                    type="button"
-                    onClick={() => onSelectSection(chapter.id, mc.id, true)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-800 shrink-0"
-                    title={`Write content in ${mc.sectionNumber} ${mc.title}`}
-                    aria-label={`Write content in ${mc.sectionNumber} ${mc.title}`}
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Bottom Chapter / Section Navigation Bar */}
       {(() => {
@@ -763,15 +678,12 @@ interface ModuleContentWorkspaceProps {
 }
 
 export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
-  courseCode,
   breadcrumb,
   module,
   moduleIndex,
   canEdit = false,
   startInEditMode = false,
   onConsumeStartInEditMode,
-  onSelectChapter,
-  onSelectSection,
   onSaveModuleContent,
   children
 }) => {
@@ -870,7 +782,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     <div className="space-y-4">
       {/* Level-3 Header & Inline Editor Card (Mirrors Chapter & Section Editing Experience) */}
       <div className="p-6 sm:p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-        {/* Header & Breadcrumb */}
+        {/* Header */}
         <div
           className={`flex flex-col sm:flex-row sm:items-start justify-between gap-4 ${
             (canEdit && isEditing) || module.type === 'theory'
@@ -878,51 +790,18 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
               : ''
           }`}
         >
-          <div className="space-y-2 min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono text-slate-500 dark:text-slate-400">
-              <span className="font-bold text-blue-600 dark:text-cyan-400">{courseCode}</span>
-              {breadcrumb && (
-                <>
-                  <ChevronRight className="w-3 h-3 shrink-0" />
-                  <button
-                    type="button"
-                    onClick={() => onSelectChapter(breadcrumb.chapterId)}
-                    className="hover:text-blue-600 dark:hover:text-cyan-400 transition-colors text-left"
-                  >
-                    {breadcrumb.chapterNumber} {breadcrumb.chapterTitle}
-                  </button>
-                  <ChevronRight className="w-3 h-3 shrink-0" />
-                  <button
-                    type="button"
-                    onClick={() => onSelectSection(breadcrumb.chapterId, breadcrumb.mainContentId)}
-                    className="hover:text-blue-600 dark:hover:text-cyan-400 transition-colors text-left"
-                  >
-                    {breadcrumb.sectionNumber} {breadcrumb.mainContentTitle}
-                  </button>
-                </>
-              )}
-              <ChevronRight className="w-3 h-3 shrink-0" />
-              <span className="font-bold text-slate-800 dark:text-slate-200">
-                {itemNumber} {module.title}
+          <div className="space-y-1 min-w-0">
+            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+              <span className="tabular-nums mr-2 text-slate-500 dark:text-slate-400">
+                {itemNumber}
               </span>
-            </div>
-
-            <div className="space-y-1">
-              <p className="text-[11px] font-mono uppercase tracking-wider font-semibold text-blue-600 dark:text-cyan-400">
-                Third-Level Content · {itemNumber} · {module.type}
+              {module.title}
+            </h1>
+            {!isEditing && module.summary && (
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed pt-1">
+                {module.summary}
               </p>
-              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-                <span className="tabular-nums mr-2 text-slate-500 dark:text-slate-400">
-                  {itemNumber}
-                </span>
-                {module.title}
-              </h1>
-              {!isEditing && module.summary && (
-                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed pt-1">
-                  {module.summary}
-                </p>
-              )}
-            </div>
+            )}
           </div>
 
           {canEdit && (

@@ -9,6 +9,7 @@ import { getCiscoDeviceInnerSvg } from '../components/Lab/CiscoDeviceIcon';
 import {
   computeCableGeometry,
   evaluateLinkStatus,
+  getDevicePortPosition,
   isValidIp,
   maskToPrefix
 } from '../components/Lab/networkSimEngine';
@@ -111,12 +112,14 @@ export function buildTopologySvgString(
       const isUp = status.isUp;
       const style = EXPORT_CABLE_STYLE[link.cableType];
 
-      const x1 = fromDev.x;
-      const y1 = fromDev.y + headerH;
-      const x2 = toDev.x;
-      const y2 = toDev.y + headerH;
+      const fromAnchor = getDevicePortPosition(fromDev, link.fromPort);
+      const toAnchor = getDevicePortPosition(toDev, link.toPort);
+      const x1 = fromAnchor.x;
+      const y1 = fromAnchor.y + headerH;
+      const x2 = toAnchor.x;
+      const y2 = toAnchor.y + headerH;
 
-      const geom = computeCableGeometry(x1, y1, x2, y2);
+      const geom = computeCableGeometry(x1, y1, x2, y2, { anchored: true });
 
       const fromIf = fromDev.interfaces.find(i => i.name === link.fromPort);
       const toIf = toDev.interfaces.find(i => i.name === link.toPort);
@@ -155,8 +158,10 @@ export function buildTopologySvgString(
             stroke-opacity="${isUp ? '0.95' : '0.65'}"
             stroke-linecap="round"
           />
-          <circle cx="${geom.x1Led.toFixed(1)}" cy="${geom.y1Led.toFixed(1)}" r="4.5" fill="${isUp ? '#10b981' : '#ef4444'}" stroke="${palette.ledBorder}" stroke-width="1.2" />
-          <circle cx="${geom.x2Led.toFixed(1)}" cy="${geom.y2Led.toFixed(1)}" r="4.5" fill="${isUp ? '#10b981' : '#ef4444'}" stroke="${palette.ledBorder}" stroke-width="1.2" />
+          <circle cx="${x1.toFixed(1)}" cy="${y1.toFixed(1)}" r="3.1" fill="${isUp ? style.stroke : palette.downStroke}" stroke="${palette.ledBorder}" stroke-width="1" />
+          <circle cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3.1" fill="${isUp ? style.stroke : palette.downStroke}" stroke="${palette.ledBorder}" stroke-width="1" />
+          <circle cx="${geom.x1Led.toFixed(1)}" cy="${geom.y1Led.toFixed(1)}" r="4.2" fill="${isUp ? '#10b981' : '#ef4444'}" stroke="${palette.ledBorder}" stroke-width="1.2" />
+          <circle cx="${geom.x2Led.toFixed(1)}" cy="${geom.y2Led.toFixed(1)}" r="4.2" fill="${isUp ? '#10b981' : '#ef4444'}" stroke="${palette.ledBorder}" stroke-width="1.2" />
           ${renderEndpointLabel(fromPortText, geom.fromLabelX, geom.fromLabelY)}
           ${renderEndpointLabel(toPortText, geom.toLabelX, geom.toLabelY)}
         </g>

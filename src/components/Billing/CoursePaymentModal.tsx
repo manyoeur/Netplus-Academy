@@ -293,7 +293,6 @@ export const CoursePaymentModal: React.FC<CoursePaymentModalProps> = ({
               <div className="space-y-3">
                 <CourseThumbnail
                   course={course}
-                  showInstructorPortrait={false}
                   className="aspect-video rounded-xl border border-slate-200 dark:border-slate-800"
                 >
                   <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between text-[11px] font-mono z-10">

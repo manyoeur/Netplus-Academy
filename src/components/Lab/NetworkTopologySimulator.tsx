@@ -42,7 +42,8 @@ import {
   Maximize2,
   Minimize2,
   Minus,
-  X
+  X,
+  ChevronDown
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import {
@@ -70,6 +71,11 @@ import {
   exportTopologyAsSvg
 } from '../../utils/topologyImageExport';
 import {
+  buildTopologyJsonPayload,
+  parseAndValidateTopologyJson,
+  triggerTopologyJsonDownload
+} from '../../utils/topologyJson';
+import {
   LabScenarioPreset,
   LabTemplateCategory,
   PingSimulationResult,
@@ -89,6 +95,8 @@ import {
   executeDeviceCommand,
   getCliPrompt,
   getCliTabCompletions,
+  getDevicePortAnchors,
+  getDevicePortPosition,
   isPortCompatibleWithCable,
   isValidIp,
   simulatePing
@@ -108,22 +116,36 @@ interface PendingCableTarget {
   deviceId: string;
 }
 
-interface SavedLabSnapshot {
-  format?: string;
-  title?: string;
-  status?: 'in_progress' | 'completed';
-  presetId: string;
-  exportedAt?: string;
-  studentEmail?: string;
-  objectivesSummary?: {
-    passed: number;
-    total: number;
-    completed: boolean;
-  };
-  devices: SimDevice[];
-  links: SimLink[];
-  shapes?: SimTopologyShape[];
-  labels?: SimDiagramLabel[];
+interface LiveCableSnapTarget {
+  deviceId: string;
+  deviceName: string;
+  portName: string;
+  shortName: string;
+  x: number;
+  y: number;
+  cableType: SimCableType;
+}
+
+interface LiveCableDrawState {
+  fromDeviceId: string;
+  fromPort: string;
+  fromShortName: string;
+  fromX: number;
+  fromY: number;
+  fromPortLocked: boolean;
+  cursorX: number;
+  cursorY: number;
+  startClientX: number;
+  startClientY: number;
+  isDragGesture: boolean;
+  snapTarget: LiveCableSnapTarget | null;
+  blockedTarget: {
+    deviceId: string;
+    deviceName: string;
+    x: number;
+    y: number;
+    reason: string;
+  } | null;
 }
 
 type ShapeResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -675,8 +697,19 @@ export const NetworkTopologySimulator: React.FC = () => {
   } | null>(null);
   const devicesRef = useRef<SimDevice[]>(devices);
   devicesRef.current = devices;
+  const linksRef = useRef<SimLink[]>(links);
+  linksRef.current = links;
   const shapesRef = useRef<SimTopologyShape[]>(shapes);
   shapesRef.current = shapes;
+  const toolRef = useRef<CanvasTool>(tool);
+  toolRef.current = tool;
+  const cableToolModeRef = useRef<CableToolMode>(cableToolMode);
+  cableToolModeRef.current = cableToolMode;
+  const selectedCableTypeRef = useRef<SimCableType>(selectedCableType);
+  selectedCableTypeRef.current = selectedCableType;
+  const [liveCableDraw, setLiveCableDraw] = useState<LiveCableDrawState | null>(null);
+  const liveCableDrawRef = useRef<LiveCableDrawState | null>(null);
+  const [hoveredPortKey, setHoveredPortKey] = useState<string | null>(null);
   const [snapToGrid, setSnapToGrid] = useState<boolean>(true);
   const [gridSize, setGridSize] = useState<SnapGridStep>(20);
   const snapToGridRef = useRef<boolean>(snapToGrid);
@@ -792,6 +825,8 @@ export const NetworkTopologySimulator: React.FC = () => {
   const [animStepIndex, setAnimStepIndex] = useState<number | null>(null);
 
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
+  const [statusBannerTone, setStatusBannerTone] = useState<'info' | 'error'>('info');
+  const [isJsonFileDragOver, setIsJsonFileDragOver] = useState<boolean>(false);
   const [isTemplatesModalOpen, setIsTemplatesModalOpen] = useState<boolean>(false);
   const [templateCategoryFilter, setTemplateCategoryFilter] = useState<
     'all' | Exclude<LabTemplateCategory, 'Blank'>
@@ -823,6 +858,31 @@ export const NetworkTopologySimulator: React.FC = () => {
   }, [templateCategoryFilter, templateLibraryItems]);
 
   const importInputRef = useRef<HTMLInputElement>(null);
+  const [isImportExportMenuOpen, setIsImportExportMenuOpen] = useState<boolean>(false);
+  const importExportMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isImportExportMenuOpen) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      if (
+        importExportMenuRef.current &&
+        !importExportMenuRef.current.contains(e.target as Node)
+      ) {
+        setIsImportExportMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsImportExportMenuOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isImportExportMenuOpen]);
 
   useEffect(() => {
     if (!isTemplatesModalOpen) return;
@@ -1211,6 +1271,25 @@ export const NetworkTopologySimulator: React.FC = () => {
       const rect = canvas.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return;
 
+      const activeCableDraw = liveCableDrawRef.current;
+      if (activeCableDraw) {
+        const curr = clientToCanvas(e.clientX, e.clientY, rect);
+        const distFromStart = Math.hypot(
+          e.clientX - activeCableDraw.startClientX,
+          e.clientY - activeCableDraw.startClientY
+        );
+        const nextIsDrag = activeCableDraw.isDragGesture || distFromStart > 8;
+        const nextState = updateLiveCableDrawForCursor(
+          activeCableDraw,
+          curr.x,
+          curr.y,
+          nextIsDrag
+        );
+        liveCableDrawRef.current = nextState;
+        setLiveCableDraw(nextState);
+        return;
+      }
+
       const snapActive = snapToGridRef.current && !e.altKey;
       const step = gridSizeRef.current;
 
@@ -1591,6 +1670,28 @@ export const NetworkTopologySimulator: React.FC = () => {
     };
 
     const handlePointerUp = () => {
+      const activeCableDraw = liveCableDrawRef.current;
+      if (activeCableDraw && activeCableDraw.isDragGesture) {
+        if (activeCableDraw.snapTarget) {
+          finalizeMagneticCableLink(
+            activeCableDraw.fromDeviceId,
+            activeCableDraw.fromPort,
+            activeCableDraw.snapTarget
+          );
+        } else {
+          if (activeCableDraw.blockedTarget) {
+            flashBanner(
+              `${activeCableDraw.blockedTarget.deviceName}: ${activeCableDraw.blockedTarget.reason}`
+            );
+          }
+          clearLiveCableDraw();
+        }
+        suppressCanvasClickRef.current = true;
+        window.setTimeout(() => {
+          suppressCanvasClickRef.current = false;
+        }, 0);
+      }
+
       if (dragStateRef.current?.holdTimerId != null) {
         window.clearTimeout(dragStateRef.current.holdTimerId);
       }
@@ -1770,11 +1871,12 @@ export const NetworkTopologySimulator: React.FC = () => {
     );
   }, []);
 
-  const flashBanner = (msg: string) => {
+  const flashBanner = (msg: string, tone: 'info' | 'error' = 'info') => {
+    setStatusBannerTone(tone);
     setStatusBanner(msg);
     window.setTimeout(() => {
       setStatusBanner(prev => (prev === msg ? null : prev));
-    }, 3600);
+    }, tone === 'error' ? 5600 : 3800);
   };
 
   const zoomAtViewportCenter = useCallback((targetZoom: number) => {
@@ -1903,6 +2005,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     setEditingDiagramLabelId(null);
     setPendingCableSource(null);
     setPendingCableTarget(null);
+    clearLiveCableDraw();
     setLastPingResult(null);
     handleResetZoomPan();
     flashBanner(`Loaded "${preset.title}"`);
@@ -2107,6 +2210,9 @@ export const NetworkTopologySimulator: React.FC = () => {
       setConsoleTabIds(prev => prev.filter(id => id !== deviceId));
       setPendingCableSource(prev => (prev?.deviceId === deviceId ? null : prev));
       setPendingCableTarget(prev => (prev?.deviceId === deviceId ? null : prev));
+      if (liveCableDrawRef.current?.fromDeviceId === deviceId) {
+        clearLiveCableDraw();
+      }
     },
     [selectedDeviceIds]
   );
@@ -2124,6 +2230,9 @@ export const NetworkTopologySimulator: React.FC = () => {
     setConsoleTabIds(prev => prev.filter(id => !deleteSet.has(id)));
     setPendingCableSource(prev => (prev && deleteSet.has(prev.deviceId) ? null : prev));
     setPendingCableTarget(prev => (prev && deleteSet.has(prev.deviceId) ? null : prev));
+    if (liveCableDrawRef.current && deleteSet.has(liveCableDrawRef.current.fromDeviceId)) {
+      clearLiveCableDraw();
+    }
     flashBanner(`Removed ${count} selected device${count === 1 ? '' : 's'} and attached cables`);
   }, [selectedDeviceIds]);
 
@@ -2229,6 +2338,7 @@ export const NetworkTopologySimulator: React.FC = () => {
         setSelectedDiagramLabelId(null);
         setPendingCableSource(null);
         setPendingCableTarget(null);
+        clearLiveCableDraw();
       }
     };
 
@@ -2279,6 +2389,489 @@ export const NetworkTopologySimulator: React.FC = () => {
       ),
     [links]
   );
+
+  const clearLiveCableDraw = () => {
+    liveCableDrawRef.current = null;
+    setLiveCableDraw(null);
+    setHoveredPortKey(null);
+  };
+
+  const getAutoCableCandidateOrder = (
+    sourceType: SimDeviceType,
+    targetType: SimDeviceType
+  ): SimCableType[] => {
+    const pair = new Set([sourceType, targetType]);
+    if (sourceType === 'switch' && targetType === 'switch') {
+      return ['crossover', 'fiber', 'straight'];
+    }
+    if (pair.has('switch')) {
+      return ['straight', 'fiber', 'crossover'];
+    }
+    if (sourceType === 'router' && targetType === 'router') {
+      return ['crossover', 'serial', 'fiber', 'straight'];
+    }
+    return ['crossover', 'straight', 'fiber'];
+  };
+
+  const resolveMagneticPortPair = (
+    sourceDev: SimDevice,
+    targetDev: SimDevice,
+    cursorX: number,
+    cursorY: number,
+    fromPortLocked: boolean,
+    lockedFromPort: string,
+    forcedTargetPort?: string
+  ): {
+    cableType: SimCableType;
+    fromAnchor: ReturnType<typeof getDevicePortAnchors>[number];
+    toAnchor: ReturnType<typeof getDevicePortAnchors>[number];
+  } | null => {
+    const currentLinks = linksRef.current;
+    const isBusy = (devId: string, pName: string) =>
+      currentLinks.some(
+        l =>
+          (l.fromDeviceId === devId && l.fromPort === pName) ||
+          (l.toDeviceId === devId && l.toPort === pName)
+      );
+
+    const sourceAnchors = getDevicePortAnchors(sourceDev);
+    const targetAnchors = getDevicePortAnchors(targetDev);
+    const availableSource = sourceAnchors.filter(a => {
+      if (isBusy(sourceDev.id, a.name)) return false;
+      if (fromPortLocked) return a.name === lockedFromPort;
+      return true;
+    });
+    const availableTarget = targetAnchors.filter(a => {
+      if (isBusy(targetDev.id, a.name)) return false;
+      if (forcedTargetPort) return a.name === forcedTargetPort;
+      return true;
+    });
+
+    if (availableSource.length === 0 || availableTarget.length === 0) {
+      return null;
+    }
+
+    const mode = cableToolModeRef.current;
+    const baseOrder: SimCableType[] =
+      mode === 'auto'
+        ? getAutoCableCandidateOrder(sourceDev.type, targetDev.type)
+        : [selectedCableTypeRef.current];
+
+    // If pointer is right over a specific free target port in Auto mode, prioritize its media type
+    let orderedTypes = baseOrder;
+    if (mode === 'auto') {
+      const hoveredTargetAnchor = forcedTargetPort
+        ? availableTarget.find(a => a.name === forcedTargetPort)
+        : availableTarget.find(a => Math.hypot(cursorX - a.x, cursorY - a.y) <= 18);
+      if (hoveredTargetAnchor) {
+        const directTypes = baseOrder.filter(ct => {
+          const tIf = targetDev.interfaces.find(i => i.name === hoveredTargetAnchor.name);
+          return tIf ? isPortCompatibleWithCable(tIf, ct) : false;
+        });
+        if (directTypes.length > 0) {
+          orderedTypes = [
+            ...directTypes,
+            ...baseOrder.filter(ct => !directTypes.includes(ct))
+          ];
+        }
+      }
+    }
+
+    for (const ct of orderedTypes) {
+      const compatSrc = availableSource.filter(a => {
+        const iface = sourceDev.interfaces.find(i => i.name === a.name);
+        return iface ? isPortCompatibleWithCable(iface, ct) : false;
+      });
+      const compatDst = availableTarget.filter(a => {
+        const iface = targetDev.interfaces.find(i => i.name === a.name);
+        return iface ? isPortCompatibleWithCable(iface, ct) : false;
+      });
+      if (compatSrc.length === 0 || compatDst.length === 0) continue;
+
+      // Pick target port anchor closest to cursor (magnetic capture)
+      let bestDst = compatDst[0];
+      let bestDstDist = Math.hypot(cursorX - bestDst.x, cursorY - bestDst.y);
+      for (let i = 1; i < compatDst.length; i++) {
+        const d = Math.hypot(cursorX - compatDst[i].x, cursorY - compatDst[i].y);
+        if (d < bestDstDist) {
+          bestDst = compatDst[i];
+          bestDstDist = d;
+        }
+      }
+
+      // Pick source port anchor facing the snapped target port (minimizing crossing)
+      let bestSrc = compatSrc[0];
+      let bestSrcDist = Math.hypot(bestDst.x - bestSrc.x, bestDst.y - bestSrc.y);
+      for (let i = 1; i < compatSrc.length; i++) {
+        const d = Math.hypot(bestDst.x - compatSrc[i].x, bestDst.y - compatSrc[i].y);
+        if (d < bestSrcDist) {
+          bestSrc = compatSrc[i];
+          bestSrcDist = d;
+        }
+      }
+
+      return {
+        cableType: ct,
+        fromAnchor: bestSrc,
+        toAnchor: bestDst
+      };
+    }
+
+    return null;
+  };
+
+  const updateLiveCableDrawForCursor = (
+    prev: LiveCableDrawState,
+    cursorX: number,
+    cursorY: number,
+    isDragGesture: boolean
+  ): LiveCableDrawState => {
+    const currentDevices = devicesRef.current;
+    const currentLinks = linksRef.current;
+    const sourceDev = currentDevices.find(d => d.id === prev.fromDeviceId);
+    if (!sourceDev) return { ...prev, cursorX, cursorY, isDragGesture };
+
+    const isBusy = (devId: string, pName: string) =>
+      currentLinks.some(
+        l =>
+          (l.fromDeviceId === devId && l.fromPort === pName) ||
+          (l.toDeviceId === devId && l.toPort === pName)
+      );
+
+    // Find closest candidate target device within magnetic capture radius
+    let nearestTarget: { dev: SimDevice; score: number } | null = null;
+    for (const dev of currentDevices) {
+      if (dev.id === sourceDev.id) continue;
+      const centerDist = Math.hypot(cursorX - dev.x, cursorY - dev.y);
+      const anchors = getDevicePortAnchors(dev);
+      let minPortDist = Infinity;
+      for (const a of anchors) {
+        const d = Math.hypot(cursorX - a.x, cursorY - a.y);
+        if (d < minPortDist) minPortDist = d;
+      }
+      if (centerDist <= 70 || minPortDist <= 38) {
+        const score = Math.min(centerDist, minPortDist + 14);
+        if (!nearestTarget || score < nearestTarget.score) {
+          nearestTarget = { dev, score };
+        }
+      }
+    }
+
+    if (nearestTarget) {
+      const resolved = resolveMagneticPortPair(
+        sourceDev,
+        nearestTarget.dev,
+        cursorX,
+        cursorY,
+        prev.fromPortLocked,
+        prev.fromPort
+      );
+      if (resolved) {
+        return {
+          ...prev,
+          fromPort: resolved.fromAnchor.name,
+          fromShortName: resolved.fromAnchor.shortName,
+          fromX: resolved.fromAnchor.x,
+          fromY: resolved.fromAnchor.y,
+          cursorX,
+          cursorY,
+          isDragGesture,
+          snapTarget: {
+            deviceId: nearestTarget.dev.id,
+            deviceName: nearestTarget.dev.name,
+            portName: resolved.toAnchor.name,
+            shortName: resolved.toAnchor.shortName,
+            x: resolved.toAnchor.x,
+            y: resolved.toAnchor.y,
+            cableType: resolved.cableType
+          },
+          blockedTarget: null
+        };
+      }
+      return {
+        ...prev,
+        cursorX,
+        cursorY,
+        isDragGesture,
+        snapTarget: null,
+        blockedTarget: {
+          deviceId: nearestTarget.dev.id,
+          deviceName: nearestTarget.dev.name,
+          x: nearestTarget.dev.x,
+          y: nearestTarget.dev.y,
+          reason: 'No free compatible port'
+        }
+      };
+    }
+
+    // No target device captured yet: dynamically orient source port toward cursor if unlocked
+    let nextFromPort = prev.fromPort;
+    let nextFromShort = prev.fromShortName;
+    let nextFromX = prev.fromX;
+    let nextFromY = prev.fromY;
+
+    if (!prev.fromPortLocked) {
+      const mode = cableToolModeRef.current;
+      const fixedType = selectedCableTypeRef.current;
+      const candidates = getDevicePortAnchors(sourceDev).filter(a => {
+        if (isBusy(sourceDev.id, a.name)) return false;
+        if (mode === 'auto') return true;
+        const iface = sourceDev.interfaces.find(i => i.name === a.name);
+        return iface ? isPortCompatibleWithCable(iface, fixedType) : false;
+      });
+      if (candidates.length > 0) {
+        let best = candidates[0];
+        let bestDist = Math.hypot(cursorX - best.x, cursorY - best.y);
+        for (let i = 1; i < candidates.length; i++) {
+          const d = Math.hypot(cursorX - candidates[i].x, cursorY - candidates[i].y);
+          if (d < bestDist) {
+            best = candidates[i];
+            bestDist = d;
+          }
+        }
+        nextFromPort = best.name;
+        nextFromShort = best.shortName;
+        nextFromX = best.x;
+        nextFromY = best.y;
+      }
+    }
+
+    return {
+      ...prev,
+      fromPort: nextFromPort,
+      fromShortName: nextFromShort,
+      fromX: nextFromX,
+      fromY: nextFromY,
+      cursorX,
+      cursorY,
+      isDragGesture,
+      snapTarget: null,
+      blockedTarget: null
+    };
+  };
+
+  const finalizeMagneticCableLink = (
+    fromDeviceId: string,
+    fromPort: string,
+    snap: LiveCableSnapTarget
+  ) => {
+    if (fromDeviceId === snap.deviceId) {
+      clearLiveCableDraw();
+      return;
+    }
+
+    const newLink: SimLink = {
+      id: `link-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      cableType: snap.cableType,
+      fromDeviceId,
+      fromPort,
+      toDeviceId: snap.deviceId,
+      toPort: snap.portName
+    };
+
+    const currentDevices = devicesRef.current;
+    const sourceDev = currentDevices.find(d => d.id === fromDeviceId);
+    const fromIf = sourceDev?.interfaces.find(i => i.name === fromPort);
+    const status = evaluateLinkStatus(newLink, currentDevices);
+
+    setLinks(prev => [...prev, newLink]);
+    setSelectedLinkId(newLink.id);
+    setSelectedDeviceIds([]);
+    setSelectedDeviceId(null);
+    setPendingCableSource(null);
+    setPendingCableTarget(null);
+    clearLiveCableDraw();
+
+    if (!status.cableValid) {
+      flashBanner(status.reason);
+    } else if (!status.isUp) {
+      flashBanner(
+        `Anchored ${sourceDev?.name || 'Source'} (${fromIf?.shortName || fromPort}) ↔ ${snap.deviceName} (${snap.shortName}) — ${status.reason}`
+      );
+    } else {
+      flashBanner(
+        `Connected ${sourceDev?.name || 'Source'} (${fromIf?.shortName || fromPort}) ↔ ${snap.deviceName} (${snap.shortName}) — link is up/up`
+      );
+    }
+  };
+
+  const handleCableSurfacePointerDown = (
+    device: SimDevice,
+    e: React.PointerEvent,
+    forcedPortName?: string
+  ) => {
+    if (toolRef.current !== 'cable' || e.button !== 0 || isSpacePanningRef.current) return;
+    e.stopPropagation();
+    e.preventDefault();
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    const currX = Math.min(1000, Math.max(0, ((e.clientX - rect.left) / rect.width) * 1000));
+    const currY = Math.min(580, Math.max(0, ((e.clientY - rect.top) / rect.height) * 580));
+
+    const currentLinks = linksRef.current;
+    const isBusy = (devId: string, pName: string) =>
+      currentLinks.some(
+        l =>
+          (l.fromDeviceId === devId && l.fromPort === pName) ||
+          (l.toDeviceId === devId && l.toPort === pName)
+      );
+
+    const active = liveCableDrawRef.current;
+    const mode = cableToolModeRef.current;
+    const fixedType = selectedCableTypeRef.current;
+
+    if (!active) {
+      const anchors = getDevicePortAnchors(device);
+      if (forcedPortName) {
+        const anchor = anchors.find(a => a.name === forcedPortName);
+        const iface = device.interfaces.find(i => i.name === forcedPortName);
+        if (!anchor || !iface) return;
+        if (isBusy(device.id, anchor.name)) {
+          flashBanner(`${device.name} ${anchor.shortName} is already connected`);
+          return;
+        }
+        if (mode !== 'auto' && !isPortCompatibleWithCable(iface, fixedType)) {
+          flashBanner(`${CABLE_META[fixedType].short} cable cannot attach to ${anchor.shortName}`);
+          return;
+        }
+        const initial: LiveCableDrawState = {
+          fromDeviceId: device.id,
+          fromPort: anchor.name,
+          fromShortName: anchor.shortName,
+          fromX: anchor.x,
+          fromY: anchor.y,
+          fromPortLocked: true,
+          cursorX: currX,
+          cursorY: currY,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          isDragGesture: false,
+          snapTarget: null,
+          blockedTarget: null
+        };
+        liveCableDrawRef.current = initial;
+        setLiveCableDraw(initial);
+        setPendingCableSource(null);
+        setPendingCableTarget(null);
+        return;
+      }
+
+      const freeAnchors = anchors.filter(a => {
+        if (isBusy(device.id, a.name)) return false;
+        if (mode === 'auto') return true;
+        const iface = device.interfaces.find(i => i.name === a.name);
+        return iface ? isPortCompatibleWithCable(iface, fixedType) : false;
+      });
+      if (freeAnchors.length === 0) {
+        flashBanner(
+          mode === 'auto'
+            ? `No free ports available on ${device.name}`
+            : `No free ${CABLE_META[fixedType].short}-compatible ports on ${device.name}`
+        );
+        return;
+      }
+
+      let best = freeAnchors[0];
+      let bestDist = Math.hypot(currX - best.x, currY - best.y);
+      for (let i = 1; i < freeAnchors.length; i++) {
+        const d = Math.hypot(currX - freeAnchors[i].x, currY - freeAnchors[i].y);
+        if (d < bestDist) {
+          best = freeAnchors[i];
+          bestDist = d;
+        }
+      }
+
+      const initial: LiveCableDrawState = {
+        fromDeviceId: device.id,
+        fromPort: best.name,
+        fromShortName: best.shortName,
+        fromX: best.x,
+        fromY: best.y,
+        fromPortLocked: false,
+        cursorX: currX,
+        cursorY: currY,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        isDragGesture: false,
+        snapTarget: null,
+        blockedTarget: null
+      };
+      liveCableDrawRef.current = initial;
+      setLiveCableDraw(initial);
+      setPendingCableSource(null);
+      setPendingCableTarget(null);
+      return;
+    }
+
+    // Active click-move-click mode: second click completes or cancels
+    suppressCanvasClickRef.current = true;
+    window.setTimeout(() => {
+      suppressCanvasClickRef.current = false;
+    }, 0);
+
+    if (device.id === active.fromDeviceId) {
+      if (forcedPortName && forcedPortName !== active.fromPort) {
+        const anchor = getDevicePortAnchors(device).find(a => a.name === forcedPortName);
+        const iface = device.interfaces.find(i => i.name === forcedPortName);
+        if (
+          anchor &&
+          iface &&
+          !isBusy(device.id, anchor.name) &&
+          (mode === 'auto' || isPortCompatibleWithCable(iface, fixedType))
+        ) {
+          const switched: LiveCableDrawState = {
+            ...active,
+            fromPort: anchor.name,
+            fromShortName: anchor.shortName,
+            fromX: anchor.x,
+            fromY: anchor.y,
+            fromPortLocked: true,
+            snapTarget: null,
+            blockedTarget: null
+          };
+          liveCableDrawRef.current = switched;
+          setLiveCableDraw(switched);
+          return;
+        }
+      }
+      clearLiveCableDraw();
+      return;
+    }
+
+    const sourceDev = devicesRef.current.find(d => d.id === active.fromDeviceId);
+    if (!sourceDev) {
+      clearLiveCableDraw();
+      return;
+    }
+
+    const resolved = resolveMagneticPortPair(
+      sourceDev,
+      device,
+      currX,
+      currY,
+      active.fromPortLocked,
+      active.fromPort,
+      forcedPortName
+    );
+    if (resolved) {
+      finalizeMagneticCableLink(sourceDev.id, resolved.fromAnchor.name, {
+        deviceId: device.id,
+        deviceName: device.name,
+        portName: resolved.toAnchor.name,
+        shortName: resolved.toAnchor.shortName,
+        x: resolved.toAnchor.x,
+        y: resolved.toAnchor.y,
+        cableType: resolved.cableType
+      });
+    } else {
+      flashBanner(`No free compatible ports between ${sourceDev.name} and ${device.name}`);
+      clearLiveCableDraw();
+    }
+  };
 
   // Cable port selection completion
   const completeCableConnection = (toPort: string) => {
@@ -2333,106 +2926,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     }
 
     if (tool === 'cable') {
-      if (cableToolMode === 'auto') {
-        if (!pendingCableSource) {
-          setPendingCableSource({ deviceId: device.id });
-          setPendingCableTarget(null);
-          return;
-        }
-        if (pendingCableSource.deviceId === device.id) {
-          setPendingCableSource(null);
-          setPendingCableTarget(null);
-          return;
-        }
-        const sourceDev = devices.find(d => d.id === pendingCableSource.deviceId);
-        if (!sourceDev) {
-          setPendingCableSource(null);
-          return;
-        }
-
-        const candidateOrder: SimCableType[] = (() => {
-          const pair = new Set([sourceDev.type, device.type]);
-          if (sourceDev.type === 'switch' && device.type === 'switch') {
-            return ['crossover', 'fiber', 'straight'];
-          }
-          if (pair.has('switch')) {
-            return ['straight', 'fiber', 'crossover'];
-          }
-          if (sourceDev.type === 'router' && device.type === 'router') {
-            return ['crossover', 'serial', 'fiber', 'straight'];
-          }
-          return ['crossover', 'straight', 'fiber'];
-        })();
-
-        let chosenType: SimCableType | null = null;
-        let chosenFromPort: string | null = null;
-        let chosenToPort: string | null = null;
-
-        for (const ct of candidateOrder) {
-          const fromIface = sourceDev.interfaces.find(
-            i =>
-              i.kind !== 'subinterface' &&
-              !isPortInUse(sourceDev.id, i.name) &&
-              isPortCompatibleWithCable(i, ct)
-          );
-          const toIface = device.interfaces.find(
-            i =>
-              i.kind !== 'subinterface' &&
-              !isPortInUse(device.id, i.name) &&
-              isPortCompatibleWithCable(i, ct)
-          );
-          if (fromIface && toIface) {
-            chosenType = ct;
-            chosenFromPort = fromIface.name;
-            chosenToPort = toIface.name;
-            break;
-          }
-        }
-
-        if (!chosenType || !chosenFromPort || !chosenToPort) {
-          flashBanner(`No free compatible ports between ${sourceDev.name} and ${device.name}`);
-          setPendingCableSource(null);
-          setPendingCableTarget(null);
-          return;
-        }
-
-        const newLink: SimLink = {
-          id: `link-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          cableType: chosenType,
-          fromDeviceId: sourceDev.id,
-          fromPort: chosenFromPort,
-          toDeviceId: device.id,
-          toPort: chosenToPort
-        };
-        const status = evaluateLinkStatus(newLink, devices);
-        setLinks(prev => [...prev, newLink]);
-        setSelectedLinkId(newLink.id);
-        setPendingCableSource(null);
-        setPendingCableTarget(null);
-        flashBanner(
-          status.isUp
-            ? `Auto-connected ${sourceDev.name} ↔ ${device.name} (${CABLE_META[chosenType].short})`
-            : `Auto-attached ${CABLE_META[chosenType].short} cable (${status.reason})`
-        );
-        return;
-      }
-
-      if (!pendingCableSource) {
-        setPendingCableSource({ deviceId: device.id });
-        setPendingCableTarget(null);
-        return;
-      }
-      if (pendingCableSource.deviceId === device.id) {
-        setPendingCableSource(null);
-        setPendingCableTarget(null);
-        return;
-      }
-      if (!pendingCableSource.portName) {
-        // User hadn't picked port on source yet; switch source
-        setPendingCableSource({ deviceId: device.id });
-        return;
-      }
-      setPendingCableTarget({ deviceId: device.id });
+      // Handled via magnetic line drawing in handleCableSurfacePointerDown / pointermove / pointerup
       return;
     }
 
@@ -2599,6 +3093,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     setEditingDiagramLabelId(null);
     setPendingCableSource(null);
     setPendingCableTarget(null);
+    clearLiveCableDraw();
     setLastPingResult(null);
     setRecentlySavedProjectId(null);
     setIsSavePromptOpen(false);
@@ -2608,8 +3103,20 @@ export const NetworkTopologySimulator: React.FC = () => {
   };
 
   const handleExportTopology = (record?: SavedLabRecord) => {
-    if (!record && devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0) {
-      flashBanner('Place at least one device, zone, or label before exporting a topology JSON file');
+    const targetDevices = record ? record.devices : devices;
+    const targetLinks = record ? record.links : links;
+    const targetShapes = record ? record.shapes || [] : shapes;
+    const targetLabels = record ? record.labels || [] : diagramLabels;
+
+    if (
+      targetDevices.length === 0 &&
+      targetShapes.length === 0 &&
+      targetLabels.length === 0
+    ) {
+      flashBanner(
+        'Place at least one device, zone, or label before exporting a topology JSON file',
+        'error'
+      );
       return;
     }
 
@@ -2645,30 +3152,23 @@ export const NetworkTopologySimulator: React.FC = () => {
         }
       : undefined;
 
-    const payload: SavedLabSnapshot = {
-      format: 'netplus-lab-project-v1',
+    const payload = buildTopologyJsonPayload({
       title: exportTitle,
       status: resolvedStatus,
       presetId: record?.presetId || activePresetId,
-      exportedAt: new Date().toISOString(),
       studentEmail: currentUser.email,
       ...(objectivesSummary ? { objectivesSummary } : {}),
-      devices: record ? record.devices : devices,
-      links: record ? record.links : links,
-      shapes: record ? record.shapes || [] : shapes,
-      labels: record ? record.labels || [] : diagramLabels
-    };
+      devices: targetDevices,
+      links: targetLinks,
+      shapes: targetShapes,
+      labels: targetLabels
+    });
+
     const filename = toProjectFileName(exportTitle);
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    flashBanner(`Exported topology JSON (${filename})`);
+    triggerTopologyJsonDownload(payload, filename);
+    flashBanner(
+      `Exported "${payload.title}" (${payload.summary.deviceCount} devices, ${payload.summary.linkCount} cables) → ${filename}`
+    );
   };
 
   const handleExportImage = async (format: 'png' | 'svg', record?: SavedLabRecord) => {
@@ -2740,43 +3240,102 @@ export const NetworkTopologySimulator: React.FC = () => {
     }
   };
 
+  const importTopologyFromText = (rawText: string, fileName: string) => {
+    const knownPresets = new Set(NETWORK_LAB_PRESETS.map(p => p.id));
+    const parsed = parseAndValidateTopologyJson(rawText, knownPresets);
+    if (!parsed.ok) {
+      flashBanner(parsed.error, 'error');
+      return;
+    }
+
+    const {
+      title,
+      status,
+      presetId,
+      devices: importedDevices,
+      links: importedLinks,
+      shapes: importedShapes,
+      labels: importedLabels,
+      warnings
+    } = parsed.data;
+
+    setActivePresetId(presetId);
+    setDevices(importedDevices);
+    setLinks(importedLinks);
+    setShapes(importedShapes);
+    setDiagramLabels(importedLabels);
+    setActiveSavedLabId(null);
+    setRecentlySavedProjectId(null);
+    setIsSavePromptOpen(false);
+
+    const firstImportedId = importedDevices[0]?.id || null;
+    setSelectedDeviceId(firstImportedId);
+    setSelectedDeviceIds(firstImportedId ? [firstImportedId] : []);
+    const preferredPingSource =
+      importedDevices.find(d => d.type === 'pc' || d.type === 'server') || importedDevices[0];
+    setPingSourceId(preferredPingSource?.id || '');
+
+    closeAllConsoleTabs();
+    setSelectedLinkId(null);
+    setSelectedShapeId(null);
+    setSelectedDiagramLabelId(null);
+    setEditingDeviceLabelId(null);
+    setEditingDiagramLabelId(null);
+    setPendingCableSource(null);
+    setPendingCableTarget(null);
+    clearLiveCableDraw();
+    setLastPingResult(null);
+    setAnimStepIndex(null);
+
+    const cleanFileBase = fileName.replace(/\.(netlab\.)?json$/i, '').trim();
+    const resolvedTitle = title || cleanFileBase || 'Imported Network Lab';
+    setSaveTitleInput(resolvedTitle);
+    setSaveStatusInput(status);
+
+    handleResetZoomPan();
+    setWorkspaceView('editor');
+
+    const countParts = [
+      `${importedDevices.length} device${importedDevices.length === 1 ? '' : 's'}`,
+      `${importedLinks.length} cable${importedLinks.length === 1 ? '' : 's'}`
+    ];
+    if (importedShapes.length > 0) {
+      countParts.push(`${importedShapes.length} zone${importedShapes.length === 1 ? '' : 's'}`);
+    }
+    if (importedLabels.length > 0) {
+      countParts.push(`${importedLabels.length} label${importedLabels.length === 1 ? '' : 's'}`);
+    }
+    const warningSuffix = warnings.length > 0 ? ` (${warnings.join('; ')})` : '';
+    flashBanner(`Imported "${resolvedTitle}" — ${countParts.join(', ')}${warningSuffix}`);
+  };
+
+  const importTopologyFile = (file: File) => {
+    const looksLikeJson =
+      /\.json$/i.test(file.name) ||
+      file.type === 'application/json' ||
+      file.type === 'text/json';
+    if (!looksLikeJson) {
+      flashBanner(
+        `Unsupported file "${file.name}". Select a .json or .netlab.json topology file.`,
+        'error'
+      );
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      importTopologyFromText(String(reader.result || ''), file.name);
+    };
+    reader.onerror = () => {
+      flashBanner(`Failed to read topology file "${file.name}".`, 'error');
+    };
+    reader.readAsText(file);
+  };
+
   const handleImportTopology = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const parsed = JSON.parse(String(reader.result || ''));
-        if (Array.isArray(parsed.devices) && Array.isArray(parsed.links)) {
-          setActivePresetId(typeof parsed.presetId === 'string' ? parsed.presetId : 'blank-sandbox');
-          setDevices(parsed.devices);
-          setLinks(parsed.links);
-          setShapes(Array.isArray(parsed.shapes) ? sanitizeShapesForStorage(parsed.shapes) : []);
-          setDiagramLabels(Array.isArray(parsed.labels) ? sanitizeLabelsForStorage(parsed.labels) : []);
-          setActiveSavedLabId(null);
-          const firstImportedId = parsed.devices[0]?.id || null;
-          setSelectedDeviceId(firstImportedId);
-          setSelectedDeviceIds(firstImportedId ? [firstImportedId] : []);
-          closeAllConsoleTabs();
-          setSelectedLinkId(null);
-          setSelectedShapeId(null);
-          setSelectedDiagramLabelId(null);
-          if (typeof parsed.title === 'string' && parsed.title.trim()) {
-            setSaveTitleInput(parsed.title.trim());
-          }
-          handleResetZoomPan();
-          setWorkspaceView('editor');
-          flashBanner(
-            `Opened project file "${typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title : file.name}"`
-          );
-        } else {
-          flashBanner('Invalid lab project file format');
-        }
-      } catch {
-        flashBanner('Could not parse lab project JSON file');
-      }
-    };
-    reader.readAsText(file);
+    importTopologyFile(file);
     e.target.value = '';
   };
 
@@ -2904,6 +3463,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     setEditingDiagramLabelId(null);
     setPendingCableSource(null);
     setPendingCableTarget(null);
+    clearLiveCableDraw();
     setLastPingResult(null);
     setRecentlySavedProjectId(null);
     handleResetZoomPan();
@@ -3211,39 +3771,6 @@ export const NetworkTopologySimulator: React.FC = () => {
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Reset</span>
               </button>
-
-              <button
-                type="button"
-                disabled={devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0}
-                onClick={() => handleExportTopology()}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-45 disabled:pointer-events-none transition-colors whitespace-nowrap shrink-0"
-                title="Export topology & device configurations as JSON (.netlab.json)"
-              >
-                <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                <span>Export JSON</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={(devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0) || isExportingImage}
-                onClick={() => handleExportImage('png')}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-45 disabled:pointer-events-none transition-colors whitespace-nowrap shrink-0"
-                title="Export high-resolution PNG diagram (2000×1380)"
-              >
-                <ImageIcon className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-                <span>{isExportingImage ? 'Exporting PNG...' : 'Export PNG'}</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0}
-                onClick={() => handleExportImage('svg')}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-45 disabled:pointer-events-none transition-colors whitespace-nowrap shrink-0"
-                title="Export scalable SVG vector diagram"
-              >
-                <FileCode className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                <span>Export SVG</span>
-              </button>
             </>
           ) : (
             <>
@@ -3278,15 +3805,130 @@ export const NetworkTopologySimulator: React.FC = () => {
             </>
           )}
 
-          <button
-            type="button"
-            onClick={() => importInputRef.current?.click()}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
-            title="Open a saved .netlab.json project file from your device"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Import File</span>
-          </button>
+          {/* Unified Import / Export Dropdown Menu */}
+          <div ref={importExportMenuRef} className="relative shrink-0">
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={isImportExportMenuOpen}
+              onClick={() => setIsImportExportMenuOpen(prev => !prev)}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                isImportExportMenuOpen
+                  ? 'border-blue-500 bg-blue-50/70 dark:bg-slate-800 text-blue-700 dark:text-cyan-300'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+              title="Import or export network topology files"
+            >
+              <FileCode2 className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+              <span>{isExportingImage ? 'Exporting PNG...' : 'Import / Export'}</span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${
+                  isImportExportMenuOpen ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+
+            {isImportExportMenuOpen && (
+              <div
+                role="menu"
+                aria-label="Import and export topology options"
+                className="absolute left-0 mt-1.5 w-60 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl py-1.5 z-50"
+              >
+                <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Import
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsImportExportMenuOpen(false);
+                    importInputRef.current?.click();
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  <Upload className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="truncate">Import JSON</div>
+                    <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400 truncate">
+                      Load .netlab.json or .json
+                    </div>
+                  </div>
+                </button>
+
+                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+
+                <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Export Current Lab
+                </div>
+                {(() => {
+                  const hasCanvasContent =
+                    devices.length > 0 || shapes.length > 0 || diagramLabels.length > 0;
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!hasCanvasContent}
+                        onClick={() => {
+                          setIsImportExportMenuOpen(false);
+                          handleExportTopology();
+                        }}
+                        className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-45 disabled:pointer-events-none transition-colors"
+                      >
+                        <Download className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="truncate">Export JSON</div>
+                          <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400 truncate">
+                            Save topology &amp; CLI config
+                          </div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!hasCanvasContent || isExportingImage}
+                        onClick={() => {
+                          setIsImportExportMenuOpen(false);
+                          handleExportImage('png');
+                        }}
+                        className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-45 disabled:pointer-events-none transition-colors"
+                      >
+                        <ImageIcon className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="truncate">
+                            {isExportingImage ? 'Exporting PNG...' : 'Export PNG'}
+                          </div>
+                          <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400 truncate">
+                            High-res diagram (2000×1380)
+                          </div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!hasCanvasContent}
+                        onClick={() => {
+                          setIsImportExportMenuOpen(false);
+                          handleExportImage('svg');
+                        }}
+                        className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-45 disabled:pointer-events-none transition-colors"
+                      >
+                        <FileCode className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="truncate">Export SVG</div>
+                          <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400 truncate">
+                            Scalable vector diagram
+                          </div>
+                        </div>
+                      </button>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
           <input
             ref={importInputRef}
             type="file"
@@ -3408,12 +4050,28 @@ export const NetworkTopologySimulator: React.FC = () => {
 
       {/* Feedback Banner */}
       {statusBanner && (
-        <div className="px-4 py-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-xs font-medium text-blue-900 dark:text-cyan-200 flex items-center justify-between gap-2">
-          <span>{statusBanner}</span>
+        <div
+          role={statusBannerTone === 'error' ? 'alert' : 'status'}
+          className={`px-4 py-2.5 rounded-xl border text-xs font-medium flex items-center justify-between gap-2 ${
+            statusBannerTone === 'error'
+              ? 'bg-red-50 dark:bg-red-950/60 border-red-200 dark:border-red-800 text-red-900 dark:text-red-200'
+              : 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-800 text-blue-900 dark:text-cyan-200'
+          }`}
+        >
+          <span className="flex items-center gap-2 min-w-0">
+            {statusBannerTone === 'error' && (
+              <AlertTriangle className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0" />
+            )}
+            <span>{statusBanner}</span>
+          </span>
           <button
             type="button"
             onClick={() => setStatusBanner(null)}
-            className="text-blue-600 dark:text-cyan-300 font-semibold hover:underline shrink-0"
+            className={`font-semibold hover:underline shrink-0 ${
+              statusBannerTone === 'error'
+                ? 'text-red-700 dark:text-red-300'
+                : 'text-blue-600 dark:text-cyan-300'
+            }`}
           >
             Dismiss
           </button>
@@ -3579,6 +4237,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                     }
                     setPendingCableSource(null);
                     setPendingCableTarget(null);
+                    clearLiveCableDraw();
                   }}
                   className={`inline-flex items-center justify-center w-10 h-9 rounded-lg border transition-colors shrink-0 ${
                     isActive
@@ -3645,6 +4304,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                 setTool('select');
                 setPendingCableSource(null);
                 setPendingCableTarget(null);
+                clearLiveCableDraw();
               }}
               className={`inline-flex items-center justify-center w-10 h-9 rounded-lg border transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                 tool === 'select'
@@ -3664,6 +4324,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                 setTool('marquee');
                 setPendingCableSource(null);
                 setPendingCableTarget(null);
+                clearLiveCableDraw();
               }}
               className={`inline-flex items-center justify-center w-10 h-9 rounded-lg border transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                 tool === 'marquee'
@@ -3683,6 +4344,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                 setTool('pan');
                 setPendingCableSource(null);
                 setPendingCableTarget(null);
+                clearLiveCableDraw();
               }}
               className={`inline-flex items-center justify-center w-10 h-9 rounded-lg border transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                 tool === 'pan'
@@ -3702,6 +4364,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                 setTool('delete');
                 setPendingCableSource(null);
                 setPendingCableTarget(null);
+                clearLiveCableDraw();
               }}
               className={`inline-flex items-center justify-center w-10 h-9 rounded-lg border transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
                 tool === 'delete'
@@ -3913,13 +4576,11 @@ export const NetworkTopologySimulator: React.FC = () => {
                   <>
                     <span aria-hidden="true">·</span>
                     <span className="text-blue-600 dark:text-cyan-400 font-medium truncate">
-                      {cableToolMode === 'auto'
-                        ? pendingCableSource
-                          ? `Auto-cable from ${devices.find(d => d.id === pendingCableSource.deviceId)?.name} — click target device`
-                          : 'Auto-Choose Cable: click source device, then target device'
-                        : pendingCableSource?.portName
-                        ? `Source ${devices.find(d => d.id === pendingCableSource.deviceId)?.name} (${pendingCableSource.portName}) — click target device`
-                        : `Click first device to attach ${CABLE_META[selectedCableType].short} cable (${CABLE_META[selectedCableType].hint})`}
+                      {liveCableDraw
+                        ? liveCableDraw.snapTarget
+                          ? `Magnetic snap: ${devices.find(d => d.id === liveCableDraw.fromDeviceId)?.name} (${liveCableDraw.fromShortName}) ↔ ${liveCableDraw.snapTarget.deviceName} (${liveCableDraw.snapTarget.shortName}) · ${CABLE_META[liveCableDraw.snapTarget.cableType].short}`
+                          : `Drawing ${cableToolMode === 'auto' ? 'Auto' : CABLE_META[selectedCableType].short} from ${devices.find(d => d.id === liveCableDraw.fromDeviceId)?.name} (${liveCableDraw.fromShortName}) — aim near target port or device to snap`
+                        : `Magnetic Cable (${cableToolMode === 'auto' ? 'Auto-Choose' : CABLE_META[selectedCableType].short}): drag or click from a device/port to another to snap & anchor`}
                     </span>
                   </>
                 )}
@@ -3995,6 +4656,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                 ) {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = 'copy';
+                  setIsJsonFileDragOver(false);
                   const canvas = canvasRef.current;
                   if (!canvas) return;
                   const rect = canvas.getBoundingClientRect();
@@ -4008,15 +4670,32 @@ export const NetworkTopologySimulator: React.FC = () => {
                       ? prev
                       : { type: activeType, x, y }
                   );
+                  return;
+                }
+
+                if (e.dataTransfer.types.includes('Files')) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'copy';
+                  setIsJsonFileDragOver(true);
                 }
               }}
               onDragLeave={(e) => {
                 if (!e.currentTarget.contains(e.relatedTarget as Node)) {
                   setPaletteDropPreview(null);
+                  setIsJsonFileDragOver(false);
                 }
               }}
               onDrop={(e) => {
                 e.preventDefault();
+                setIsJsonFileDragOver(false);
+                if (
+                  !draggedPaletteTypeRef.current &&
+                  e.dataTransfer.files &&
+                  e.dataTransfer.files.length > 0
+                ) {
+                  importTopologyFile(e.dataTransfer.files[0]);
+                  return;
+                }
                 const transferType = (e.dataTransfer.getData('application/x-netlab-device') ||
                   e.dataTransfer.getData('text/plain')) as SimDeviceType;
                 const dropType = draggedPaletteTypeRef.current || transferType;
@@ -4112,6 +4791,17 @@ export const NetworkTopologySimulator: React.FC = () => {
                 }
               }}
               onPointerDown={(e) => {
+                if (tool === 'cable' && e.button === 0 && !isSpacePanningRef.current && liveCableDrawRef.current) {
+                  const isStageClick =
+                    e.target === viewportRef.current ||
+                    e.target === stageBoxRef.current ||
+                    e.target === canvasRef.current;
+                  if (isStageClick) {
+                    clearLiveCableDraw();
+                    suppressCanvasClickRef.current = true;
+                  }
+                  return;
+                }
                 if (tool !== 'select' || isSpacePanningRef.current || e.button !== 0) return;
                 if (
                   e.target !== viewportRef.current &&
@@ -4168,7 +4858,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                   ? 'cursor-grabbing'
                   : tool === 'pan' || isSpacePanning
                   ? 'cursor-grab'
-                  : tool === 'marquee'
+                  : tool === 'marquee' || tool === 'cable'
                   ? 'cursor-crosshair'
                   : ''
               }`}
@@ -4635,8 +5325,16 @@ export const NetworkTopologySimulator: React.FC = () => {
                     animStepIndex !== null &&
                     lastPingResult?.hops[animStepIndex]?.linkId === link.id;
 
-                  // Compute endpoint LED and per-interface label geometry near each device
-                  const geom = computeCableGeometry(fromDev.x, fromDev.y, toDev.x, toDev.y);
+                  // Compute anchored endpoint socket coordinates and per-interface label geometry
+                  const fromAnchor = getDevicePortPosition(fromDev, link.fromPort);
+                  const toAnchor = getDevicePortPosition(toDev, link.toPort);
+                  const geom = computeCableGeometry(
+                    fromAnchor.x,
+                    fromAnchor.y,
+                    toAnchor.x,
+                    toAnchor.y,
+                    { anchored: true }
+                  );
 
                   const fromIf = fromDev.interfaces.find(i => i.name === link.fromPort);
                   const toIf = toDev.interfaces.find(i => i.name === link.toPort);
@@ -4647,10 +5345,10 @@ export const NetworkTopologySimulator: React.FC = () => {
                     <g key={link.id}>
                       {/* Invisible wide hit-area for clicking/deleting links */}
                       <line
-                        x1={fromDev.x}
-                        y1={fromDev.y}
-                        x2={toDev.x}
-                        y2={toDev.y}
+                        x1={fromAnchor.x}
+                        y1={fromAnchor.y}
+                        x2={toAnchor.x}
+                        y2={toAnchor.y}
                         stroke="transparent"
                         strokeWidth={18}
                         className="pointer-events-auto cursor-pointer"
@@ -4673,12 +5371,12 @@ export const NetworkTopologySimulator: React.FC = () => {
                         }}
                       />
 
-                      {/* Visible Link Line */}
+                      {/* Visible Link Line Anchored to Port Sockets */}
                       <line
-                        x1={fromDev.x}
-                        y1={fromDev.y}
-                        x2={toDev.x}
-                        y2={toDev.y}
+                        x1={fromAnchor.x}
+                        y1={fromAnchor.y}
+                        x2={toAnchor.x}
+                        y2={toAnchor.y}
                         stroke={
                           isActivePacketLink
                             ? '#10b981'
@@ -4691,13 +5389,32 @@ export const NetworkTopologySimulator: React.FC = () => {
                         strokeWidth={isActivePacketLink || isSelected ? 4 : 2.5}
                         strokeDasharray={meta.dash}
                         strokeOpacity={isUp || isSelected ? 0.95 : 0.6}
+                        strokeLinecap="round"
+                      />
+
+                      {/* Port Socket Anchor Pins */}
+                      <circle
+                        cx={fromAnchor.x}
+                        cy={fromAnchor.y}
+                        r={3.3}
+                        fill={isSelected ? '#2563eb' : isUp ? meta.stroke : '#64748b'}
+                        stroke="#ffffff"
+                        strokeWidth={1.1}
+                      />
+                      <circle
+                        cx={toAnchor.x}
+                        cy={toAnchor.y}
+                        r={3.3}
+                        fill={isSelected ? '#2563eb' : isUp ? meta.stroke : '#64748b'}
+                        stroke="#ffffff"
+                        strokeWidth={1.1}
                       />
 
                       {/* Endpoint Link LEDs (Green = Up, Red = Down/Mismatch) */}
                       <circle
                         cx={geom.x1Led}
                         cy={geom.y1Led}
-                        r={4.5}
+                        r={4.2}
                         fill={isUp ? '#10b981' : '#ef4444'}
                         stroke="#0f172a"
                         strokeWidth={1}
@@ -4705,7 +5422,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                       <circle
                         cx={geom.x2Led}
                         cy={geom.y2Led}
-                        r={4.5}
+                        r={4.2}
                         fill={isUp ? '#10b981' : '#ef4444'}
                         stroke="#0f172a"
                         strokeWidth={1}
@@ -4750,6 +5467,94 @@ export const NetworkTopologySimulator: React.FC = () => {
                   );
                 })}
 
+                {/* Live Magnetic Cable Line Drawing Preview */}
+                {liveCableDraw && (() => {
+                  const previewType: SimCableType =
+                    liveCableDraw.snapTarget?.cableType ||
+                    (cableToolMode === 'auto' ? 'straight' : selectedCableType);
+                  const previewMeta = CABLE_META[previewType];
+                  const endX = liveCableDraw.snapTarget
+                    ? liveCableDraw.snapTarget.x
+                    : liveCableDraw.cursorX;
+                  const endY = liveCableDraw.snapTarget
+                    ? liveCableDraw.snapTarget.y
+                    : liveCableDraw.cursorY;
+
+                  return (
+                    <g>
+                      {liveCableDraw.snapTarget && (
+                        <line
+                          x1={liveCableDraw.cursorX}
+                          y1={liveCableDraw.cursorY}
+                          x2={endX}
+                          y2={endY}
+                          stroke={previewMeta.stroke}
+                          strokeWidth={1.2}
+                          strokeDasharray="2 3"
+                          strokeOpacity={0.55}
+                        />
+                      )}
+                      <line
+                        x1={liveCableDraw.fromX}
+                        y1={liveCableDraw.fromY}
+                        x2={endX}
+                        y2={endY}
+                        stroke={liveCableDraw.blockedTarget ? '#ef4444' : previewMeta.stroke}
+                        strokeWidth={liveCableDraw.snapTarget ? 3.2 : 2.5}
+                        strokeDasharray={previewMeta.dash || (liveCableDraw.snapTarget ? undefined : '5 4')}
+                        strokeOpacity={0.95}
+                        strokeLinecap="round"
+                      />
+                      <circle
+                        cx={liveCableDraw.fromX}
+                        cy={liveCableDraw.fromY}
+                        r={6.5}
+                        fill="none"
+                        stroke={previewMeta.stroke}
+                        strokeWidth={1.8}
+                        strokeOpacity={0.75}
+                      />
+                      <circle
+                        cx={liveCableDraw.fromX}
+                        cy={liveCableDraw.fromY}
+                        r={3.8}
+                        fill={previewMeta.stroke}
+                        stroke="#ffffff"
+                        strokeWidth={1.2}
+                      />
+                      {liveCableDraw.snapTarget ? (
+                        <g>
+                          <circle
+                            cx={endX}
+                            cy={endY}
+                            r={10.5}
+                            fill={previewMeta.stroke}
+                            fillOpacity={0.18}
+                            stroke={previewMeta.stroke}
+                            strokeWidth={1.8}
+                          />
+                          <circle
+                            cx={endX}
+                            cy={endY}
+                            r={4.5}
+                            fill={previewMeta.stroke}
+                            stroke="#ffffff"
+                            strokeWidth={1.4}
+                          />
+                        </g>
+                      ) : (
+                        <circle
+                          cx={endX}
+                          cy={endY}
+                          r={3.5}
+                          fill={liveCableDraw.blockedTarget ? '#ef4444' : previewMeta.stroke}
+                          fillOpacity={0.85}
+                        />
+                      )}
+                    </g>
+                  );
+                })()}
+
                 {/* Animated Packet Marker */}
                 {activePacketPos && (
                   <g>
@@ -4765,10 +5570,185 @@ export const NetworkTopologySimulator: React.FC = () => {
                 )}
               </svg>
 
+              {/* Magnetic Interface Port Socket Overlay during Cable Mode */}
+              {tool === 'cable' && (
+                <svg
+                  viewBox="0 0 1000 580"
+                  className="absolute inset-0 w-full h-full pointer-events-none z-[25]"
+                  preserveAspectRatio="none"
+                >
+                  {devices.map(dev => {
+                    const anchors = getDevicePortAnchors(dev);
+                    const isSourceDev = liveCableDraw?.fromDeviceId === dev.id;
+                    const isSnappedDev = liveCableDraw?.snapTarget?.deviceId === dev.id;
+                    const isBlockedDev = liveCableDraw?.blockedTarget?.deviceId === dev.id;
+
+                    return (
+                      <g key={`ports-${dev.id}`}>
+                        {(isSourceDev || isSnappedDev) && (
+                          <circle
+                            cx={dev.x}
+                            cy={dev.y}
+                            r={36}
+                            fill="none"
+                            stroke={isSnappedDev ? '#10b981' : '#0ea5e9'}
+                            strokeWidth={1.4}
+                            strokeDasharray="4 3"
+                            strokeOpacity={0.65}
+                          />
+                        )}
+                        {isBlockedDev && (
+                          <circle
+                            cx={dev.x}
+                            cy={dev.y}
+                            r={36}
+                            fill="none"
+                            stroke="#ef4444"
+                            strokeWidth={1.4}
+                            strokeDasharray="4 3"
+                            strokeOpacity={0.75}
+                          />
+                        )}
+                        {anchors.map(anchor => {
+                          const iface = dev.interfaces.find(i => i.name === anchor.name);
+                          const used = isPortInUse(dev.id, anchor.name);
+                          const compatible =
+                            cableToolMode === 'auto'
+                              ? true
+                              : iface
+                              ? isPortCompatibleWithCable(iface, selectedCableType)
+                              : false;
+                          const isSrcAnchor =
+                            liveCableDraw?.fromDeviceId === dev.id &&
+                            liveCableDraw.fromPort === anchor.name;
+                          const isSnappedAnchor =
+                            liveCableDraw?.snapTarget?.deviceId === dev.id &&
+                            liveCableDraw.snapTarget.portName === anchor.name;
+                          const portKey = `${dev.id}:${anchor.name}`;
+                          const isHovered = hoveredPortKey === portKey;
+
+                          const kindColor =
+                            anchor.kind === 'fiber'
+                              ? '#f59e0b'
+                              : anchor.kind === 'serial'
+                              ? '#ef4444'
+                              : '#0ea5e9';
+
+                          return (
+                            <g
+                              key={portKey}
+                              className={
+                                used || !compatible
+                                  ? 'pointer-events-auto cursor-not-allowed'
+                                  : 'pointer-events-auto cursor-crosshair'
+                              }
+                              onPointerEnter={() => setHoveredPortKey(portKey)}
+                              onPointerLeave={() =>
+                                setHoveredPortKey(prev => (prev === portKey ? null : prev))
+                              }
+                              onPointerDown={(e) => handleCableSurfacePointerDown(dev, e, anchor.name)}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <circle cx={anchor.x} cy={anchor.y} r={8} fill="transparent" />
+                              {(isSnappedAnchor || isSrcAnchor || isHovered) && compatible && !used && (
+                                <circle
+                                  cx={anchor.x}
+                                  cy={anchor.y}
+                                  r={isSnappedAnchor ? 9.5 : 7}
+                                  fill={kindColor}
+                                  fillOpacity={isSnappedAnchor ? 0.24 : 0.16}
+                                  stroke={kindColor}
+                                  strokeWidth={1.3}
+                                />
+                              )}
+                              <circle
+                                cx={anchor.x}
+                                cy={anchor.y}
+                                r={isSnappedAnchor || isSrcAnchor ? 4.4 : isHovered ? 4.2 : 3.3}
+                                fill={
+                                  isSnappedAnchor || isSrcAnchor
+                                    ? kindColor
+                                    : used
+                                    ? '#64748b'
+                                    : compatible
+                                    ? '#ffffff'
+                                    : '#475569'
+                                }
+                                fillOpacity={!compatible && !used ? 0.35 : 0.96}
+                                stroke={used ? '#334155' : compatible ? kindColor : '#64748b'}
+                                strokeOpacity={!compatible && !used ? 0.4 : 0.95}
+                                strokeWidth={isSnappedAnchor || isSrcAnchor ? 1.6 : 1.5}
+                              />
+                            </g>
+                          );
+                        })}
+                      </g>
+                    );
+                  })}
+                </svg>
+              )}
+
+              {/* Magnetic Snap & Port Hover Readout Pill */}
+              {tool === 'cable' &&
+                (() => {
+                  if (liveCableDraw?.snapTarget) {
+                    const st = liveCableDraw.snapTarget;
+                    return (
+                      <div
+                        style={{
+                          left: `${(st.x / 1000) * 100}%`,
+                          top: `${Math.max(4, ((st.y - 16) / 580) * 100)}%`
+                        }}
+                        className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 text-[10px] font-mono font-bold shadow-md pointer-events-none z-40 whitespace-nowrap"
+                      >
+                        {st.deviceName} · {st.shortName} ({CABLE_META[st.cableType].short})
+                      </div>
+                    );
+                  }
+                  if (liveCableDraw?.blockedTarget) {
+                    const bt = liveCableDraw.blockedTarget;
+                    return (
+                      <div
+                        style={{
+                          left: `${(bt.x / 1000) * 100}%`,
+                          top: `${Math.max(4, ((bt.y - 38) / 580) * 100)}%`
+                        }}
+                        className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-mono font-bold shadow-md pointer-events-none z-40 whitespace-nowrap"
+                      >
+                        {bt.deviceName}: {bt.reason}
+                      </div>
+                    );
+                  }
+                  if (hoveredPortKey) {
+                    const sepIdx = hoveredPortKey.indexOf(':');
+                    const hDevId = hoveredPortKey.slice(0, sepIdx);
+                    const hPortName = hoveredPortKey.slice(sepIdx + 1);
+                    const hDev = devices.find(d => d.id === hDevId);
+                    if (!hDev) return null;
+                    const hAnchor = getDevicePortAnchors(hDev).find(a => a.name === hPortName);
+                    if (!hAnchor) return null;
+                    const used = isPortInUse(hDev.id, hAnchor.name);
+                    return (
+                      <div
+                        style={{
+                          left: `${(hAnchor.x / 1000) * 100}%`,
+                          top: `${Math.max(4, ((hAnchor.y - 14) / 580) * 100)}%`
+                        }}
+                        className="absolute -translate-x-1/2 -translate-y-full px-2 py-0.5 rounded-md bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 text-[10px] font-mono font-bold shadow-md pointer-events-none z-40 whitespace-nowrap"
+                      >
+                        {hDev.name} · {hAnchor.shortName} {used ? '(In use)' : '(Free)'}
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
               {/* Draggable Topology Device Nodes & Movable Labels */}
               {devices.map(dev => {
                 const isSelected = selectedDeviceId === dev.id || selectedDeviceIds.includes(dev.id);
-                const isPendingSrc = pendingCableSource?.deviceId === dev.id;
+                const isPendingSrc =
+                  pendingCableSource?.deviceId === dev.id ||
+                  liveCableDraw?.fromDeviceId === dev.id;
                 const isActiveHop =
                   animStepIndex !== null &&
                   lastPingResult?.hops[animStepIndex]?.deviceId === dev.id;
@@ -4813,7 +5793,9 @@ export const NetworkTopologySimulator: React.FC = () => {
                         top: `${(dev.y / 580) * 100}%`
                       }}
                       title={
-                        tool === 'select'
+                        tool === 'cable'
+                          ? 'Drag or click to draw magnetic cable to another device port'
+                          : tool === 'select'
                           ? 'Click: select · Long-click & drag: move · Double-click: open console'
                           : tool === 'marquee'
                           ? isSelected && selectedDeviceIds.length >= 2
@@ -4822,6 +5804,10 @@ export const NetworkTopologySimulator: React.FC = () => {
                           : undefined
                       }
                       onPointerDown={(e) => {
+                        if (tool === 'cable' && e.button === 0) {
+                          handleCableSurfacePointerDown(dev, e);
+                          return;
+                        }
                         if (tool !== 'select' || e.button !== 0) return;
                         e.stopPropagation();
                         const isModifier = e.ctrlKey || e.metaKey || e.shiftKey;
@@ -5282,6 +6268,16 @@ export const NetworkTopologySimulator: React.FC = () => {
               )}
               </div>
               </div>
+
+              {/* JSON Topology File Drop Overlay */}
+              {isJsonFileDragOver && (
+                <div className="absolute inset-0 z-40 pointer-events-none flex items-center justify-center bg-blue-500/10 dark:bg-cyan-500/10 border-2 border-dashed border-blue-500 dark:border-cyan-400 rounded-b-2xl backdrop-blur-[1px]">
+                  <div className="px-4 py-3 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-blue-200 dark:border-cyan-700 shadow-lg flex items-center gap-2.5 text-xs font-bold text-slate-900 dark:text-white">
+                    <Upload className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
+                    <span>Drop topology JSON file (.netlab.json / .json) to load</span>
+                  </div>
+                </div>
+              )}
 
               {/* Floating Viewport Zoom, Fit & Fullscreen Controls HUD */}
               <div

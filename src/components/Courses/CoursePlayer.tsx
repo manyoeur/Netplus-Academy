@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   ArrowLeft,
-  CheckCircle,
   ChevronRight,
   ChevronLeft,
   ChevronDown,
@@ -16,23 +15,20 @@ import {
   CheckSquare,
   Lock,
   CreditCard,
-  Layers,
   FileText,
-  Mouse,
-  Clapperboard,
-  SquarePen,
-  Activity,
   ChevronUp,
   BookOpen,
   CheckCircle2,
   Plus,
   SquareStack,
-  Edit3
+  Edit3,
+  Check,
+  PanelLeftClose,
+  PanelLeftOpen
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course, CourseModule } from '../../types';
 import { InteractiveCliTerminal } from '../Lab/InteractiveCliTerminal';
-import { CourseThumbnail } from './CourseThumbnail';
 import { InteractiveQuiz, QuizResult } from './InteractiveQuiz';
 import { VideoLecturePlayer } from './VideoLecturePlayer';
 import { PostModuleQuiz } from './PostModuleQuiz';
@@ -208,11 +204,14 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   // Accordion expand/collapse state for Level 1 chapters and Level 2 main contents (collapsed by default)
   const [expandedChapters, setExpandedChapters] = useState<Record<string, boolean>>({});
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const [isOutlineSidebarCollapsed, setIsOutlineSidebarCollapsed] = useState<boolean>(false);
+  const [isOutlineBodyCollapsed, setIsOutlineBodyCollapsed] = useState<boolean>(false);
 
   // Reset outline to collapsed by default when switching courses
   useEffect(() => {
     setExpandedChapters({});
     setExpandedSections({});
+    setIsOutlineBodyCollapsed(false);
   }, [course.id]);
 
   const toggleChapterAccordion = (chapterId: string) => {
@@ -1041,17 +1040,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 {course.title}
               </h2>
             </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate tabular-nums">
-              {playerMode === 'quiz' && activeModuleQuiz
-                ? `Quiz Mode · Module ${activeModuleIndex + 1} of ${course.modules.length}: ${activeModule.title} · ${activeQuizCompleted} of ${activeQuizTotal} questions completed`
-                : isViewingHierarchyContent && activeHierarchyChapter
-                ? activeHierarchySection
-                  ? `${activeHierarchyChapter.chapterNumber} ${activeHierarchyChapter.title} › ${activeHierarchySection.sectionNumber} ${activeHierarchySection.title} · Section Content`
-                  : `${activeHierarchyChapter.chapterNumber} ${activeHierarchyChapter.title} · Chapter Content`
-                : activeBreadcrumb
-                ? `${activeBreadcrumb.chapterNumber} ${activeBreadcrumb.chapterTitle} › ${activeBreadcrumb.sectionNumber} ${activeBreadcrumb.mainContentTitle} › ${activeBreadcrumb.itemNumber} ${activeModule.title} · Scroll ${currentReadingPercent}%`
-                : `Module ${activeModuleIndex + 1} of ${course.modules.length}: ${activeModule.title} · Scroll ${currentReadingPercent}%`}
-            </p>
           </div>
         </div>
 
@@ -1145,470 +1133,664 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       {/* Main 2-Column Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
 
-        {/* Left Column: Syllabus Navigation */}
-        <div className="lg:col-span-1 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
-          {/* Course Thumbnail Mini Card */}
-          <CourseThumbnail
-            course={course}
-            className="aspect-video rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm"
-          >
-            <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between gap-2 z-10 text-[10px] font-mono">
-              <span className="text-cyan-300 font-bold">{course.code}</span>
-              <span className="text-slate-200">{course.level}</span>
-            </div>
-          </CourseThumbnail>
+        {/* Left Column: Collapsible Course Outline Only (no thumbnail) */}
+        {!isOutlineSidebarCollapsed && (
+          <div className="lg:col-span-1 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+            {/* Course Outline Header with Progress Bar & Collapse Toggle */}
+            <div className="p-4 bg-emerald-50/90 dark:bg-emerald-950/35 border-b border-emerald-200/70 dark:border-emerald-900/50 space-y-2.5">
+              <div className="flex items-start justify-between gap-2.5">
+                <div className="min-w-0">
+                  <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 block">
+                    Course Outline
+                  </span>
+                  <h3 className="text-[13px] font-bold text-slate-900 dark:text-white leading-snug line-clamp-2">
+                    {course.title}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsOutlineBodyCollapsed(prev => !prev)}
+                  aria-expanded={!isOutlineBodyCollapsed}
+                  aria-label={isOutlineBodyCollapsed ? 'Expand course outline' : 'Collapse course outline'}
+                  title={isOutlineBodyCollapsed ? 'Expand course outline' : 'Collapse course outline'}
+                  className="p-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                >
+                  {isOutlineBodyCollapsed ? (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </div>
 
-          <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <Layers className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400 shrink-0" />
-              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
-                Course Outline
-              </span>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-                {completedCount}/{course.modules.length}
-              </span>
-              <button
-                type="button"
-                onClick={handleToggleAllHierarchy}
-                className="text-[10px] font-semibold text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
-              >
-                {allExpanded ? 'Collapse' : 'Expand'}
-              </button>
-            </div>
-          </div>
-
-          {/* 3-Level Nested Course Outline: 1.0 Chapter -> 1.1 Main Contents -> 1.1.1 Course Contents */}
-          <div className="divide-y divide-slate-200/80 dark:divide-slate-800">
-            {hierarchyTree.map((chapter) => {
-              const isChapterOpen = Boolean(expandedChapters[chapter.id]);
-              const isChapterSelected =
-                playerMode === 'study' &&
-                selectedOutlineNode.level === 'chapter' &&
-                selectedOutlineNode.chapterId === chapter.id;
-              const chapterHasContent = Boolean(chapter.contentMarkdown?.trim());
-              const chapterModules = chapter.mainContents.flatMap(mc => mc.items);
-              const chapterDoneCount = chapterModules.filter(item =>
-                isModuleCompleted(item.module.id)
-              ).length;
-
-              return (
-                <div key={chapter.id} className="py-2.5 first:pt-1 last:pb-1">
-                  {/* Level 1: Chapter Header (click title to read/write chapter content, chevron to expand/collapse) */}
+              <div className="space-y-1">
+                <div
+                  role="progressbar"
+                  aria-valuenow={progressPercent}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label={`Course completion ${progressPercent}%`}
+                  className="h-1.5 w-full bg-emerald-200/70 dark:bg-emerald-950 rounded-full overflow-hidden"
+                >
                   <div
-                    className={`group flex items-start justify-between gap-1.5 px-2 py-1.5 rounded-lg transition-colors ${
-                      isChapterSelected
-                        ? 'bg-slate-100 dark:bg-slate-800/90'
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleSelectHierarchyChapter(chapter.id, false)}
-                      className="flex-1 min-w-0 text-left"
-                      title="Open chapter content"
-                    >
-                      <span
-                        className={`text-[13px] font-bold leading-snug transition-colors block ${
-                          isChapterSelected
-                            ? 'text-blue-600 dark:text-cyan-400'
-                            : 'text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-cyan-400'
-                        }`}
-                      >
-                        <span className="tabular-nums mr-1.5">{chapter.chapterNumber}</span>
-                        {chapter.title}
-                      </span>
-                    </button>
-
-                    <div className="flex items-center gap-1 shrink-0 pt-0.5">
-                      {chapterHasContent && (
-                        <FileText
-                          className="w-3 h-3 text-blue-600 dark:text-cyan-400 shrink-0"
-                          aria-label="Chapter has written content"
-                        />
-                      )}
-                      {canEditCourseContent && (
-                        <button
-                          type="button"
-                          onClick={() => handleSelectHierarchyChapter(chapter.id, true)}
-                          className="p-1 rounded-md text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover:opacity-100 transition-opacity"
-                          title={`Write or edit content for ${chapter.chapterNumber} ${chapter.title}`}
-                          aria-label={`Write content for ${chapter.chapterNumber} ${chapter.title}`}
-                        >
-                          <Edit3 className="w-3 h-3" />
-                        </button>
-                      )}
-                      <span className="text-[10px] font-mono tabular-nums text-slate-400">
-                        {chapterDoneCount}/{chapterModules.length}
-                      </span>
+                    className="h-full bg-emerald-600 dark:bg-emerald-400 rounded-full transition-all"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2 text-[11px] tabular-nums">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-slate-600 dark:text-slate-300">
+                      {completedCount} / {course.modules.length} done
+                    </span>
+                    {!isOutlineBodyCollapsed && (
                       <button
                         type="button"
-                        onClick={() => toggleChapterAccordion(chapter.id)}
-                        aria-expanded={isChapterOpen}
-                        aria-label={isChapterOpen ? `Collapse ${chapter.title}` : `Expand ${chapter.title}`}
-                        className="p-0.5 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                        onClick={handleToggleAllHierarchy}
+                        className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 hover:underline whitespace-nowrap"
                       >
-                        {isChapterOpen ? (
-                          <ChevronUp className="w-4 h-4" />
-                        ) : (
-                          <ChevronDown className="w-4 h-4" />
-                        )}
+                        {allExpanded ? 'Collapse all' : 'Expand all'}
                       </button>
-                    </div>
+                    )}
                   </div>
+                  <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300">
+                    {progressPercent}%
+                  </span>
+                </div>
+              </div>
+            </div>
 
-                  {/* Level 2: Main Contents List (indented inside Level 1 Chapter) */}
-                  {isChapterOpen && (
-                    <div className="mt-1.5 ml-3 pl-2.5 border-l-2 border-slate-200/80 dark:border-slate-800 space-y-1.5">
-                      {chapter.mainContents.map((section) => {
-                        const isSectionOpen = Boolean(expandedSections[section.id]);
-                        const isSectionSelected =
-                          playerMode === 'study' &&
-                          selectedOutlineNode.level === 'section' &&
-                          selectedOutlineNode.sectionId === section.id;
-                        const sectionHasContent = Boolean(section.contentMarkdown?.trim());
+            {/* 3-Level Nested Course Outline: 1.0 Chapter -> 1.1 Main Contents -> 1.1.1 Course Contents */}
+            {!isOutlineBodyCollapsed && (
+              <div className="p-3 space-y-3">
+                <div className="divide-y divide-slate-200/80 dark:divide-slate-800">
+                  {hierarchyTree.map((chapter) => {
+                    const isChapterOpen = Boolean(expandedChapters[chapter.id]);
+                    const isChapterSelected =
+                      playerMode === 'study' &&
+                      selectedOutlineNode.level === 'chapter' &&
+                      selectedOutlineNode.chapterId === chapter.id;
+                    const chapterHasContent = Boolean(chapter.contentMarkdown?.trim());
+                    const chapterModules = chapter.mainContents.flatMap(mc => mc.items);
+                    const chapterDoneCount = chapterModules.filter(item =>
+                      isModuleCompleted(item.module.id)
+                    ).length;
+                    const chapterTotal = chapterModules.length;
+                    const isChapterCompleted = chapterTotal > 0 && chapterDoneCount === chapterTotal;
+                    const chapterRatio = chapterTotal > 0 ? chapterDoneCount / chapterTotal : 0;
+                    const ringRadius = 7.5;
+                    const ringCircumference = 2 * Math.PI * ringRadius;
 
-                        return (
-                          <div key={section.id} className="space-y-1">
-                            {/* Level 2 Subheader (click title to read/write section content, chevron to expand/collapse) */}
-                            <div
-                              className={`group/sec flex items-start justify-between gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-md transition-colors ${
-                                isSectionSelected
-                                  ? 'bg-slate-100 dark:bg-slate-800/90'
-                                  : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                    return (
+                      <div key={chapter.id} className="py-1.5 first:pt-0 last:pb-0">
+                        {/* Level 1: Chapter Header */}
+                        <div
+                          className={`group flex items-start justify-between gap-1.5 px-2 py-2 rounded-lg transition-colors ${
+                            isChapterOpen || isChapterSelected
+                              ? 'bg-emerald-100/75 dark:bg-emerald-900/30'
+                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => toggleChapterAccordion(chapter.id)}
+                            aria-expanded={isChapterOpen}
+                            aria-label={isChapterOpen ? `Collapse ${chapter.title}` : `Expand ${chapter.title}`}
+                            className="mt-0.5 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded-full"
+                          >
+                            {isChapterCompleted ? (
+                              <span
+                                className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-xs"
+                                title="Section completed"
+                              >
+                                <Check className="w-3 h-3 stroke-[3]" />
+                              </span>
+                            ) : chapterDoneCount > 0 ? (
+                              <svg
+                                viewBox="0 0 20 20"
+                                className="w-5 h-5 -rotate-90"
+                                aria-label={`${chapterDoneCount} of ${chapterTotal} completed`}
+                              >
+                                <circle
+                                  cx="10"
+                                  cy="10"
+                                  r={ringRadius}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2.2"
+                                  className="text-emerald-200 dark:text-emerald-900"
+                                />
+                                <circle
+                                  cx="10"
+                                  cy="10"
+                                  r={ringRadius}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2.2"
+                                  strokeLinecap="round"
+                                  strokeDasharray={ringCircumference}
+                                  strokeDashoffset={ringCircumference * (1 - chapterRatio)}
+                                  className="text-emerald-600 dark:text-emerald-400 transition-all"
+                                />
+                              </svg>
+                            ) : (
+                              <span className="w-5 h-5 rounded-full border border-emerald-500/70 text-emerald-600 dark:text-emerald-400 flex items-center justify-center bg-white dark:bg-slate-900">
+                                {isChapterOpen ? (
+                                  <ChevronDown className="w-3 h-3" />
+                                ) : (
+                                  <ChevronRight className="w-3 h-3" />
+                                )}
+                              </span>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleSelectHierarchyChapter(chapter.id, false);
+                              if (!isChapterOpen) {
+                                toggleChapterAccordion(chapter.id);
+                              }
+                            }}
+                            className="flex-1 min-w-0 text-left"
+                            title="Open chapter content"
+                          >
+                            <span
+                              className={`text-[13px] font-bold leading-snug transition-colors block ${
+                                isChapterSelected
+                                  ? 'text-emerald-700 dark:text-emerald-300'
+                                  : 'text-slate-900 dark:text-white group-hover:text-emerald-700 dark:group-hover:text-emerald-300'
                               }`}
                             >
+                              <span className="tabular-nums mr-1.5">{chapter.chapterNumber}</span>
+                              {chapter.title}
+                            </span>
+                          </button>
+
+                          <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                            {chapterHasContent && (
+                              <FileText
+                                className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0"
+                                aria-label="Chapter has written content"
+                              />
+                            )}
+                            {canEditCourseContent && (
                               <button
                                 type="button"
-                                onClick={() =>
-                                  handleSelectHierarchySection(chapter.id, section.id, false)
-                                }
-                                className="flex-1 min-w-0 text-left"
-                                title="Open section content"
+                                onClick={() => handleSelectHierarchyChapter(chapter.id, true)}
+                                className="p-1 rounded-md text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover:opacity-100 transition-opacity"
+                                title={`Write or edit content for ${chapter.chapterNumber} ${chapter.title}`}
+                                aria-label={`Write content for ${chapter.chapterNumber} ${chapter.title}`}
                               >
-                                <span
-                                  className={`text-[12px] font-bold leading-snug transition-colors block ${
-                                    isSectionSelected
-                                      ? 'text-blue-600 dark:text-cyan-400'
-                                      : 'text-slate-800 dark:text-slate-200 group-hover/sec:text-blue-600 dark:group-hover/sec:text-cyan-400'
-                                  }`}
-                                >
-                                  <span className="tabular-nums mr-1.5">{section.sectionNumber}</span>
-                                  {section.title}
-                                </span>
+                                <Edit3 className="w-3 h-3" />
                               </button>
-
-                              <div className="flex items-center gap-1 shrink-0 pt-0.5">
-                                {sectionHasContent && (
-                                  <FileText
-                                    className="w-3 h-3 text-blue-600 dark:text-cyan-400 shrink-0"
-                                    aria-label="Section has written content"
-                                  />
-                                )}
-                                {canEditCourseContent && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleSelectHierarchySection(chapter.id, section.id, true)
-                                    }
-                                    className="p-0.5 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover/sec:opacity-100 transition-opacity"
-                                    title={`Write or edit content for ${section.sectionNumber} ${section.title}`}
-                                    aria-label={`Write content for ${section.sectionNumber} ${section.title}`}
-                                  >
-                                    <Edit3 className="w-3 h-3" />
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => toggleSectionAccordion(section.id)}
-                                  aria-expanded={isSectionOpen}
-                                  aria-label={isSectionOpen ? `Collapse ${section.title}` : `Expand ${section.title}`}
-                                  className="p-0.5 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                                >
-                                  {isSectionOpen ? (
-                                    <ChevronUp className="w-3.5 h-3.5" />
-                                  ) : (
-                                    <ChevronDown className="w-3.5 h-3.5" />
-                                  )}
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* Level 3: Course Content Items (indented inside Level 2 Section) */}
-                            {isSectionOpen && (
-                              <div className="ml-3 pl-2.5 border-l border-slate-200/70 dark:border-slate-800/80 space-y-0.5">
-                                {section.items.length === 0 ? (
-                                  <p className="px-2 py-1 text-[11px] text-slate-400">
-                                    No course contents yet.
-                                  </p>
-                                ) : (
-                                  section.items.map(({ module: m, flatIndex: idx, itemNumber }) => {
-                                    const isActive =
-                                      playerMode === 'study' &&
-                                      selectedOutlineNode.level === 'module' &&
-                                      idx === activeModuleIndex;
-                                    const isDone = isModuleCompleted(m.id);
-                                    const savedModPercent = isActive
-                                      ? currentReadingPercent
-                                      : readingStore[course.id]?.modules?.[m.id]?.percent ?? 0;
-
-                                    const modQuiz = moduleQuizzes[idx];
-                                    const modQuizResult = modQuiz
-                                      ? checkpointStore[course.id]?.[modQuiz.id]
-                                      : undefined;
-                                    const isQuizActive =
-                                      playerMode === 'quiz' && idx === activeModuleIndex;
-                                    const modBlockingVideo = getBlockingVideoForModule(idx);
-                                    const isModMasteryLocked =
-                                      Boolean(modBlockingVideo) &&
-                                      !(isStudentPaymentRequired && idx > 0) &&
-                                      !(currentUser.role !== 'student' && instructorMasteryBypass);
-
-                                    const ModTypeIcon =
-                                      m.type === 'lab'
-                                        ? Mouse
-                                        : m.type === 'video'
-                                        ? Clapperboard
-                                        : m.type === 'quiz'
-                                        ? SquarePen
-                                        : m.type === 'pcap'
-                                        ? Activity
-                                        : FileText;
-
-                                    return (
-                                      <React.Fragment key={m.id}>
-                                        <div
-                                          className={`group/mod w-full px-2.5 py-2 rounded-lg transition-colors flex items-start gap-1.5 ${
-                                            isActive
-                                              ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold'
-                                              : isModMasteryLocked
-                                              ? 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/40'
-                                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
-                                          }`}
-                                        >
-                                          <button
-                                            type="button"
-                                            onClick={() => handleSelectModule(idx, false)}
-                                            className="flex-1 min-w-0 text-left flex items-start gap-2.5"
-                                          >
-                                            <div className="mt-0.5 shrink-0">
-                                              {isDone ? (
-                                                <CheckCircle className="w-4 h-4 text-emerald-500" />
-                                              ) : isModMasteryLocked ? (
-                                                <Lock className="w-4 h-4 text-amber-500" />
-                                              ) : (
-                                                <ModTypeIcon
-                                                  className={`w-4 h-4 ${
-                                                    isActive
-                                                      ? 'text-slate-900 dark:text-white'
-                                                      : 'text-slate-500 dark:text-slate-400'
-                                                  }`}
-                                                />
-                                              )}
-                                            </div>
-
-                                            <div className="flex-1 min-w-0">
-                                              <p className="text-[12px] leading-snug">
-                                                <span className="tabular-nums mr-1.5 text-slate-500 dark:text-slate-400">
-                                                  {itemNumber}
-                                                </span>
-                                                {m.title}
-                                              </p>
-                                              {isModMasteryLocked && modBlockingVideo ? (
-                                                <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 block mt-0.5">
-                                                  Pass M{modBlockingVideo.moduleIndex + 1} quiz to unlock
-                                                </span>
-                                              ) : !isDone && savedModPercent > 0 ? (
-                                                <span className="text-[10px] font-mono tabular-nums text-blue-600 dark:text-cyan-400 block mt-0.5">
-                                                  {savedModPercent}% read
-                                                </span>
-                                              ) : null}
-                                            </div>
-                                          </button>
-
-                                          <div className="flex items-center gap-1 shrink-0 mt-0.5">
-                                            {canEditCourseContent && (
-                                              <button
-                                                type="button"
-                                                onClick={() => handleSelectModule(idx, true)}
-                                                className="p-0.5 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover/mod:opacity-100 transition-opacity"
-                                                title={`Edit content for ${itemNumber} ${m.title}`}
-                                                aria-label={`Edit content for ${itemNumber} ${m.title}`}
-                                              >
-                                                <Edit3 className="w-3 h-3" />
-                                              </button>
-                                            )}
-
-                                            {isStudentPaymentRequired && idx > 0 ? (
-                                              <Lock
-                                                className="w-3.5 h-3.5 shrink-0 text-slate-400 dark:text-slate-500"
-                                                aria-label="Payment required"
-                                              />
-                                            ) : isModMasteryLocked ? (
-                                              <Lock
-                                                className="w-3.5 h-3.5 shrink-0 text-amber-500"
-                                                aria-label="Mastery check required"
-                                              />
-                                            ) : null}
-                                          </div>
-                                        </div>
-
-                                        {/* Per-Module Quiz Mode Trigger */}
-                                        {modQuiz && m.type !== 'quiz' && (
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              if (m.type === 'video' && !isModMasteryLocked) {
-                                                setPostQuizModalModuleIndex(idx);
-                                              } else {
-                                                handleOpenModuleQuiz(idx, 'manual');
-                                              }
-                                            }}
-                                            className={`w-full px-2.5 py-1.5 rounded-lg text-left transition-colors flex items-center justify-between gap-2 ${
-                                              isQuizActive
-                                                ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-900 dark:text-cyan-200 font-semibold'
-                                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                                            }`}
-                                          >
-                                            <div className="flex items-center gap-2 min-w-0">
-                                              <CheckSquare
-                                                className={`w-3.5 h-3.5 shrink-0 ${
-                                                  modQuizResult?.passed
-                                                    ? 'text-emerald-600 dark:text-emerald-400'
-                                                    : isQuizActive
-                                                    ? 'text-blue-600 dark:text-cyan-400'
-                                                    : 'text-slate-400'
-                                                }`}
-                                              />
-                                              <span className="text-[11px] truncate">
-                                                Module Quiz · {modQuiz.questions.length} Qs
-                                              </span>
-                                            </div>
-                                            {modQuizResult && (
-                                              <span
-                                                className={`text-[10px] font-mono tabular-nums font-bold shrink-0 ${
-                                                  modQuizResult.passed
-                                                    ? 'text-emerald-600 dark:text-emerald-400'
-                                                    : 'text-amber-600 dark:text-amber-400'
-                                                }`}
-                                              >
-                                                {modQuizResult.score}%
-                                              </span>
-                                            )}
-                                          </button>
-                                        )}
-                                      </React.Fragment>
-                                    );
-                                  })
-                                )}
-                              </div>
                             )}
+                            <span className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                              {chapterDoneCount} / {chapterTotal}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => toggleChapterAccordion(chapter.id)}
+                              aria-expanded={isChapterOpen}
+                              aria-label={isChapterOpen ? `Collapse ${chapter.title}` : `Expand ${chapter.title}`}
+                              className="p-0.5 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                            >
+                              {isChapterOpen ? (
+                                <ChevronUp className="w-3.5 h-3.5" />
+                              ) : (
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              )}
+                            </button>
                           </div>
-                        );
-                      })}
+                        </div>
+
+                        {/* Level 2: Main Contents List (indented inside Level 1 Chapter) */}
+                        {isChapterOpen && (
+                          <div className="mt-1 rounded-lg bg-emerald-50/45 dark:bg-emerald-950/20 py-1.5 px-1.5 space-y-1">
+                            {chapter.mainContents.map((section) => {
+                              const isSectionOpen = Boolean(expandedSections[section.id]);
+                              const isSectionSelected =
+                                playerMode === 'study' &&
+                                selectedOutlineNode.level === 'section' &&
+                                selectedOutlineNode.sectionId === section.id;
+                              const sectionHasContent = Boolean(section.contentMarkdown?.trim());
+                              const sectionTotal = section.items.length;
+                              const sectionDoneCount = section.items.filter(item =>
+                                isModuleCompleted(item.module.id)
+                              ).length;
+                              const isSectionCompleted =
+                                sectionTotal > 0 && sectionDoneCount === sectionTotal;
+
+                              return (
+                                <div key={section.id} className="space-y-1">
+                                  {/* Level 2 Subheader */}
+                                  <div
+                                    className={`group/sec flex items-start justify-between gap-1.5 px-2 py-1.5 rounded-md transition-colors ${
+                                      isSectionSelected
+                                        ? 'bg-white dark:bg-slate-800 shadow-2xs'
+                                        : 'hover:bg-white/70 dark:hover:bg-slate-800/50'
+                                    }`}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleSectionAccordion(section.id)}
+                                      aria-expanded={isSectionOpen}
+                                      aria-label={isSectionOpen ? `Collapse ${section.title}` : `Expand ${section.title}`}
+                                      className="mt-0.5 shrink-0"
+                                    >
+                                      {isSectionCompleted ? (
+                                        <span
+                                          className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center"
+                                          title="Section completed"
+                                        >
+                                          <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                        </span>
+                                      ) : sectionDoneCount > 0 ? (
+                                        <span
+                                          className="w-4 h-4 rounded-full border-2 border-emerald-600 dark:border-emerald-400 bg-emerald-100 dark:bg-emerald-950 flex items-center justify-center"
+                                          title={`${sectionDoneCount} of ${sectionTotal} completed`}
+                                        >
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400" />
+                                        </span>
+                                      ) : (
+                                        <span className="w-4 h-4 rounded-full border border-emerald-500/70 text-emerald-600 dark:text-emerald-400 flex items-center justify-center bg-white dark:bg-slate-900">
+                                          {isSectionOpen ? (
+                                            <ChevronDown className="w-2.5 h-2.5" />
+                                          ) : (
+                                            <ChevronRight className="w-2.5 h-2.5" />
+                                          )}
+                                        </span>
+                                      )}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        handleSelectHierarchySection(chapter.id, section.id, false);
+                                        if (!isSectionOpen) {
+                                          toggleSectionAccordion(section.id);
+                                        }
+                                      }}
+                                      className="flex-1 min-w-0 text-left"
+                                      title="Open section content"
+                                    >
+                                      <span
+                                        className={`text-[12px] font-bold leading-snug transition-colors block ${
+                                          isSectionSelected
+                                            ? 'text-emerald-700 dark:text-emerald-300'
+                                            : 'text-slate-800 dark:text-slate-200 group-hover/sec:text-emerald-700 dark:group-hover/sec:text-emerald-300'
+                                        }`}
+                                      >
+                                        <span className="tabular-nums mr-1.5">{section.sectionNumber}</span>
+                                        {section.title}
+                                      </span>
+                                    </button>
+
+                                    <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                                      {sectionHasContent && (
+                                        <FileText
+                                          className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0"
+                                          aria-label="Section has written content"
+                                        />
+                                      )}
+                                      {canEditCourseContent && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleSelectHierarchySection(chapter.id, section.id, true)
+                                          }
+                                          className="p-0.5 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover/sec:opacity-100 transition-opacity"
+                                          title={`Write or edit content for ${section.sectionNumber} ${section.title}`}
+                                          aria-label={`Write content for ${section.sectionNumber} ${section.title}`}
+                                        >
+                                          <Edit3 className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                      <span className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                                        {sectionDoneCount}/{sectionTotal}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleSectionAccordion(section.id)}
+                                        aria-expanded={isSectionOpen}
+                                        aria-label={isSectionOpen ? `Collapse ${section.title}` : `Expand ${section.title}`}
+                                        className="p-0.5 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                                      >
+                                        {isSectionOpen ? (
+                                          <ChevronUp className="w-3.5 h-3.5" />
+                                        ) : (
+                                          <ChevronDown className="w-3.5 h-3.5" />
+                                        )}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Level 3: Course Content Items with vertical dashed timeline */}
+                                  {isSectionOpen && (
+                                    <div className="relative ml-4 pl-3 space-y-0.5 before:content-[''] before:absolute before:left-[7px] before:top-2 before:bottom-2 before:border-l before:border-dashed before:border-slate-300 dark:before:border-slate-700">
+                                      {section.items.length === 0 ? (
+                                        <p className="px-2 py-1 text-[11px] text-slate-400">
+                                          No course contents yet.
+                                        </p>
+                                      ) : (
+                                        section.items.map(({ module: m, flatIndex: idx, itemNumber }) => {
+                                          const isActive =
+                                            playerMode === 'study' &&
+                                            selectedOutlineNode.level === 'module' &&
+                                            idx === activeModuleIndex;
+                                          const isDone = isModuleCompleted(m.id);
+                                          const savedModPercent = isActive
+                                            ? currentReadingPercent
+                                            : readingStore[course.id]?.modules?.[m.id]?.percent ?? 0;
+
+                                          const modQuiz = moduleQuizzes[idx];
+                                          const modQuizResult = modQuiz
+                                            ? checkpointStore[course.id]?.[modQuiz.id]
+                                            : undefined;
+                                          const isQuizActive =
+                                            playerMode === 'quiz' && idx === activeModuleIndex;
+                                          const modBlockingVideo = getBlockingVideoForModule(idx);
+                                          const isModMasteryLocked =
+                                            Boolean(modBlockingVideo) &&
+                                            !(isStudentPaymentRequired && idx > 0) &&
+                                            !(currentUser.role !== 'student' && instructorMasteryBypass);
+
+                                          return (
+                                            <React.Fragment key={m.id}>
+                                              <div
+                                                className={`group/mod relative w-full px-2 py-1.5 rounded-lg transition-colors flex items-start gap-1.5 ${
+                                                  isActive
+                                                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold shadow-2xs'
+                                                    : isModMasteryLocked
+                                                    ? 'text-slate-400 dark:text-slate-500 hover:bg-white/60 dark:hover:bg-slate-800/40'
+                                                    : 'hover:bg-white/70 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
+                                                }`}
+                                              >
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleSelectModule(idx, false)}
+                                                  className="flex-1 min-w-0 text-left flex items-start gap-2.5"
+                                                >
+                                                  <div className="mt-0.5 shrink-0 relative z-10">
+                                                    {isDone ? (
+                                                      <span
+                                                        className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center"
+                                                        aria-label="Completed"
+                                                      >
+                                                        <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                                      </span>
+                                                    ) : isModMasteryLocked ? (
+                                                      <span className="w-4 h-4 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                                                        <Lock className="w-2.5 h-2.5" />
+                                                      </span>
+                                                    ) : (
+                                                      <span
+                                                        className={`w-4 h-4 rounded-full border flex items-center justify-center bg-white dark:bg-slate-900 ${
+                                                          isActive
+                                                            ? 'border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400'
+                                                            : 'border-emerald-500/60 text-emerald-600/80 dark:text-emerald-400/80'
+                                                        }`}
+                                                      >
+                                                        <ChevronRight className="w-2.5 h-2.5" />
+                                                      </span>
+                                                    )}
+                                                  </div>
+
+                                                  <div className="flex-1 min-w-0">
+                                                    <p className="text-[12px] leading-snug">
+                                                      <span className="tabular-nums mr-1.5 text-slate-500 dark:text-slate-400">
+                                                        {itemNumber}
+                                                      </span>
+                                                      {m.title}
+                                                    </p>
+                                                    {isModMasteryLocked && modBlockingVideo ? (
+                                                      <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 block mt-0.5">
+                                                        Pass M{modBlockingVideo.moduleIndex + 1} quiz to unlock
+                                                      </span>
+                                                    ) : !isDone && savedModPercent > 0 ? (
+                                                      <span className="text-[10px] font-mono tabular-nums text-emerald-700 dark:text-emerald-400 block mt-0.5">
+                                                        {savedModPercent}% read
+                                                      </span>
+                                                    ) : null}
+                                                  </div>
+                                                </button>
+
+                                                <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                                                  {canEditCourseContent && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleSelectModule(idx, true)}
+                                                      className="p-0.5 rounded text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-white dark:hover:bg-slate-900 opacity-70 group-hover/mod:opacity-100 transition-opacity"
+                                                      title={`Edit content for ${itemNumber} ${m.title}`}
+                                                      aria-label={`Edit content for ${itemNumber} ${m.title}`}
+                                                    >
+                                                      <Edit3 className="w-3 h-3" />
+                                                    </button>
+                                                  )}
+
+                                                  {isStudentPaymentRequired && idx > 0 ? (
+                                                    <Lock
+                                                      className="w-3.5 h-3.5 shrink-0 text-slate-400 dark:text-slate-500"
+                                                      aria-label="Payment required"
+                                                    />
+                                                  ) : isModMasteryLocked ? (
+                                                    <Lock
+                                                      className="w-3.5 h-3.5 shrink-0 text-amber-500"
+                                                      aria-label="Mastery check required"
+                                                    />
+                                                  ) : null}
+                                                </div>
+                                              </div>
+
+                                              {/* Per-Module Quiz Mode Trigger */}
+                                              {modQuiz && m.type !== 'quiz' && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    if (m.type === 'video' && !isModMasteryLocked) {
+                                                      setPostQuizModalModuleIndex(idx);
+                                                    } else {
+                                                      handleOpenModuleQuiz(idx, 'manual');
+                                                    }
+                                                  }}
+                                                  className={`w-full px-2.5 py-1.5 rounded-lg text-left transition-colors flex items-center justify-between gap-2 ${
+                                                    isQuizActive
+                                                      ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-900 dark:text-cyan-200 font-semibold'
+                                                      : 'text-slate-600 dark:text-slate-400 hover:bg-white/70 dark:hover:bg-slate-800/50'
+                                                  }`}
+                                                >
+                                                  <div className="flex items-center gap-2 min-w-0">
+                                                    <CheckSquare
+                                                      className={`w-3.5 h-3.5 shrink-0 ${
+                                                        modQuizResult?.passed
+                                                          ? 'text-emerald-600 dark:text-emerald-400'
+                                                          : isQuizActive
+                                                          ? 'text-blue-600 dark:text-cyan-400'
+                                                          : 'text-slate-400'
+                                                      }`}
+                                                    />
+                                                    <span className="text-[11px] truncate">
+                                                      Module Quiz · {modQuiz.questions.length} Qs
+                                                    </span>
+                                                  </div>
+                                                  {modQuizResult && (
+                                                    <span
+                                                      className={`text-[10px] font-mono tabular-nums font-bold shrink-0 ${
+                                                        modQuizResult.passed
+                                                          ? 'text-emerald-600 dark:text-emerald-400'
+                                                          : 'text-amber-600 dark:text-amber-400'
+                                                      }`}
+                                                    >
+                                                      {modQuizResult.score}%
+                                                    </span>
+                                                  )}
+                                                </button>
+                                              )}
+                                            </React.Fragment>
+                                          );
+                                        })
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Enrollment Window or Preview Status */}
+                {isEnrolled && enrollment && expiryInfo ? (
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2 text-[11px] tabular-nums">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-slate-700 dark:text-slate-200">
+                        Enrollment Window
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-1 font-semibold ${
+                          expiryInfo.status === 'expired'
+                            ? 'text-red-600 dark:text-red-400'
+                            : expiryInfo.status === 'expiring_soon'
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : expiryInfo.status === 'upcoming'
+                            ? 'text-blue-600 dark:text-cyan-400'
+                            : 'text-emerald-600 dark:text-emerald-400'
+                        }`}
+                      >
+                        {expiryInfo.status === 'expired' ? (
+                          <XCircle className="w-3.5 h-3.5 shrink-0" />
+                        ) : expiryInfo.status === 'expiring_soon' ? (
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        ) : expiryInfo.status === 'upcoming' ? (
+                          <Clock className="w-3.5 h-3.5 shrink-0" />
+                        ) : (
+                          <Calendar className="w-3.5 h-3.5 shrink-0" />
+                        )}
+                        <span>{expiryInfo.statusLabel}</span>
+                      </span>
                     </div>
-                  )}
-                </div>
-              );
-            })}
+
+                    <div className="space-y-1 font-mono text-[10px] text-slate-500 dark:text-slate-400">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Start Date</span>
+                        <span className="text-slate-800 dark:text-slate-200 font-semibold">
+                          {formatEnrollmentDate(enrollment.startDate)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span>End Date</span>
+                        <span className="text-slate-800 dark:text-slate-200 font-semibold">
+                          {formatEnrollmentDate(enrollment.endDate)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70 dark:border-slate-700/70">
+                        <span>Expires</span>
+                        <span
+                          className={`font-bold ${
+                            expiryInfo.status === 'expired'
+                              ? 'text-red-600 dark:text-red-400'
+                              : expiryInfo.status === 'expiring_soon'
+                              ? 'text-amber-600 dark:text-amber-400'
+                              : 'text-slate-800 dark:text-slate-200'
+                          }`}
+                        >
+                          {formatEnrollmentDate(enrollment.expiresAt)} · {expiryInfo.countdownLabel}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ) : currentUser.role === 'student' && course.price > 0 && onOpenCourseCheckout ? (
+                  <div className="p-3.5 rounded-xl bg-blue-50/90 dark:bg-blue-950/35 border border-blue-200 dark:border-blue-800/70 space-y-2.5 text-[11px] text-slate-700 dark:text-slate-300">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-slate-900 dark:text-white">Preview Mode</span>
+                      <span className="font-mono font-bold tabular-nums text-blue-700 dark:text-cyan-300">
+                        ${course.price}.00 USD
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                      Module 1 is open for free preview. Complete enrollment payment to unlock all {course.modules.length} modules and labs for {course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS} days.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => onOpenCourseCheckout(course)}
+                      className="w-full py-2 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+                    >
+                      <CreditCard className="w-3.5 h-3.5" />
+                      <span>Pay ${course.price} &amp; Enroll</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300">
+                    <p className="font-bold mb-1">Preview Mode</p>
+                    <button
+                      onClick={() => enrollInCourse(course.id)}
+                      className="w-full py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs mt-1"
+                    >
+                      Enroll Free &amp; Track Progress
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-
-          {/* Enrollment Window or Preview Status */}
-          {isEnrolled && enrollment && expiryInfo ? (
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2 text-[11px] tabular-nums">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-bold text-slate-700 dark:text-slate-200">
-                  Enrollment Window
-                </span>
-                <span
-                  className={`inline-flex items-center gap-1 font-semibold ${
-                    expiryInfo.status === 'expired'
-                      ? 'text-red-600 dark:text-red-400'
-                      : expiryInfo.status === 'expiring_soon'
-                      ? 'text-amber-600 dark:text-amber-400'
-                      : expiryInfo.status === 'upcoming'
-                      ? 'text-blue-600 dark:text-cyan-400'
-                      : 'text-emerald-600 dark:text-emerald-400'
-                  }`}
-                >
-                  {expiryInfo.status === 'expired' ? (
-                    <XCircle className="w-3.5 h-3.5 shrink-0" />
-                  ) : expiryInfo.status === 'expiring_soon' ? (
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                  ) : expiryInfo.status === 'upcoming' ? (
-                    <Clock className="w-3.5 h-3.5 shrink-0" />
-                  ) : (
-                    <Calendar className="w-3.5 h-3.5 shrink-0" />
-                  )}
-                  <span>{expiryInfo.statusLabel}</span>
-                </span>
-              </div>
-
-              <div className="space-y-1 font-mono text-[10px] text-slate-500 dark:text-slate-400">
-                <div className="flex items-center justify-between gap-2">
-                  <span>Start Date</span>
-                  <span className="text-slate-800 dark:text-slate-200 font-semibold">
-                    {formatEnrollmentDate(enrollment.startDate)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <span>End Date</span>
-                  <span className="text-slate-800 dark:text-slate-200 font-semibold">
-                    {formatEnrollmentDate(enrollment.endDate)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70 dark:border-slate-700/70">
-                  <span>Expires</span>
-                  <span
-                    className={`font-bold ${
-                      expiryInfo.status === 'expired'
-                        ? 'text-red-600 dark:text-red-400'
-                        : expiryInfo.status === 'expiring_soon'
-                        ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-slate-800 dark:text-slate-200'
-                    }`}
-                  >
-                    {formatEnrollmentDate(enrollment.expiresAt)} · {expiryInfo.countdownLabel}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ) : currentUser.role === 'student' && course.price > 0 && onOpenCourseCheckout ? (
-            <div className="p-3.5 rounded-xl bg-blue-50/90 dark:bg-blue-950/35 border border-blue-200 dark:border-blue-800/70 space-y-2.5 text-[11px] text-slate-700 dark:text-slate-300">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-bold text-slate-900 dark:text-white">Preview Mode</span>
-                <span className="font-mono font-bold tabular-nums text-blue-700 dark:text-cyan-300">
-                  ${course.price}.00 USD
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                Module 1 is open for free preview. Complete enrollment payment to unlock all {course.modules.length} modules and labs for {course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS} days.
-              </p>
-              <button
-                type="button"
-                onClick={() => onOpenCourseCheckout(course)}
-                className="w-full py-2 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors"
-              >
-                <CreditCard className="w-3.5 h-3.5" />
-                <span>Pay ${course.price} &amp; Enroll</span>
-              </button>
-            </div>
-          ) : (
-            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300">
-              <p className="font-bold mb-1">Preview Mode</p>
-              <button
-                onClick={() => enrollInCourse(course.id)}
-                className="w-full py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs mt-1"
-              >
-                Enroll Free &amp; Track Progress
-              </button>
-            </div>
-          )}
-        </div>
+        )}
 
         {/* Right Column: Module Learning Workspace */}
-        <div ref={moduleContentRef} className="lg:col-span-3 space-y-4">
+        <div
+          ref={moduleContentRef}
+          className={`${isOutlineSidebarCollapsed ? 'lg:col-span-4' : 'lg:col-span-3'} space-y-4`}
+        >
+          {/* Workspace Collapse/Expand Outline Strip */}
+          <div className="px-3.5 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <button
+                type="button"
+                onClick={() => setIsOutlineSidebarCollapsed(prev => !prev)}
+                aria-expanded={!isOutlineSidebarCollapsed}
+                aria-label={
+                  isOutlineSidebarCollapsed
+                    ? 'Show course outline sidebar'
+                    : 'Collapse course outline sidebar'
+                }
+                title={
+                  isOutlineSidebarCollapsed
+                    ? 'Show Course Outline'
+                    : 'Collapse Course Outline'
+                }
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:border-emerald-500 dark:hover:border-emerald-400 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              >
+                {isOutlineSidebarCollapsed ? (
+                  <>
+                    <PanelLeftOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <span>Course Outline</span>
+                  </>
+                ) : (
+                  <>
+                    <PanelLeftClose className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                    <span className="hidden sm:inline">Collapse Outline</span>
+                  </>
+                )}
+              </button>
+
+              <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                {isViewingHierarchyContent && activeHierarchyChapter
+                  ? activeHierarchySection
+                    ? `${activeHierarchySection.sectionNumber} ${activeHierarchySection.title}`
+                    : `${activeHierarchyChapter.chapterNumber} ${activeHierarchyChapter.title}`
+                  : activeBreadcrumb
+                  ? `${activeBreadcrumb.itemNumber} ${activeModule.title}`
+                  : activeModule.title}
+              </span>
+            </div>
+
+            {isOutlineSidebarCollapsed && (
+              <span className="text-[11px] font-mono tabular-nums font-semibold text-emerald-700 dark:text-emerald-300 shrink-0">
+                {completedCount}/{course.modules.length} ({progressPercent}%)
+              </span>
+            )}
+          </div>
           {/* Course Expiration Notice Banner */}
           {isEnrolled && enrollment && expiryInfo && (expiryInfo.status === 'expiring_soon' || expiryInfo.status === 'expired') && (
             <div

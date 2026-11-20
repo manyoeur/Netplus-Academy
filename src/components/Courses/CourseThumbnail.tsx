@@ -6,8 +6,6 @@ import thumbCloud from '../../assets/images/course_thumb_cloud_1794636857791.jpg
 import thumbPacket from '../../assets/images/course_thumb_packet_1794636857450.jpg';
 import { Course } from '../../types';
 
-export const INSTRUCTOR_THUMBNAIL_PORTRAIT = '/assets/aistudio/Man_Yoeur_2c1b267c.png';
-
 export const COURSE_DEFAULT_THUMBNAILS: Record<string, string> = {
   'course-ccna-1': thumbRouting,
   'course-sec-1': thumbSecurity,
@@ -44,8 +42,6 @@ interface CourseThumbnailProps {
   className?: string;
   imgClassName?: string;
   showScrim?: boolean;
-  showInstructorPortrait?: boolean;
-  compactPortrait?: boolean;
   children?: React.ReactNode;
 }
 
@@ -54,8 +50,6 @@ export const CourseThumbnail: React.FC<CourseThumbnailProps> = ({
   className = '',
   imgClassName = '',
   showScrim = true,
-  showInstructorPortrait = true,
-  compactPortrait = false,
   children
 }) => {
   const [imgFailed, setImgFailed] = useState(false);
@@ -106,21 +100,6 @@ export const CourseThumbnail: React.FC<CourseThumbnailProps> = ({
 
       {showScrim && (
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/20 to-transparent pointer-events-none" />
-      )}
-
-      {showInstructorPortrait && (
-        <div
-          className={`absolute z-[5] pointer-events-none bottom-0 flex items-end justify-end ${
-            compactPortrait ? 'right-0.5 h-[96%]' : 'right-1.5 h-[92%]'
-          }`}
-        >
-          <img
-            src={INSTRUCTOR_THUMBNAIL_PORTRAIT}
-            alt="Course Instructor"
-            loading="lazy"
-            className="h-full w-auto max-w-none object-contain object-bottom drop-shadow-[0_6px_14px_rgba(2,6,23,0.75)]"
-          />
-        </div>
       )}
 
       {children}

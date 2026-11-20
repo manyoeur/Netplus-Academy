@@ -2518,7 +2518,6 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                         <CourseThumbnail
                           course={course}
                           showScrim={false}
-                          compactPortrait={true}
                           className="w-24 h-16 rounded-xl shrink-0 border border-slate-200 dark:border-slate-800"
                         />
                         <div className="min-w-0">
