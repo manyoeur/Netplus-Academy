@@ -43,7 +43,9 @@ import {
   Minimize2,
   Minus,
   X,
-  ChevronDown
+  ChevronDown,
+  Tag,
+  Settings
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import {
@@ -55,6 +57,7 @@ import {
 import {
   DEFAULT_LAB_CANVAS_HEIGHT,
   DEFAULT_LAB_CANVAS_WIDTH,
+  LabGridSettings,
   MAX_LAB_CANVAS_HEIGHT,
   MAX_LAB_CANVAS_WIDTH,
   SavedLabRecord,
@@ -108,6 +111,7 @@ import {
 } from './networkSimEngine';
 import { NETWORK_LAB_PRESETS } from './networkLabPresets';
 import { CiscoDeviceIcon, getCiscoDeviceInnerSvg } from './CiscoDeviceIcon';
+import { TopologyMiniMap } from './TopologyMiniMap';
 
 type CanvasTool = 'select' | 'marquee' | 'pan' | 'cable' | 'delete';
 type CableToolMode = 'auto' | SimCableType;
@@ -154,7 +158,16 @@ interface LiveCableDrawState {
 }
 
 type ShapeResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
-type SnapGridStep = 10 | 20 | 40;
+type SnapGridStep = 10 | 20 | 40 | 50;
+type GridStyle = 'lines' | 'dots';
+
+const GRID_STEP_OPTIONS: SnapGridStep[] = [10, 20, 40, 50];
+const SIM_GRID_PREFS_STORAGE_PREFIX = 'netpulse_sim_grid_prefs_v1';
+
+const normalizeGridStep = (raw: unknown): SnapGridStep => {
+  const n = Number(raw);
+  return n === 10 || n === 20 || n === 40 || n === 50 ? n : 20;
+};
 
 const snapToStep = (val: number, step: number): number => Math.round(val / step) * step;
 
@@ -174,6 +187,62 @@ const snapClampedToGrid = (
     return Math.round(Math.min(max, Math.max(min, val)));
   }
   return Math.min(maxGrid, Math.max(minGrid, snapToStep(val, step)));
+};
+
+const alignDevicesToGrid = (
+  currentDevices: SimDevice[],
+  step: SnapGridStep,
+  canvasWidth: number,
+  canvasHeight: number
+): SimDevice[] => {
+  if (currentDevices.length === 0) return currentDevices;
+  const minX = 60;
+  const maxX = Math.max(minX, canvasWidth - 60);
+  const minY = 60;
+  const maxY = Math.max(minY, canvasHeight - 60);
+  const minGridX = Math.ceil(minX / step) * step;
+  const maxGridX = Math.floor(maxX / step) * step;
+  const minGridY = Math.ceil(minY / step) * step;
+  const maxGridY = Math.floor(maxY / step) * step;
+  const occupied = new Set<string>();
+
+  return currentDevices.map(dev => {
+    const baseX = snapClampedToGrid(dev.x, minX, maxX, step, true);
+    const baseY = snapClampedToGrid(dev.y, minY, maxY, step, true);
+    let chosenX = baseX;
+    let chosenY = baseY;
+    const baseKey = `${chosenX},${chosenY}`;
+
+    if (occupied.has(baseKey) && minGridX <= maxGridX && minGridY <= maxGridY) {
+      let bestDist = Infinity;
+      for (let ring = 1; ring <= 6; ring++) {
+        let foundInRing = false;
+        for (let gx = -ring; gx <= ring; gx++) {
+          for (let gy = -ring; gy <= ring; gy++) {
+            if (Math.abs(gx) !== ring && Math.abs(gy) !== ring) continue;
+            const candX = baseX + gx * step;
+            const candY = baseY + gy * step;
+            if (candX < minGridX || candX > maxGridX || candY < minGridY || candY > maxGridY) {
+              continue;
+            }
+            const key = `${candX},${candY}`;
+            if (occupied.has(key)) continue;
+            const dist = Math.hypot(candX - dev.x, candY - dev.y);
+            if (dist < bestDist) {
+              bestDist = dist;
+              chosenX = candX;
+              chosenY = candY;
+              foundInRing = true;
+            }
+          }
+        }
+        if (foundInRing) break;
+      }
+    }
+
+    occupied.add(`${chosenX},${chosenY}`);
+    return chosenX === dev.x && chosenY === dev.y ? dev : { ...dev, x: chosenX, y: chosenY };
+  });
 };
 
 const WORKSPACE_SIZE_PRESETS: Array<{
@@ -224,6 +293,26 @@ function toProjectFileName(title: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 64);
   return `${slug || 'network-lab-project'}.netlab.json`;
+}
+
+function getDeviceDisplayLabel(
+  dev: SimDevice,
+  showCustomLabels: boolean
+): { primary: string; secondaryHostname: string | null; isCustomActive: boolean } {
+  const custom = dev.customLabel?.trim();
+  const isCustomActive = Boolean(showCustomLabels && custom && dev.useCustomLabel !== false);
+  if (isCustomActive && custom) {
+    return {
+      primary: custom,
+      secondaryHostname: custom !== dev.name ? dev.name : null,
+      isCustomActive: true
+    };
+  }
+  return {
+    primary: dev.name,
+    secondaryHostname: null,
+    isCustomActive: false
+  };
 }
 
 const CABLE_META: Record<
@@ -725,6 +814,29 @@ export const NetworkTopologySimulator: React.FC = () => {
     initPanY: number;
     moved: boolean;
   } | null>(null);
+  const [isMiniMapOpen, setIsMiniMapOpen] = useState<boolean>(true);
+  const [isMiniMapDragging, setIsMiniMapDragging] = useState<boolean>(false);
+  const miniMapSvgRef = useRef<SVGSVGElement>(null);
+  const miniMapDragRef = useRef<{
+    svgRect: DOMRect;
+    grabOffsetX: number;
+    grabOffsetY: number;
+  } | null>(null);
+  const [viewportMetrics, setViewportMetrics] = useState<{
+    vpWidth: number;
+    vpHeight: number;
+    stageWidth: number;
+    stageHeight: number;
+    stageOffsetX: number;
+    stageOffsetY: number;
+  }>({
+    vpWidth: DEFAULT_LAB_CANVAS_WIDTH,
+    vpHeight: DEFAULT_LAB_CANVAS_HEIGHT,
+    stageWidth: DEFAULT_LAB_CANVAS_WIDTH,
+    stageHeight: DEFAULT_LAB_CANVAS_HEIGHT,
+    stageOffsetX: 0,
+    stageOffsetY: 0
+  });
   const devicesRef = useRef<SimDevice[]>(devices);
   devicesRef.current = devices;
   const linksRef = useRef<SimLink[]>(links);
@@ -740,8 +852,11 @@ export const NetworkTopologySimulator: React.FC = () => {
   const [liveCableDraw, setLiveCableDraw] = useState<LiveCableDrawState | null>(null);
   const liveCableDrawRef = useRef<LiveCableDrawState | null>(null);
   const [hoveredPortKey, setHoveredPortKey] = useState<string | null>(null);
+  const [showGrid, setShowGrid] = useState<boolean>(true);
+  const [gridStyle, setGridStyle] = useState<GridStyle>('lines');
   const [snapToGrid, setSnapToGrid] = useState<boolean>(true);
   const [gridSize, setGridSize] = useState<SnapGridStep>(20);
+  const [showCustomLabels, setShowCustomLabels] = useState<boolean>(true);
   const snapToGridRef = useRef<boolean>(snapToGrid);
   snapToGridRef.current = snapToGrid;
   const gridSizeRef = useRef<SnapGridStep>(gridSize);
@@ -890,20 +1005,31 @@ export const NetworkTopologySimulator: React.FC = () => {
   const importInputRef = useRef<HTMLInputElement>(null);
   const [isImportExportMenuOpen, setIsImportExportMenuOpen] = useState<boolean>(false);
   const importExportMenuRef = useRef<HTMLDivElement>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const settingsMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!isImportExportMenuOpen) return;
+    if (!isImportExportMenuOpen && !isSettingsOpen) return;
     const handlePointerDown = (e: PointerEvent) => {
       if (
+        isImportExportMenuOpen &&
         importExportMenuRef.current &&
         !importExportMenuRef.current.contains(e.target as Node)
       ) {
         setIsImportExportMenuOpen(false);
       }
+      if (
+        isSettingsOpen &&
+        settingsMenuRef.current &&
+        !settingsMenuRef.current.contains(e.target as Node)
+      ) {
+        setIsSettingsOpen(false);
+      }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsImportExportMenuOpen(false);
+        setIsSettingsOpen(false);
       }
     };
     window.addEventListener('pointerdown', handlePointerDown);
@@ -912,7 +1038,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       window.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isImportExportMenuOpen]);
+  }, [isImportExportMenuOpen, isSettingsOpen]);
 
   useEffect(() => {
     if (!isTemplatesModalOpen) return;
@@ -945,6 +1071,25 @@ export const NetworkTopologySimulator: React.FC = () => {
 
       if (cancelled) return;
 
+      let prefShowGrid = true;
+      let prefSnapToGrid = true;
+      let prefGridSize: SnapGridStep = 20;
+      let prefGridStyle: GridStyle = 'lines';
+      try {
+        const rawPrefs = window.localStorage.getItem(`${SIM_GRID_PREFS_STORAGE_PREFIX}:${ownerScopeId}`);
+        if (rawPrefs) {
+          const parsedPrefs = JSON.parse(rawPrefs) as LabGridSettings;
+          if (typeof parsedPrefs.showGrid === 'boolean') prefShowGrid = parsedPrefs.showGrid;
+          if (typeof parsedPrefs.snapToGrid === 'boolean') prefSnapToGrid = parsedPrefs.snapToGrid;
+          if (parsedPrefs.gridSize !== undefined) prefGridSize = normalizeGridStep(parsedPrefs.gridSize);
+          if (parsedPrefs.gridStyle === 'lines' || parsedPrefs.gridStyle === 'dots') {
+            prefGridStyle = parsedPrefs.gridStyle;
+          }
+        }
+      } catch {
+        // Ignore storage read failures
+      }
+
       if (draft) {
         const draftShapes = Array.isArray(draft.shapes) ? draft.shapes : [];
         const draftLabels = Array.isArray(draft.labels) ? draft.labels : [];
@@ -955,8 +1100,16 @@ export const NetworkTopologySimulator: React.FC = () => {
           draft.canvasWidth,
           draft.canvasHeight
         );
+        const dg = draft.gridSettings;
         setActivePresetId(draft.presetId);
         setCanvasSize(restoredSize);
+        setShowCustomLabels(draft.showCustomLabels !== false);
+        setShowGrid(typeof dg?.showGrid === 'boolean' ? dg.showGrid : prefShowGrid);
+        setSnapToGrid(typeof dg?.snapToGrid === 'boolean' ? dg.snapToGrid : prefSnapToGrid);
+        setGridSize(dg?.gridSize !== undefined ? normalizeGridStep(dg.gridSize) : prefGridSize);
+        setGridStyle(
+          dg?.gridStyle === 'lines' || dg?.gridStyle === 'dots' ? dg.gridStyle : prefGridStyle
+        );
         setDevices(draft.devices);
         setLinks(draft.links);
         setShapes(draftShapes);
@@ -975,6 +1128,11 @@ export const NetworkTopologySimulator: React.FC = () => {
       } else {
         setActivePresetId('blank-sandbox');
         setCanvasSize({ width: DEFAULT_LAB_CANVAS_WIDTH, height: DEFAULT_LAB_CANVAS_HEIGHT });
+        setShowCustomLabels(true);
+        setShowGrid(prefShowGrid);
+        setSnapToGrid(prefSnapToGrid);
+        setGridSize(prefGridSize);
+        setGridStyle(prefGridStyle);
         setDevices([]);
         setLinks([]);
         setShapes([]);
@@ -1046,6 +1204,19 @@ export const NetworkTopologySimulator: React.FC = () => {
     };
   }, [ownerScopeId, isOffline]);
 
+  // Persist user's grid & snap preferences in localStorage
+  useEffect(() => {
+    if (draftHydratedForUserRef.current !== ownerScopeId) return;
+    try {
+      window.localStorage.setItem(
+        `${SIM_GRID_PREFS_STORAGE_PREFIX}:${ownerScopeId}`,
+        JSON.stringify({ showGrid, snapToGrid, gridSize, gridStyle })
+      );
+    } catch {
+      // Ignore storage quota issues
+    }
+  }, [gridSize, gridStyle, ownerScopeId, showGrid, snapToGrid]);
+
   // Debounced auto-save active workspace draft into IndexedDB
   useEffect(() => {
     if (draftHydratedForUserRef.current !== ownerScopeId) return;
@@ -1076,6 +1247,8 @@ export const NetworkTopologySimulator: React.FC = () => {
         presetId: activePresetId,
         canvasWidth: canvasSize.width,
         canvasHeight: canvasSize.height,
+        showCustomLabels,
+        gridSettings: { showGrid, snapToGrid, gridSize, gridStyle },
         devices,
         links,
         shapes,
@@ -1091,7 +1264,22 @@ export const NetworkTopologySimulator: React.FC = () => {
         window.clearTimeout(saveTimerRef.current);
       }
     };
-  }, [activePresetId, activeSavedLabId, canvasSize, ownerScopeId, devices, links, shapes, diagramLabels, workspaceView]);
+  }, [
+    activePresetId,
+    activeSavedLabId,
+    canvasSize,
+    diagramLabels,
+    devices,
+    gridSize,
+    gridStyle,
+    links,
+    ownerScopeId,
+    shapes,
+    showCustomLabels,
+    showGrid,
+    snapToGrid,
+    workspaceView
+  ]);
 
   // Keep pingSourceId valid
   useEffect(() => {
@@ -1127,6 +1315,16 @@ export const NetworkTopologySimulator: React.FC = () => {
   const selectedDevice = useMemo(
     () => devices.find(d => d.id === selectedDeviceId) || null,
     [devices, selectedDeviceId]
+  );
+
+  const customLabelCount = useMemo(
+    () => devices.filter(d => Boolean(d.customLabel?.trim())).length,
+    [devices]
+  );
+
+  const offGridDeviceCount = useMemo(
+    () => devices.filter(d => d.x % gridSize !== 0 || d.y % gridSize !== 0).length,
+    [devices, gridSize]
   );
 
   const consoleDevice = useMemo(
@@ -1216,8 +1414,11 @@ export const NetworkTopologySimulator: React.FC = () => {
       );
       if (nextZoom === curZoom) return;
 
-      const mouseX = e.clientX - vRect.left;
-      const mouseY = e.clientY - vRect.top;
+      const isOverMiniMap = Boolean(
+        (e.target as HTMLElement | null)?.closest('[data-minimap-hud="true"]')
+      );
+      const mouseX = isOverMiniMap ? vRect.width / 2 : e.clientX - vRect.left;
+      const mouseY = isOverMiniMap ? vRect.height / 2 : e.clientY - vRect.top;
       const stageX = (mouseX - curPan.x) / curZoom;
       const stageY = (mouseY - curPan.y) / curZoom;
       const nextPan = {
@@ -1236,6 +1437,144 @@ export const NetworkTopologySimulator: React.FC = () => {
       viewport.removeEventListener('wheel', handleWheel);
     };
   }, [workspaceView]);
+
+  // Keep viewport/stage box measurements fresh so the mini-map viewport rectangle stays exact
+  useEffect(() => {
+    if (workspaceView !== 'editor') return;
+    const vpEl = viewportRef.current;
+    const stageEl = stageBoxRef.current;
+    if (!vpEl || !stageEl) return;
+
+    const measure = () => {
+      const vpRect = vpEl.getBoundingClientRect();
+      const stageRect = stageEl.getBoundingClientRect();
+      if (
+        vpRect.width <= 0 ||
+        vpRect.height <= 0 ||
+        stageRect.width <= 0 ||
+        stageRect.height <= 0
+      ) {
+        return;
+      }
+      const next = {
+        vpWidth: vpRect.width,
+        vpHeight: vpRect.height,
+        stageWidth: stageRect.width,
+        stageHeight: stageRect.height,
+        stageOffsetX: stageRect.left - vpRect.left,
+        stageOffsetY: stageRect.top - vpRect.top
+      };
+      setViewportMetrics(prev =>
+        Math.abs(prev.vpWidth - next.vpWidth) < 0.5 &&
+        Math.abs(prev.vpHeight - next.vpHeight) < 0.5 &&
+        Math.abs(prev.stageWidth - next.stageWidth) < 0.5 &&
+        Math.abs(prev.stageHeight - next.stageHeight) < 0.5 &&
+        Math.abs(prev.stageOffsetX - next.stageOffsetX) < 0.5 &&
+        Math.abs(prev.stageOffsetY - next.stageOffsetY) < 0.5
+          ? prev
+          : next
+      );
+    };
+
+    measure();
+    const rafId = window.requestAnimationFrame(measure);
+    const observer =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    observer?.observe(vpEl);
+    observer?.observe(stageEl);
+    window.addEventListener('resize', measure);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [workspaceView, isWorkspaceFullscreen, canvasSize.width, canvasSize.height, isMiniMapOpen]);
+
+  const miniMapViewportBox = useMemo(() => {
+    const baseScaleX = viewportMetrics.stageWidth / DEFAULT_LAB_CANVAS_WIDTH;
+    const baseScaleY = viewportMetrics.stageHeight / DEFAULT_LAB_CANVAS_HEIGHT;
+    const effScaleX = Math.max(0.0001, baseScaleX * zoom);
+    const effScaleY = Math.max(0.0001, baseScaleY * zoom);
+
+    return {
+      x: -(viewportMetrics.stageOffsetX + pan.x) / effScaleX,
+      y: -(viewportMetrics.stageOffsetY + pan.y) / effScaleY,
+      width: viewportMetrics.vpWidth / effScaleX,
+      height: viewportMetrics.vpHeight / effScaleY
+    };
+  }, [pan.x, pan.y, viewportMetrics, zoom]);
+
+  const panViewportToCanvasCenter = useCallback((targetX: number, targetY: number) => {
+    const vpEl = viewportRef.current;
+    const stageEl = stageBoxRef.current;
+    if (!vpEl || !stageEl) return;
+    const vpRect = vpEl.getBoundingClientRect();
+    const stageRect = stageEl.getBoundingClientRect();
+    if (
+      vpRect.width <= 0 ||
+      vpRect.height <= 0 ||
+      stageRect.width <= 0 ||
+      stageRect.height <= 0
+    ) {
+      return;
+    }
+
+    const { width: canvasW, height: canvasH } = canvasSizeRef.current;
+    const curZoom = zoomRef.current;
+    const clampedX = Math.max(0, Math.min(canvasW, targetX));
+    const clampedY = Math.max(0, Math.min(canvasH, targetY));
+
+    const baseScaleX = stageRect.width / DEFAULT_LAB_CANVAS_WIDTH;
+    const baseScaleY = stageRect.height / DEFAULT_LAB_CANVAS_HEIGHT;
+    const vpCenterInStageX = vpRect.left + vpRect.width / 2 - stageRect.left;
+    const vpCenterInStageY = vpRect.top + vpRect.height / 2 - stageRect.top;
+
+    const nextPan = {
+      x: vpCenterInStageX - clampedX * baseScaleX * curZoom,
+      y: vpCenterInStageY - clampedY * baseScaleY * curZoom
+    };
+
+    panRef.current = nextPan;
+    setPan(nextPan);
+  }, []);
+
+  const handleMiniMapPointerDown = useCallback(
+    (e: React.PointerEvent<SVGSVGElement>, svgRect: DOMRect) => {
+      if (e.button !== 0 || svgRect.width <= 0 || svgRect.height <= 0) return;
+      const { width: canvasW, height: canvasH } = canvasSizeRef.current;
+      const clickX = Math.max(
+        0,
+        Math.min(canvasW, ((e.clientX - svgRect.left) / svgRect.width) * canvasW)
+      );
+      const clickY = Math.max(
+        0,
+        Math.min(canvasH, ((e.clientY - svgRect.top) / svgRect.height) * canvasH)
+      );
+
+      const curVp = miniMapViewportBox;
+      const insideVpBox =
+        clickX >= curVp.x &&
+        clickX <= curVp.x + curVp.width &&
+        clickY >= curVp.y &&
+        clickY <= curVp.y + curVp.height;
+
+      const vpCenterX = curVp.x + curVp.width / 2;
+      const vpCenterY = curVp.y + curVp.height / 2;
+
+      miniMapDragRef.current = {
+        svgRect,
+        grabOffsetX: insideVpBox ? clickX - vpCenterX : 0,
+        grabOffsetY: insideVpBox ? clickY - vpCenterY : 0
+      };
+      setIsMiniMapDragging(true);
+
+      if (!insideVpBox) {
+        panViewportToCanvasCenter(clickX, clickY);
+      }
+    },
+    [miniMapViewportBox, panViewportToCanvasCenter]
+  );
 
   // Pointer drag, viewport pan, & marquee selection box handling for topology canvas nodes
   useEffect(() => {
@@ -1295,6 +1634,19 @@ export const NetworkTopologySimulator: React.FC = () => {
         const dx = e.clientX - cDrag.startClientX;
         const dy = e.clientY - cDrag.startClientY;
         setConsoleOffset(clampConsoleOffset({ x: cDrag.initX + dx, y: cDrag.initY + dy }));
+        return;
+      }
+
+      const mmDrag = miniMapDragRef.current;
+      if (mmDrag) {
+        const svgEl = miniMapSvgRef.current;
+        const rect = svgEl ? svgEl.getBoundingClientRect() : mmDrag.svgRect;
+        if (rect.width > 0 && rect.height > 0) {
+          const { width: canvasW, height: canvasH } = canvasSizeRef.current;
+          const currX = ((e.clientX - rect.left) / rect.width) * canvasW;
+          const currY = ((e.clientY - rect.top) / rect.height) * canvasH;
+          panViewportToCanvasCenter(currX - mmDrag.grabOffsetX, currY - mmDrag.grabOffsetY);
+        }
         return;
       }
 
@@ -1767,6 +2119,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       }
       consoleDragRef.current = null;
       consoleResizeRef.current = null;
+      miniMapDragRef.current = null;
       panStateRef.current = null;
       dragStateRef.current = null;
       marqueeStateRef.current = null;
@@ -1776,6 +2129,7 @@ export const NetworkTopologySimulator: React.FC = () => {
       labelDragStateRef.current = null;
       diagramLabelDragStateRef.current = null;
       setIsDraggingConsole(false);
+      setIsMiniMapDragging(false);
       setIsPanningActive(false);
       setLongPressMoveDeviceId(null);
       setDraggingLabelDeviceId(null);
@@ -2148,16 +2502,49 @@ export const NetworkTopologySimulator: React.FC = () => {
       }
       const mode = modeOverride ?? autoLayoutMode;
       dragStateRef.current = null;
-      setDevices(prev =>
-        computeAutoLayoutPositions(prev, links, mode, canvasSize.width, canvasSize.height)
-      );
+      setDevices(prev => {
+        const arranged = computeAutoLayoutPositions(
+          prev,
+          links,
+          mode,
+          canvasSize.width,
+          canvasSize.height
+        );
+        return snapToGrid
+          ? alignDevicesToGrid(arranged, gridSize, canvasSize.width, canvasSize.height)
+          : arranged;
+      });
       flashBanner(
         `Arranged ${devices.length} device${devices.length === 1 ? '' : 's'} in ${
           mode === 'grid' ? 'Grid' : 'Circular'
-        } layout`
+        } layout${snapToGrid ? ` (snapped to ${gridSize}px grid)` : ''}`
       );
     },
-    [autoLayoutMode, canvasSize.height, canvasSize.width, devices.length, links]
+    [autoLayoutMode, canvasSize.height, canvasSize.width, devices.length, gridSize, links, snapToGrid]
+  );
+
+  // Force all devices on the canvas to align to nearest grid coordinates
+  const handleAlignDevicesToGrid = useCallback(
+    (stepOverride?: SnapGridStep) => {
+      if (devices.length === 0) {
+        flashBanner('Add devices to the canvas before aligning to the grid');
+        return;
+      }
+      const step = stepOverride ?? gridSize;
+      dragStateRef.current = null;
+      const offCount = devices.filter(d => d.x % step !== 0 || d.y % step !== 0).length;
+      if (offCount === 0) {
+        flashBanner(
+          `All ${devices.length} device${devices.length === 1 ? '' : 's'} are already aligned to the ${step}px grid`
+        );
+        return;
+      }
+      setDevices(prev => alignDevicesToGrid(prev, step, canvasSize.width, canvasSize.height));
+      flashBanner(
+        `Aligned ${offCount} off-grid device${offCount === 1 ? '' : 's'} to ${step}px grid coordinates`
+      );
+    },
+    [canvasSize.height, canvasSize.width, devices, gridSize]
   );
 
   // Add device to canvas (via palette click or drag-and-drop)
@@ -2402,21 +2789,59 @@ export const NetworkTopologySimulator: React.FC = () => {
     setSelectedLinkId(prev => (prev === linkId ? null : prev));
   }, []);
 
-  const commitDeviceRename = useCallback((deviceId: string, rawName: string) => {
-    const trimmed = rawName.trim().slice(0, 64);
-    if (trimmed) {
-      setDevices(prev => prev.map(d => (d.id === deviceId ? { ...d, name: trimmed } : d)));
-    }
-    setEditingDeviceLabelId(prev => (prev === deviceId ? null : prev));
+  const commitDeviceRename = useCallback(
+    (deviceId: string, rawName: string) => {
+      const trimmed = rawName.trim().slice(0, 64);
+      setDevices(prev =>
+        prev.map(d => {
+          if (d.id !== deviceId) return d;
+          if (showCustomLabels) {
+            if (!trimmed || trimmed === d.name) {
+              return { ...d, customLabel: undefined, useCustomLabel: undefined };
+            }
+            return { ...d, customLabel: trimmed, useCustomLabel: true };
+          }
+          if (!trimmed) return d;
+          return { ...d, name: trimmed };
+        })
+      );
+      setEditingDeviceLabelId(prev => (prev === deviceId ? null : prev));
+    },
+    [showCustomLabels]
+  );
+
+  const startCanvasLabelEdit = useCallback(
+    (dev: SimDevice) => {
+      setSelectedDeviceIds([dev.id]);
+      setSelectedDeviceId(dev.id);
+      setSelectedLinkId(null);
+      setSelectedShapeId(null);
+      setEditingDeviceLabelId(dev.id);
+      setEditingDeviceLabelDraft(
+        showCustomLabels ? dev.customLabel?.trim() || dev.name : dev.name
+      );
+    },
+    [showCustomLabels]
+  );
+
+  const toggleDeviceCustomLabel = useCallback((deviceId: string) => {
+    setDevices(prev =>
+      prev.map(d => {
+        if (d.id !== deviceId || !d.customLabel?.trim()) return d;
+        const nextUse = d.useCustomLabel === false;
+        return { ...d, useCustomLabel: nextUse };
+      })
+    );
+    setShowCustomLabels(true);
   }, []);
 
-  const startCanvasLabelEdit = useCallback((dev: SimDevice) => {
-    setSelectedDeviceIds([dev.id]);
-    setSelectedDeviceId(dev.id);
-    setSelectedLinkId(null);
-    setSelectedShapeId(null);
-    setEditingDeviceLabelId(dev.id);
-    setEditingDeviceLabelDraft(dev.name);
+  const clearDeviceCustomLabel = useCallback((deviceId: string) => {
+    setDevices(prev =>
+      prev.map(d =>
+        d.id === deviceId ? { ...d, customLabel: undefined, useCustomLabel: undefined } : d
+      )
+    );
+    flashBanner('Cleared custom node label and restored default hostname');
   }, []);
 
   // Keyboard shortcuts for canvas multi-select & rename (Delete / Backspace, Ctrl/Cmd+A, F2, Escape)
@@ -2458,6 +2883,34 @@ export const NetworkTopologySimulator: React.FC = () => {
         setSelectedDeviceId(prev => prev || devices[0]?.id || null);
         setSelectedLinkId(null);
         setSelectedShapeId(null);
+        return;
+      }
+
+      if (
+        (e.key === 'ArrowUp' ||
+          e.key === 'ArrowDown' ||
+          e.key === 'ArrowLeft' ||
+          e.key === 'ArrowRight') &&
+        selectedDeviceIds.length > 0 &&
+        (tool === 'select' || tool === 'marquee')
+      ) {
+        e.preventDefault();
+        const useSnap = snapToGridRef.current && !e.altKey;
+        const step = useSnap ? gridSizeRef.current * (e.shiftKey ? 2 : 1) : e.shiftKey ? 20 : 5;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        const selectedSet = new Set(selectedDeviceIds);
+        const { width: canvasW, height: canvasH } = canvasSizeRef.current;
+        setDevices(prev =>
+          prev.map(d => {
+            if (!selectedSet.has(d.id)) return d;
+            return {
+              ...d,
+              x: snapClampedToGrid(d.x + dx, 60, canvasW - 60, gridSizeRef.current, useSnap),
+              y: snapClampedToGrid(d.y + dy, 60, canvasH - 60, gridSizeRef.current, useSnap)
+            };
+          })
+        );
         return;
       }
 
@@ -2524,6 +2977,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     };
   }, [
     consoleDeviceId,
+    consoleTabIds.length,
     devices,
     handleDeleteDiagramLabel,
     handleDeleteLink,
@@ -3242,6 +3696,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     const blankPreset = NETWORK_LAB_PRESETS.find(p => p.id === 'blank-sandbox') || NETWORK_LAB_PRESETS[0];
     setActivePresetId(blankPreset.id);
     setCanvasSize({ width: DEFAULT_LAB_CANVAS_WIDTH, height: DEFAULT_LAB_CANVAS_HEIGHT });
+    setShowCustomLabels(true);
     setDevices([]);
     setLinks([]);
     setShapes([]);
@@ -3330,6 +3785,8 @@ export const NetworkTopologySimulator: React.FC = () => {
       status: resolvedStatus,
       presetId: record?.presetId || activePresetId,
       canvasSize: exportCanvasSize,
+      showCustomLabels: record ? record.showCustomLabels !== false : showCustomLabels,
+      gridSettings: record?.gridSettings || { showGrid, snapToGrid, gridSize, gridStyle },
       studentEmail: currentUser.email,
       ...(objectivesSummary ? { objectivesSummary } : {}),
       devices: targetDevices,
@@ -3406,6 +3863,10 @@ export const NetworkTopologySimulator: React.FC = () => {
       labels: targetLabels,
       canvasWidth: exportCanvasSize.width,
       canvasHeight: exportCanvasSize.height,
+      showCustomLabels: record ? record.showCustomLabels !== false : showCustomLabels,
+      showGrid: record?.gridSettings?.showGrid ?? showGrid,
+      gridSize: record?.gridSettings?.gridSize ?? gridSize,
+      gridStyle: record?.gridSettings?.gridStyle ?? gridStyle,
       isDark: isDarkTheme
     };
 
@@ -3439,6 +3900,8 @@ export const NetworkTopologySimulator: React.FC = () => {
       status,
       presetId,
       canvasSize: importedCanvasSize,
+      showCustomLabels: importedShowCustomLabels,
+      gridSettings: importedGridSettings,
       devices: importedDevices,
       links: importedLinks,
       shapes: importedShapes,
@@ -3448,6 +3911,24 @@ export const NetworkTopologySimulator: React.FC = () => {
 
     setActivePresetId(presetId);
     setCanvasSize(importedCanvasSize);
+    setShowCustomLabels(importedShowCustomLabels !== false);
+    if (importedGridSettings) {
+      if (typeof importedGridSettings.showGrid === 'boolean') {
+        setShowGrid(importedGridSettings.showGrid);
+      }
+      if (typeof importedGridSettings.snapToGrid === 'boolean') {
+        setSnapToGrid(importedGridSettings.snapToGrid);
+      }
+      if (importedGridSettings.gridSize !== undefined) {
+        setGridSize(normalizeGridStep(importedGridSettings.gridSize));
+      }
+      if (
+        importedGridSettings.gridStyle === 'lines' ||
+        importedGridSettings.gridStyle === 'dots'
+      ) {
+        setGridStyle(importedGridSettings.gridStyle);
+      }
+    }
     setDevices(importedDevices);
     setLinks(importedLinks);
     setShapes(importedShapes);
@@ -3566,6 +4047,8 @@ export const NetworkTopologySimulator: React.FC = () => {
       presetId: activePresetId,
       canvasWidth: canvasSize.width,
       canvasHeight: canvasSize.height,
+      showCustomLabels,
+      gridSettings: { showGrid, snapToGrid, gridSize, gridStyle },
       devices: cleanDevices,
       links: cleanLinks,
       shapes: cleanShapes,
@@ -3656,6 +4139,24 @@ export const NetworkTopologySimulator: React.FC = () => {
     );
     setActivePresetId(record.presetId);
     setCanvasSize(restoredSize);
+    setShowCustomLabels(record.showCustomLabels !== false);
+    if (record.gridSettings) {
+      if (typeof record.gridSettings.showGrid === 'boolean') {
+        setShowGrid(record.gridSettings.showGrid);
+      }
+      if (typeof record.gridSettings.snapToGrid === 'boolean') {
+        setSnapToGrid(record.gridSettings.snapToGrid);
+      }
+      if (record.gridSettings.gridSize !== undefined) {
+        setGridSize(normalizeGridStep(record.gridSettings.gridSize));
+      }
+      if (
+        record.gridSettings.gridStyle === 'lines' ||
+        record.gridSettings.gridStyle === 'dots'
+      ) {
+        setGridStyle(record.gridSettings.gridStyle);
+      }
+    }
     setDevices(record.devices);
     setLinks(record.links);
     setShapes(recordShapes);
@@ -4592,12 +5093,28 @@ export const NetworkTopologySimulator: React.FC = () => {
             </button>
           </div>
 
-          <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+          {/* Grid, Snap-to-Grid & Simulator Settings */}
+          <div ref={settingsMenuRef} className="relative inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+            <button
+              type="button"
+              aria-pressed={showGrid}
+              onClick={() => setShowGrid(prev => !prev)}
+              title="Toggle background alignment grid visibility"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                showGrid
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm ring-1 ring-slate-200/80 dark:ring-slate-700'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-900/60'
+              }`}
+            >
+              <Grid3x3 className={`w-3.5 h-3.5 ${showGrid ? 'text-blue-600 dark:text-cyan-400' : ''}`} />
+              <span>Grid</span>
+            </button>
+
             <button
               type="button"
               aria-pressed={snapToGrid}
               onClick={() => setSnapToGrid(prev => !prev)}
-              title="Toggle Snap-to-Grid alignment while dragging devices and shapes (hold Alt to temporarily bypass)"
+              title="Toggle Snap-to-Grid alignment while placing or dragging devices (hold Alt to temporarily bypass)"
               className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                 snapToGrid
                   ? 'bg-blue-600 text-white shadow-sm'
@@ -4608,17 +5125,216 @@ export const NetworkTopologySimulator: React.FC = () => {
               <span>Snap</span>
             </button>
 
-            <select
-              aria-label="Grid Snap Size"
-              value={gridSize}
-              onChange={(e) => setGridSize(Number(e.target.value) as SnapGridStep)}
-              title="Grid snap increment (logical canvas units)"
-              className="px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono tabular-nums font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={isSettingsOpen}
+              onClick={() => setIsSettingsOpen(prev => !prev)}
+              title="Simulator Grid, Snap & Display Settings"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 tabular-nums ${
+                isSettingsOpen
+                  ? 'bg-blue-50 dark:bg-slate-900 text-blue-700 dark:text-cyan-300 ring-1 ring-blue-300 dark:ring-cyan-700'
+                  : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-700'
+              }`}
             >
-              <option value={10}>10px</option>
-              <option value={20}>20px</option>
-              <option value={40}>40px</option>
-            </select>
+              <Settings className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+              <span>Settings</span>
+              <ChevronDown
+                className={`w-3 h-3 text-slate-400 transition-transform duration-150 ${
+                  isSettingsOpen ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+
+            {isSettingsOpen && (
+              <div
+                role="dialog"
+                aria-label="Simulator settings"
+                className="absolute left-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl p-4 z-50 space-y-4"
+              >
+                <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Settings className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
+                    <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                      Workspace &amp; Grid Settings
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Close settings"
+                    onClick={() => setIsSettingsOpen(false)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Background Grid Visibility */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-slate-900 dark:text-white">
+                        Background Grid
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Show coordinate grid behind topology
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={showGrid}
+                      aria-label="Toggle background grid"
+                      onClick={() => setShowGrid(prev => !prev)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                        showGrid ? 'bg-blue-600 dark:bg-cyan-500' : 'bg-slate-300 dark:bg-slate-700'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-xs transition-transform ${
+                          showGrid ? 'translate-x-4.5' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Grid Style Selector */}
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                      Grid Pattern
+                    </span>
+                    <div className="inline-flex items-center gap-1 p-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                      {(['lines', 'dots'] as const).map(styleOpt => (
+                        <button
+                          key={styleOpt}
+                          type="button"
+                          onClick={() => {
+                            setGridStyle(styleOpt);
+                            if (!showGrid) setShowGrid(true);
+                          }}
+                          className={`px-2.5 py-1 rounded-md text-[11px] font-semibold capitalize transition-colors ${
+                            gridStyle === styleOpt && showGrid
+                              ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                              : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                          }`}
+                        >
+                          {styleOpt}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-100 dark:border-slate-800 pt-3 space-y-3">
+                  {/* Snap to Grid Toggle */}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-slate-900 dark:text-white">
+                        Snap to Grid
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Align placed &amp; dragged nodes (Alt bypasses)
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={snapToGrid}
+                      aria-label="Toggle Snap to Grid"
+                      onClick={() => setSnapToGrid(prev => !prev)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                        snapToGrid ? 'bg-blue-600 dark:bg-cyan-500' : 'bg-slate-300 dark:bg-slate-700'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-xs transition-transform ${
+                          snapToGrid ? 'translate-x-4.5' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Grid Spacing */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-medium text-slate-600 dark:text-slate-300">
+                        Grid Spacing
+                      </span>
+                      <span className="font-mono tabular-nums font-semibold text-slate-800 dark:text-slate-200">
+                        {gridSize}px
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                      {GRID_STEP_OPTIONS.map(stepOpt => (
+                        <button
+                          key={stepOpt}
+                          type="button"
+                          onClick={() => setGridSize(stepOpt)}
+                          className={`py-1 rounded-lg text-[11px] font-mono tabular-nums font-semibold transition-colors ${
+                            gridSize === stepOpt
+                              ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-cyan-400 shadow-xs'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                          }`}
+                        >
+                          {stepOpt}px
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Force Align Existing Devices */}
+                  <div className="pt-1 space-y-1.5">
+                    <button
+                      type="button"
+                      disabled={devices.length === 0}
+                      onClick={() => handleAlignDevicesToGrid()}
+                      className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-200 dark:disabled:bg-slate-800 disabled:text-slate-400 text-white text-xs font-semibold transition-colors shadow-xs"
+                    >
+                      <Magnet className="w-3.5 h-3.5" />
+                      <span>Align All Devices to Grid</span>
+                    </button>
+                    {devices.length > 0 && (
+                      <div className="text-[11px] text-center text-slate-500 dark:text-slate-400 tabular-nums">
+                        {offGridDeviceCount === 0
+                          ? `All ${devices.length} device${devices.length === 1 ? '' : 's'} aligned to ${gridSize}px grid`
+                          : `${offGridDeviceCount} of ${devices.length} device${devices.length === 1 ? '' : 's'} currently off-grid`}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-100 dark:border-slate-800 pt-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-slate-900 dark:text-white">
+                      Custom Node Labels
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
+                      {customLabelCount > 0
+                        ? `${customLabelCount} custom label${customLabelCount === 1 ? '' : 's'} saved`
+                        : 'Double-click any node label to rename'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={showCustomLabels}
+                    aria-label="Toggle custom node labels"
+                    onClick={() => setShowCustomLabels(prev => !prev)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                      showCustomLabels
+                        ? 'bg-blue-600 dark:bg-cyan-500'
+                        : 'bg-slate-300 dark:bg-slate-700'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-xs transition-transform ${
+                        showCustomLabels ? 'translate-x-4.5' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
@@ -4645,6 +5361,35 @@ export const NetworkTopologySimulator: React.FC = () => {
               <span>Auto-Layout</span>
             </button>
           </div>
+
+          <button
+            type="button"
+            aria-pressed={showCustomLabels}
+            onClick={() => {
+              setShowCustomLabels(prev => {
+                const next = !prev;
+                flashBanner(
+                  next
+                    ? 'Custom labels enabled — double-click any node label or press F2 to rename'
+                    : 'Showing default device hostnames (custom labels hidden)'
+                );
+                return next;
+              });
+            }}
+            title={
+              showCustomLabels
+                ? 'Custom Labels ON — click to switch nodes back to default hostnames'
+                : 'Custom Labels OFF — click to display custom node labels'
+            }
+            className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 tabular-nums ${
+              showCustomLabels
+                ? 'bg-blue-600 border-blue-500 text-white shadow-sm'
+                : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <Tag className="w-3.5 h-3.5" />
+            <span>Custom Labels{customLabelCount > 0 ? ` (${customLabelCount})` : ''}</span>
+          </button>
         </div>
       </div>
 
@@ -4714,11 +5459,46 @@ export const NetworkTopologySimulator: React.FC = () => {
                           type="button"
                           onClick={() => startCanvasLabelEdit(selectedDevice)}
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-500 transition-colors whitespace-nowrap"
-                          title="Rename device label (F2 or double-click label on canvas)"
+                          title={
+                            showCustomLabels
+                              ? 'Set custom node label (F2 or double-click label on canvas)'
+                              : 'Rename device hostname (F2 or double-click label on canvas)'
+                          }
                         >
                           <Pencil className="w-3 h-3" />
                           <span>Rename</span>
                         </button>
+                        {selectedDevice.customLabel?.trim() && (
+                          <>
+                            <button
+                              type="button"
+                              aria-pressed={showCustomLabels && selectedDevice.useCustomLabel !== false}
+                              onClick={() => toggleDeviceCustomLabel(selectedDevice.id)}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                                showCustomLabels && selectedDevice.useCustomLabel !== false
+                                  ? 'bg-blue-50 dark:bg-cyan-950/50 border-blue-300 dark:border-cyan-700 text-blue-700 dark:text-cyan-300'
+                                  : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-500'
+                              }`}
+                              title="Toggle custom label vs. hostname for this node"
+                            >
+                              <Tag className="w-3 h-3" />
+                              <span>
+                                {showCustomLabels && selectedDevice.useCustomLabel !== false
+                                  ? 'Custom: On'
+                                  : 'Custom: Off'}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => clearDeviceCustomLabel(selectedDevice.id)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:border-red-400 hover:text-red-600 dark:hover:text-red-400 transition-colors whitespace-nowrap"
+                              title="Clear custom label and revert to default hostname"
+                            >
+                              <X className="w-3 h-3" />
+                              <span>Reset Name</span>
+                            </button>
+                          </>
+                        )}
                         {((selectedDevice.labelOffsetX || 0) !== 0 ||
                           (selectedDevice.labelOffsetY || 0) !== 0) && (
                           <button
@@ -4995,6 +5775,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                 const targetEl = e.target as HTMLElement | null;
                 if (
                   targetEl?.closest('[data-zoom-hud="true"]') ||
+                  targetEl?.closest('[data-minimap-hud="true"]') ||
                   targetEl?.closest('[data-console-overlay="true"]')
                 ) {
                   return;
@@ -5153,62 +5934,96 @@ export const NetworkTopologySimulator: React.FC = () => {
                 className="relative bg-slate-50 dark:bg-[#090f1d] shadow-xs ring-1 ring-slate-200/70 dark:ring-slate-800/70"
               >
               {/* True-Coordinate Logical SVG Grid Backdrop */}
-              <svg
-                viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`}
-                className="absolute inset-0 w-full h-full pointer-events-none z-0"
-                preserveAspectRatio="none"
-                aria-hidden="true"
-              >
-                <defs>
-                  <pattern
-                    id="sim-snap-grid-pattern"
-                    width={gridSize}
-                    height={gridSize}
-                    patternUnits="userSpaceOnUse"
-                  >
-                    {snapToGrid ? (
-                      <path
-                        d={`M ${gridSize} 0 L 0 0 0 ${gridSize}`}
-                        fill="none"
-                        stroke="rgba(148,163,184,0.18)"
-                        strokeWidth="0.7"
+              {(showGrid || activeSnapGuides?.x !== undefined || activeSnapGuides?.y !== undefined) && (
+                <svg
+                  viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`}
+                  className="absolute inset-0 w-full h-full pointer-events-none z-0"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                >
+                  {showGrid && (
+                    <>
+                      <defs>
+                        <pattern
+                          id="sim-snap-grid-pattern"
+                          x={gridStyle === 'dots' ? -1 : 0}
+                          y={gridStyle === 'dots' ? -1 : 0}
+                          width={gridSize}
+                          height={gridSize}
+                          patternUnits="userSpaceOnUse"
+                        >
+                          {gridStyle === 'lines' ? (
+                            <path
+                              d={`M ${gridSize} 0 L 0 0 0 ${gridSize}`}
+                              fill="none"
+                              stroke="rgba(148,163,184,0.22)"
+                              strokeWidth="0.7"
+                            />
+                          ) : (
+                            <circle
+                              cx={1}
+                              cy={1}
+                              r="1.15"
+                              fill="rgba(148,163,184,0.36)"
+                            />
+                          )}
+                        </pattern>
+                        {gridStyle === 'lines' && (
+                          <pattern
+                            id="sim-snap-grid-major-pattern"
+                            width={gridSize * 5}
+                            height={gridSize * 5}
+                            patternUnits="userSpaceOnUse"
+                          >
+                            <path
+                              d={`M ${gridSize * 5} 0 L 0 0 0 ${gridSize * 5}`}
+                              fill="none"
+                              stroke="rgba(100,116,139,0.24)"
+                              strokeWidth="0.95"
+                            />
+                          </pattern>
+                        )}
+                      </defs>
+                      <rect
+                        width={canvasSize.width}
+                        height={canvasSize.height}
+                        fill="url(#sim-snap-grid-pattern)"
                       />
-                    ) : (
-                      <circle
-                        cx={gridSize / 2}
-                        cy={gridSize / 2}
-                        r="0.9"
-                        fill="rgba(148,163,184,0.22)"
-                      />
-                    )}
-                  </pattern>
-                </defs>
-                <rect width={canvasSize.width} height={canvasSize.height} fill="url(#sim-snap-grid-pattern)" />
-                {activeSnapGuides?.x !== undefined && (
-                  <line
-                    x1={activeSnapGuides.x}
-                    y1={0}
-                    x2={activeSnapGuides.x}
-                    y2={canvasSize.height}
-                    stroke="#0ea5e9"
-                    strokeWidth={1.1}
-                    strokeDasharray="4 4"
-                    strokeOpacity={0.75}
-                  />
-                )}
-                {activeSnapGuides?.y !== undefined && (
-                  <line
-                    x1={0}
-                    y1={activeSnapGuides.y}
-                    x2={canvasSize.width}
-                    y2={activeSnapGuides.y}
-                    stroke="#0ea5e9"
-                    strokeWidth={1.1}
-                    strokeDasharray="4 4"
-                    strokeOpacity={0.75}
-                  />
-                )}
-              </svg>
+                      {gridStyle === 'lines' && (
+                        <rect
+                          width={canvasSize.width}
+                          height={canvasSize.height}
+                          fill="url(#sim-snap-grid-major-pattern)"
+                        />
+                      )}
+                    </>
+                  )}
+                  {activeSnapGuides?.x !== undefined && (
+                    <line
+                      x1={activeSnapGuides.x}
+                      y1={0}
+                      x2={activeSnapGuides.x}
+                      y2={canvasSize.height}
+                      stroke="#0ea5e9"
+                      strokeWidth={1.1}
+                      strokeDasharray="4 4"
+                      strokeOpacity={0.75}
+                    />
+                  )}
+                  {activeSnapGuides?.y !== undefined && (
+                    <line
+                      x1={0}
+                      y1={activeSnapGuides.y}
+                      x2={canvasSize.width}
+                      y2={activeSnapGuides.y}
+                      stroke="#0ea5e9"
+                      strokeWidth={1.1}
+                      strokeDasharray="4 4"
+                      strokeOpacity={0.75}
+                    />
+                  )}
+                </svg>
+              )}
               {/* SVG Grouping Shapes Layer (Rendered Behind Cables & Devices) */}
               {shapes.length > 0 && (
                 <svg
@@ -6038,6 +6853,11 @@ export const NetworkTopologySimulator: React.FC = () => {
                     ? dev.labelOffsetY
                     : 0;
                 const hasCustomLabelOffset = labelOx !== 0 || labelOy !== 0;
+                const {
+                  primary: displayLabel,
+                  secondaryHostname,
+                  isCustomActive
+                } = getDeviceDisplayLabel(dev, showCustomLabels);
 
                 return (
                   <React.Fragment key={dev.id}>
@@ -6235,6 +7055,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                             type="text"
                             autoFocus
                             maxLength={64}
+                            placeholder={showCustomLabels ? `Custom label (${dev.name})` : dev.name}
                             aria-label={`Edit label for ${dev.name}`}
                             value={editingDeviceLabelDraft}
                             onFocus={(e) => e.currentTarget.select()}
@@ -6250,7 +7071,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                               }
                             }}
                             onBlur={() => commitDeviceRename(dev.id, editingDeviceLabelDraft)}
-                            className="w-24 sm:w-28 bg-transparent text-center text-[11px] font-bold text-slate-900 dark:text-white focus:outline-none"
+                            className="w-28 sm:w-32 bg-transparent text-center text-[11px] font-bold text-slate-900 dark:text-white focus:outline-none"
                           />
                         </div>
                       ) : (
@@ -6304,24 +7125,42 @@ export const NetworkTopologySimulator: React.FC = () => {
                           }}
                           title={
                             tool === 'select'
-                              ? 'Drag to reposition label · Double-click to rename'
+                              ? isCustomActive
+                                ? `${displayLabel} (Hostname: ${dev.name}) · Drag to move · Double-click to edit`
+                                : 'Drag to reposition label · Double-click to rename'
+                              : isCustomActive
+                              ? `${displayLabel} (Hostname: ${dev.name})`
                               : undefined
                           }
                           className={`px-2 py-0.5 rounded-lg bg-white/95 dark:bg-slate-900/95 border shadow-xs text-center whitespace-nowrap select-none transition-colors ${
                             draggingLabelDeviceId === dev.id
                               ? 'border-blue-500 dark:border-cyan-400 ring-2 ring-blue-500/30 cursor-grabbing'
+                              : isCustomActive
+                              ? tool === 'select'
+                                ? 'border-blue-300 dark:border-cyan-700 hover:border-blue-500 dark:hover:border-cyan-400 cursor-grab'
+                                : 'border-blue-300 dark:border-cyan-700 cursor-pointer'
                               : tool === 'select'
                               ? 'border-slate-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-cyan-400 cursor-grab'
                               : 'border-slate-200 dark:border-slate-700 cursor-pointer'
                           }`}
                         >
                           <div className="inline-flex items-center justify-center gap-1 text-[11px] font-bold text-slate-900 dark:text-white leading-tight">
-                            <span>{dev.name}</span>
+                            {isCustomActive && (
+                              <Tag
+                                className="w-2.5 h-2.5 text-blue-600 dark:text-cyan-400 shrink-0"
+                                aria-hidden="true"
+                              />
+                            )}
+                            <span>{displayLabel}</span>
                             {tool === 'select' && isSelected && selectedDeviceIds.length === 1 && (
                               <button
                                 type="button"
-                                aria-label={`Rename ${dev.name}`}
-                                title="Rename device label (F2)"
+                                aria-label={`Rename ${displayLabel}`}
+                                title={
+                                  showCustomLabels
+                                    ? 'Edit custom label (F2)'
+                                    : 'Rename hostname (F2)'
+                                }
                                 onPointerDown={(e) => e.stopPropagation()}
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -6333,6 +7172,11 @@ export const NetworkTopologySimulator: React.FC = () => {
                               </button>
                             )}
                           </div>
+                          {secondaryHostname && (
+                            <div className="text-[9.5px] font-mono text-slate-400 dark:text-slate-400 leading-tight">
+                              {secondaryHostname}
+                            </div>
+                          )}
                           {primaryIp && (
                             <div className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-cyan-300 leading-tight">
                               {primaryIp}
@@ -6645,6 +7489,29 @@ export const NetworkTopologySimulator: React.FC = () => {
                   )}
                 </button>
               </div>
+
+              {/* Floating Workspace Mini-Map Overview */}
+              <TopologyMiniMap
+                canvasWidth={canvasSize.width}
+                canvasHeight={canvasSize.height}
+                devices={devices}
+                links={links}
+                shapes={shapes}
+                diagramLabels={diagramLabels}
+                selectedDeviceIds={selectedDeviceIds}
+                selectedLinkId={selectedLinkId}
+                linkStatuses={linkStatuses}
+                activeHopLinkId={
+                  animStepIndex !== null ? lastPingResult?.hops[animStepIndex]?.linkId : null
+                }
+                viewportBox={miniMapViewportBox}
+                zoom={zoom}
+                isOpen={isMiniMapOpen}
+                onToggleOpen={() => setIsMiniMapOpen(prev => !prev)}
+                isDragging={isMiniMapDragging}
+                svgRef={miniMapSvgRef}
+                onMiniMapPointerDown={handleMiniMapPointerDown}
+              />
 
               {/* Multi-Device Tabbed CLI Console Pop-up (opens on device double-click) */}
               {consoleTabs.length > 0 && consoleDevice && isConsoleMinimized && (

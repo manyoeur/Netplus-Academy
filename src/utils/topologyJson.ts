@@ -14,6 +14,7 @@ import {
 } from '../components/Lab/networkSimTypes';
 import { createDefaultDevice } from '../components/Lab/networkSimEngine';
 import {
+  LabGridSettings,
   MAX_LAB_CANVAS_HEIGHT,
   MAX_LAB_CANVAS_WIDTH,
   computeRequiredCanvasSize,
@@ -35,6 +36,8 @@ export interface ExportedTopologyJson {
     width: number;
     height: number;
   };
+  showCustomLabels?: boolean;
+  gridSettings?: LabGridSettings;
   exportedAt: string;
   studentEmail?: string;
   objectivesSummary?: {
@@ -65,6 +68,8 @@ export type TopologyImportParseResult =
           width: number;
           height: number;
         };
+        showCustomLabels?: boolean;
+        gridSettings?: LabGridSettings;
         devices: SimDevice[];
         links: SimLink[];
         shapes: SimTopologyShape[];
@@ -322,11 +327,21 @@ export function normalizeDeviceForJson(
   const normLx = Number.isFinite(rawLx) ? Math.round(Math.min(220, Math.max(-220, rawLx))) : 0;
   const rawLy = Number(dev.labelOffsetY);
   const normLy = Number.isFinite(rawLy) ? Math.round(Math.min(180, Math.max(-180, rawLy))) : 0;
+  const cleanCustomLabel =
+    typeof dev.customLabel === 'string' && dev.customLabel.trim()
+      ? dev.customLabel.trim().slice(0, 64)
+      : undefined;
 
   return stripUndefinedDeep({
     ...dev,
     id: String(dev.id).slice(0, 128),
     name: String(dev.name || 'Device').slice(0, 64),
+    customLabel: cleanCustomLabel,
+    useCustomLabel: cleanCustomLabel
+      ? dev.useCustomLabel === false
+        ? false
+        : true
+      : undefined,
     model: String(dev.model || '').slice(0, 80),
     x: clampInt(dev.x, 20, maxWidth - 20, 500),
     y: clampInt(dev.y, 20, maxHeight - 20, 290),
@@ -347,6 +362,8 @@ export function buildTopologyJsonPayload(params: {
   status: 'in_progress' | 'completed';
   presetId: string;
   canvasSize?: { width: number; height: number };
+  showCustomLabels?: boolean;
+  gridSettings?: LabGridSettings;
   studentEmail?: string;
   objectivesSummary?: {
     passed: number;
@@ -386,6 +403,10 @@ export function buildTopologyJsonPayload(params: {
     status: params.status,
     presetId: params.presetId || 'blank-sandbox',
     canvasSize: resolvedCanvasSize,
+    ...(typeof params.showCustomLabels === 'boolean'
+      ? { showCustomLabels: params.showCustomLabels }
+      : {}),
+    ...(params.gridSettings ? { gridSettings: params.gridSettings } : {}),
     exportedAt: new Date().toISOString(),
     ...(params.studentEmail ? { studentEmail: params.studentEmail } : {}),
     ...(params.objectivesSummary ? { objectivesSummary: params.objectivesSummary } : {}),
@@ -544,6 +565,10 @@ export function parseAndValidateTopologyJson(
     const normLx = Number.isFinite(rawLx) ? Math.round(Math.min(220, Math.max(-220, rawLx))) : 0;
     const rawLy = Number(item.labelOffsetY);
     const normLy = Number.isFinite(rawLy) ? Math.round(Math.min(180, Math.max(-180, rawLy))) : 0;
+    const cleanCustomLabel =
+      typeof item.customLabel === 'string' && item.customLabel.trim()
+        ? item.customLabel.trim().slice(0, 64)
+        : undefined;
 
     const cliMode: SimCliMode = VALID_CLI_MODES.has(item.cliMode as SimCliMode)
       ? (item.cliMode as SimCliMode)
@@ -561,6 +586,12 @@ export function parseAndValidateTopologyJson(
       ...baseline,
       id: devId,
       name,
+      ...(cleanCustomLabel
+        ? {
+            customLabel: cleanCustomLabel,
+            useCustomLabel: item.useCustomLabel === false ? false : true
+          }
+        : {}),
       type: devType,
       model:
         typeof item.model === 'string' && item.model.trim()
@@ -774,6 +805,28 @@ export function parseAndValidateTopologyJson(
     requestedCanvas.height
   );
 
+  const rawGridObj =
+    root.gridSettings && typeof root.gridSettings === 'object' && !Array.isArray(root.gridSettings)
+      ? (root.gridSettings as Record<string, unknown>)
+      : null;
+  const normalizedGridSettings: LabGridSettings | undefined = rawGridObj
+    ? stripUndefinedDeep({
+        ...(typeof rawGridObj.showGrid === 'boolean' ? { showGrid: rawGridObj.showGrid } : {}),
+        ...(typeof rawGridObj.snapToGrid === 'boolean'
+          ? { snapToGrid: rawGridObj.snapToGrid }
+          : {}),
+        ...(rawGridObj.gridSize === 10 ||
+        rawGridObj.gridSize === 20 ||
+        rawGridObj.gridSize === 40 ||
+        rawGridObj.gridSize === 50
+          ? { gridSize: rawGridObj.gridSize }
+          : {}),
+        ...(rawGridObj.gridStyle === 'lines' || rawGridObj.gridStyle === 'dots'
+          ? { gridStyle: rawGridObj.gridStyle }
+          : {})
+      })
+    : undefined;
+
   return {
     ok: true,
     data: {
@@ -781,6 +834,12 @@ export function parseAndValidateTopologyJson(
       status,
       presetId: resolvedPresetId,
       canvasSize: resolvedCanvasSize,
+      ...(typeof root.showCustomLabels === 'boolean'
+        ? { showCustomLabels: root.showCustomLabels }
+        : {}),
+      ...(normalizedGridSettings && Object.keys(normalizedGridSettings).length > 0
+        ? { gridSettings: normalizedGridSettings }
+        : {}),
       devices: normalizedDevices,
       links: normalizedLinks,
       shapes: rawShapes,

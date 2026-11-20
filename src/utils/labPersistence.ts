@@ -5,6 +5,13 @@ export const DEFAULT_LAB_CANVAS_HEIGHT = 580;
 export const MAX_LAB_CANVAS_WIDTH = 4000;
 export const MAX_LAB_CANVAS_HEIGHT = 2500;
 
+export interface LabGridSettings {
+  showGrid?: boolean;
+  snapToGrid?: boolean;
+  gridSize?: number;
+  gridStyle?: 'lines' | 'dots';
+}
+
 export interface ActiveLabDraft {
   draftKey: string;
   userId: string;
@@ -13,6 +20,8 @@ export interface ActiveLabDraft {
   presetId: string;
   canvasWidth?: number;
   canvasHeight?: number;
+  showCustomLabels?: boolean;
+  gridSettings?: LabGridSettings;
   devices: SimDevice[];
   links: SimLink[];
   shapes?: SimTopologyShape[];
@@ -27,6 +36,8 @@ export interface SavedLabRecord {
   presetId: string;
   canvasWidth?: number;
   canvasHeight?: number;
+  showCustomLabels?: boolean;
+  gridSettings?: LabGridSettings;
   devices: SimDevice[];
   links: SimLink[];
   shapes?: SimTopologyShape[];
@@ -124,10 +135,20 @@ export function sanitizeDevicesForStorage(devices: SimDevice[]): SimDevice[] {
     const normLx = Number.isFinite(rawLx) ? Math.round(Math.min(220, Math.max(-220, rawLx))) : 0;
     const rawLy = Number(dev.labelOffsetY);
     const normLy = Number.isFinite(rawLy) ? Math.round(Math.min(180, Math.max(-180, rawLy))) : 0;
+    const cleanCustomLabel =
+      typeof dev.customLabel === 'string' && dev.customLabel.trim()
+        ? dev.customLabel.trim().slice(0, 64)
+        : undefined;
     return stripUndefinedDeep({
       ...dev,
       id: String(dev.id).slice(0, 128),
       name: String(dev.name || 'Device').slice(0, 64),
+      customLabel: cleanCustomLabel,
+      useCustomLabel: cleanCustomLabel
+        ? dev.useCustomLabel === false
+          ? false
+          : true
+        : undefined,
       model: String(dev.model || '').slice(0, 80),
       x: Math.round(Number(dev.x) || 0),
       y: Math.round(Number(dev.y) || 0),

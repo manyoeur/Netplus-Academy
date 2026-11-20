@@ -25,6 +25,10 @@ interface TopologyExportOptions {
   labels?: SimDiagramLabel[];
   canvasWidth?: number;
   canvasHeight?: number;
+  showCustomLabels?: boolean;
+  showGrid?: boolean;
+  gridSize?: number;
+  gridStyle?: 'lines' | 'dots';
   isDark?: boolean;
 }
 
@@ -69,6 +73,10 @@ export function buildTopologySvgString(
     labels = [],
     canvasWidth,
     canvasHeight,
+    showCustomLabels = true,
+    showGrid = true,
+    gridSize = 20,
+    gridStyle = 'dots',
     isDark = false
   } = options;
 
@@ -195,15 +203,23 @@ export function buildTopologySvgString(
       const cx = dev.x;
       const cy = dev.y + headerH;
 
+      const custom = dev.customLabel?.trim();
+      const useCustom = Boolean(showCustomLabels && custom && dev.useCustomLabel !== false);
+      const displayName = useCustom && custom ? custom : dev.name;
+      const subHostname = useCustom && custom && custom !== dev.name ? dev.name : '';
+
       const primaryIface = dev.interfaces.find(i => isValidIp(i.ip));
       const ipText = primaryIface
         ? `${primaryIface.ip}${isValidIp(primaryIface.mask) ? `/${maskToPrefix(primaryIface.mask)}` : ''}`
         : '';
 
-      const nameWidth = dev.name.length * 7.2 + 16;
+      const nameWidth = displayName.length * 7.2 + 16;
+      const hostWidth = subHostname ? subHostname.length * 6.0 + 16 : 0;
       const ipWidth = ipText ? ipText.length * 6.2 + 16 : 0;
-      const boxW = Math.max(76, nameWidth, ipWidth);
-      const boxH = ipText ? 31 : 19;
+      const boxW = Math.max(76, nameWidth, hostWidth, ipWidth);
+      const boxH = 19 + (subHostname ? 11 : 0) + (ipText ? 12 : 0);
+      const hostY = 53.5;
+      const ipY = subHostname ? 65 : 54.5;
       const iconScale = 0.88;
       const rotation = typeof dev.rotation === 'number' && Number.isFinite(dev.rotation) ? dev.rotation : 0;
       const labelOffsetX =
@@ -233,11 +249,23 @@ export function buildTopologySvgString(
               font-size="11"
               font-weight="700"
               fill="${palette.titleText}"
-            >${escapeXml(dev.name)}</text>
+            >${escapeXml(displayName)}</text>
+            ${
+              subHostname
+                ? `<text
+                    x="0" y="${hostY}"
+                    text-anchor="middle"
+                    font-family="Fira Code, ui-monospace, SFMono-Regular, Menlo, monospace"
+                    font-size="8.8"
+                    font-weight="500"
+                    fill="${palette.mutedText}"
+                  >${escapeXml(subHostname)}</text>`
+                : ''
+            }
             ${
               ipText
                 ? `<text
-                    x="0" y="54.5"
+                    x="0" y="${ipY}"
                     text-anchor="middle"
                     font-family="Fira Code, ui-monospace, SFMono-Regular, Menlo, monospace"
                     font-size="9.5"
@@ -373,11 +401,18 @@ export function buildTopologySvgString(
     subtitle || `${devices.length} devices · ${links.length} cables · Exported ${exportedStamp}`
   );
 
+  const exportGridStep =
+    gridSize === 10 || gridSize === 20 || gridSize === 40 || gridSize === 50 ? gridSize : 20;
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${outputW}" height="${outputH}" viewBox="0 0 ${logicalW} ${logicalH}">
   <defs>
-    <pattern id="bpGridDots" width="24" height="24" patternUnits="userSpaceOnUse">
-      <circle cx="12" cy="12" r="1" fill="${palette.gridDot}" fill-opacity="0.55" />
+    <pattern id="bpGridPattern" ${gridStyle === 'dots' ? 'x="-1" y="-1"' : ''} width="${exportGridStep}" height="${exportGridStep}" patternUnits="userSpaceOnUse">
+      ${
+        gridStyle === 'lines'
+          ? `<path d="M ${exportGridStep} 0 L 0 0 0 ${exportGridStep}" fill="none" stroke="${palette.gridDot}" stroke-opacity="0.45" stroke-width="0.7" />`
+          : `<circle cx="1" cy="1" r="1" fill="${palette.gridDot}" fill-opacity="0.55" />`
+      }
     </pattern>
   </defs>
 
@@ -410,7 +445,7 @@ export function buildTopologySvgString(
   >Netplus Academy · Lab Topology Export</text>
 
   <!-- Topology Grid Background -->
-  <rect x="0" y="${headerH}" width="${logicalW}" height="${canvasH}" fill="url(#bpGridDots)" />
+  ${showGrid ? `<rect x="0" y="${headerH}" width="${logicalW}" height="${canvasH}" fill="url(#bpGridPattern)" />` : ''}
 
   <!-- Grouping Shapes Layer -->
   ${shapeElements}

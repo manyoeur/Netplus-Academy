@@ -84,6 +84,8 @@ export interface SimLineSettings {
 export interface SimDevice {
   id: string;
   name: string;
+  customLabel?: string; // Optional user-defined display label for node organization
+  useCustomLabel?: boolean; // Per-device toggle to show customLabel instead of hostname
   type: SimDeviceType;
   model: string;
   x: number; // Canvas coordinate 0..1000
