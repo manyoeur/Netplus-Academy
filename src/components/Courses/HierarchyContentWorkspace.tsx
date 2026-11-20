@@ -562,7 +562,9 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                   </>
                 ) : (
                   <>
-                    Select a topic or lesson below to explore{' '}
+                    {isSectionLevel
+                      ? 'Use the Course Outline or click Next below to explore lessons in '
+                      : 'Select a section below to explore '}
                     <strong className="text-slate-800 dark:text-slate-200">
                       {targetNumber} {targetTitle}
                     </strong>
@@ -585,8 +587,8 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
         )}
       </div>
 
-      {/* Child Outline Navigation Cards */}
-      {!section ? (
+      {/* Child Outline Navigation Cards (Level-1 Chapter only) */}
+      {!section && (
         <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
@@ -637,51 +639,6 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
               </div>
             ))}
           </div>
-        </div>
-      ) : (
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
-              <BookOpen className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-              <span>Lessons &amp; Activities in {section.sectionNumber}</span>
-            </h3>
-            <span className="text-[11px] font-mono tabular-nums text-slate-400">
-              {section.items.length} item{section.items.length === 1 ? '' : 's'}
-            </span>
-          </div>
-
-          {section.items.length === 0 ? (
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              No lessons assigned to this section yet.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {section.items.map(({ module: mod, flatIndex, itemNumber }) => (
-                <button
-                  key={mod.id}
-                  type="button"
-                  onClick={() => onOpenModule(flatIndex)}
-                  className="w-full p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 hover:border-blue-400 dark:hover:border-cyan-500 transition-colors flex items-center justify-between gap-3 text-left"
-                >
-                  <div className="min-w-0 space-y-0.5">
-                    <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                      <span className="font-mono tabular-nums text-blue-600 dark:text-cyan-400 mr-1.5">
-                        {itemNumber}
-                      </span>
-                      {mod.title}
-                    </p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                      {mod.summary}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 text-[11px] font-mono text-slate-500 dark:text-slate-400 tabular-nums">
-                    <span>{mod.durationMin}m</span>
-                    <ChevronRight className="w-4 h-4 text-slate-400" />
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
