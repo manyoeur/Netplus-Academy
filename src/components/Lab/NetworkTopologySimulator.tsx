@@ -112,6 +112,28 @@ import {
 import { NETWORK_LAB_PRESETS } from './networkLabPresets';
 import { CiscoDeviceIcon, getCiscoDeviceInnerSvg } from './CiscoDeviceIcon';
 import { TopologyMiniMap } from './TopologyMiniMap';
+import {
+  LabReplayControls,
+  LabReplayHeaderButtons,
+  ReplayPlaybackSpeed
+} from './LabReplayControls';
+import {
+  LabReplaySession,
+  LabReplayStep,
+  deepCloneReplayData,
+  deleteLabReplay,
+  getStepPlaybackDelayMs,
+  isCiscoCliErrorLine,
+  loadLabReplays,
+  saveLabReplay
+} from '../../utils/labReplayStorage';
+
+interface SimReplaySnapshot {
+  devices: SimDevice[];
+  links: SimLink[];
+  consoleDeviceId: string | null;
+  consoleTabIds: string[];
+}
 
 type CanvasTool = 'select' | 'marquee' | 'pan' | 'cable' | 'delete';
 type CableToolMode = 'auto' | SimCableType;
@@ -702,6 +724,38 @@ export const NetworkTopologySimulator: React.FC = () => {
     y: number;
   } | null>(null);
   const suppressDeviceClickAfterDragRef = useRef<boolean>(false);
+
+  // Lab Replay state (CLI recording & troubleshooting playback)
+  const replayScopeKey = `sim:${activePresetId}`;
+  const replayUserId = currentUser?.id || 'guest';
+  const [savedReplays, setSavedReplays] = useState<LabReplaySession<SimReplaySnapshot>[]>(() =>
+    loadLabReplays<SimReplaySnapshot>(replayUserId, replayScopeKey)
+  );
+  const [isReplayDrawerOpen, setIsReplayDrawerOpen] = useState<boolean>(false);
+  const [isReplayRecording, setIsReplayRecording] = useState<boolean>(false);
+  const [isReplaySavePromptOpen, setIsReplaySavePromptOpen] = useState<boolean>(false);
+  const [replayRecordingSteps, setReplayRecordingSteps] = useState<LabReplayStep[]>([]);
+  const [replayRecordingElapsedMs, setReplayRecordingElapsedMs] = useState<number>(0);
+  const [activeReplaySession, setActiveReplaySession] =
+    useState<LabReplaySession<SimReplaySnapshot> | null>(null);
+  const [replayCursor, setReplayCursor] = useState<number>(-1);
+  const [isPlayingReplay, setIsPlayingReplay] = useState<boolean>(false);
+  const [replayPlaybackSpeed, setReplayPlaybackSpeed] = useState<ReplayPlaybackSpeed>(1);
+  const replayRecordingStartRef = useRef<number>(0);
+  const replayInitialSnapshotRef = useRef<SimReplaySnapshot | null>(null);
+  const preReplayLiveSnapshotRef = useRef<SimReplaySnapshot | null>(null);
+
+  useEffect(() => {
+    setSavedReplays(loadLabReplays<SimReplaySnapshot>(replayUserId, replayScopeKey));
+  }, [replayUserId, replayScopeKey]);
+
+  useEffect(() => {
+    if (!isReplayRecording || isReplaySavePromptOpen) return;
+    const timer = window.setInterval(() => {
+      setReplayRecordingElapsedMs(Date.now() - replayRecordingStartRef.current);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [isReplayRecording, isReplaySavePromptOpen]);
 
   useEffect(() => {
     if (workspaceView !== 'editor') {
@@ -2488,6 +2542,15 @@ export const NetworkTopologySimulator: React.FC = () => {
     setPendingCableTarget(null);
     clearLiveCableDraw();
     setLastPingResult(null);
+    setIsPlayingReplay(false);
+    setActiveReplaySession(null);
+    setReplayCursor(-1);
+    preReplayLiveSnapshotRef.current = null;
+    setIsReplayRecording(false);
+    setIsReplaySavePromptOpen(false);
+    setReplayRecordingSteps([]);
+    setReplayRecordingElapsedMs(0);
+    replayInitialSnapshotRef.current = null;
     handleResetZoomPan();
     flashBanner(`Loaded "${preset.title}"`);
   };
@@ -3569,16 +3632,222 @@ export const NetworkTopologySimulator: React.FC = () => {
     setSelectedDiagramLabelId(null);
   };
 
+  const applySimulatorReplayStep = useCallback(
+    (session: LabReplaySession<SimReplaySnapshot>, targetStepIndex: number) => {
+      const base = session.initialSnapshot?.state
+        ? deepCloneReplayData(session.initialSnapshot.state)
+        : {
+            devices: deepCloneReplayData(devices),
+            links: deepCloneReplayData(links),
+            consoleDeviceId,
+            consoleTabIds: [...consoleTabIds]
+          };
+
+      let simDevices = deepCloneReplayData(base.devices);
+      const simLinks = deepCloneReplayData(base.links);
+      let activeDevId = base.consoleDeviceId || simDevices[0]?.id || null;
+      const openTabs = [...(base.consoleTabIds || [])];
+      let pingRes: PingSimulationResult | null = null;
+
+      const clamped = Math.min(targetStepIndex, session.steps.length - 1);
+      for (let i = 0; i <= clamped; i++) {
+        const step = session.steps[i];
+        const targetIdx = simDevices.findIndex(
+          d => d.id === step.deviceId || d.name === step.deviceName
+        );
+        if (targetIdx === -1) continue;
+        const targetDev = simDevices[targetIdx];
+        const result = executeDeviceCommand(targetDev, step.command, simDevices, simLinks);
+        simDevices = simDevices.map((d, idx) =>
+          idx === targetIdx ? result.updatedDevice : d
+        );
+        activeDevId = targetDev.id;
+        if (!openTabs.includes(targetDev.id)) {
+          openTabs.push(targetDev.id);
+        }
+        if (result.pingResult) {
+          pingRes = result.pingResult;
+        }
+      }
+
+      setDevices(simDevices);
+      setLinks(simLinks);
+      setConsoleTabIds(openTabs.length > 0 ? openTabs : activeDevId ? [activeDevId] : []);
+      if (activeDevId) {
+        setConsoleDeviceId(activeDevId);
+      }
+      setLastPingResult(pingRes);
+      setReplayCursor(clamped);
+    },
+    [devices, links, consoleDeviceId, consoleTabIds]
+  );
+
+  useEffect(() => {
+    if (!isPlayingReplay || !activeReplaySession) return;
+    const nextIdx = replayCursor + 1;
+    if (nextIdx >= activeReplaySession.steps.length) {
+      setIsPlayingReplay(false);
+      return;
+    }
+    const delayMs = getStepPlaybackDelayMs(
+      activeReplaySession.steps,
+      nextIdx,
+      replayPlaybackSpeed
+    );
+    const timer = window.setTimeout(() => {
+      applySimulatorReplayStep(activeReplaySession, nextIdx);
+      if (nextIdx >= activeReplaySession.steps.length - 1) {
+        setIsPlayingReplay(false);
+      }
+    }, delayMs);
+    return () => window.clearTimeout(timer);
+  }, [
+    isPlayingReplay,
+    activeReplaySession,
+    replayCursor,
+    replayPlaybackSpeed,
+    applySimulatorReplayStep
+  ]);
+
+  const startSimulatorRecording = () => {
+    if (activeReplaySession) return;
+    replayInitialSnapshotRef.current = {
+      devices: deepCloneReplayData(devices),
+      links: deepCloneReplayData(links),
+      consoleDeviceId,
+      consoleTabIds: [...consoleTabIds]
+    };
+    replayRecordingStartRef.current = Date.now();
+    setReplayRecordingSteps([]);
+    setReplayRecordingElapsedMs(0);
+    setIsReplaySavePromptOpen(false);
+    setIsReplayRecording(true);
+    setIsReplayDrawerOpen(true);
+    window.setTimeout(() => cliInputRef.current?.focus(), 0);
+  };
+
+  const handleStopSimulatorRecordingClick = () => {
+    if (!isReplayRecording) return;
+    setReplayRecordingElapsedMs(Date.now() - replayRecordingStartRef.current);
+    if (replayRecordingSteps.length === 0) {
+      setIsReplayRecording(false);
+      setIsReplaySavePromptOpen(false);
+      replayInitialSnapshotRef.current = null;
+      return;
+    }
+    setIsReplaySavePromptOpen(true);
+  };
+
+  const confirmSaveSimulatorRecording = (title: string) => {
+    const durationMs = Math.max(
+      replayRecordingElapsedMs,
+      replayRecordingSteps[replayRecordingSteps.length - 1]?.elapsedMs || 0
+    );
+    const session: LabReplaySession<SimReplaySnapshot> = {
+      id: `sim-replay-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      userId: replayUserId,
+      scopeKey: replayScopeKey,
+      title,
+      createdAt: new Date().toISOString(),
+      durationMs,
+      steps: replayRecordingSteps,
+      initialSnapshot: replayInitialSnapshotRef.current
+        ? {
+            kind: 'topology-sim',
+            state: deepCloneReplayData(replayInitialSnapshotRef.current)
+          }
+        : undefined
+    };
+    const updated = saveLabReplay(session);
+    setSavedReplays(updated);
+    setIsReplayRecording(false);
+    setIsReplaySavePromptOpen(false);
+    setReplayRecordingSteps([]);
+    setReplayRecordingElapsedMs(0);
+    replayInitialSnapshotRef.current = null;
+    setIsReplayDrawerOpen(true);
+    flashBanner(`Saved Lab Replay "${title}" (${session.steps.length} steps)`);
+  };
+
+  const discardSimulatorRecording = () => {
+    setIsReplayRecording(false);
+    setIsReplaySavePromptOpen(false);
+    setReplayRecordingSteps([]);
+    setReplayRecordingElapsedMs(0);
+    replayInitialSnapshotRef.current = null;
+  };
+
+  const enterSimulatorReplaySession = (sessionId: string) => {
+    const found = savedReplays.find(s => s.id === sessionId);
+    if (!found) return;
+    if (!activeReplaySession) {
+      preReplayLiveSnapshotRef.current = {
+        devices: deepCloneReplayData(devices),
+        links: deepCloneReplayData(links),
+        consoleDeviceId,
+        consoleTabIds: [...consoleTabIds]
+      };
+    }
+    setIsPlayingReplay(false);
+    setActiveReplaySession(found);
+    setIsReplayDrawerOpen(true);
+    applySimulatorReplayStep(found, -1);
+  };
+
+  const exitSimulatorReplay = (keepCurrentState: boolean) => {
+    setIsPlayingReplay(false);
+    setActiveReplaySession(null);
+    setReplayCursor(-1);
+    if (!keepCurrentState && preReplayLiveSnapshotRef.current) {
+      const live = preReplayLiveSnapshotRef.current;
+      setDevices(deepCloneReplayData(live.devices));
+      setLinks(deepCloneReplayData(live.links));
+      setConsoleTabIds([...live.consoleTabIds]);
+      setConsoleDeviceId(live.consoleDeviceId);
+    }
+    preReplayLiveSnapshotRef.current = null;
+    window.setTimeout(() => cliInputRef.current?.focus(), 0);
+  };
+
+  const handleDeleteSimulatorReplay = (sessionId: string) => {
+    if (activeReplaySession?.id === sessionId) {
+      exitSimulatorReplay(false);
+    }
+    const updated = deleteLabReplay(replayUserId, sessionId, replayScopeKey);
+    setSavedReplays(updated as LabReplaySession<SimReplaySnapshot>[]);
+  };
+
   // Run CLI command on active console device
   const handleRunCliCommand = (e?: React.FormEvent, overrideCmd?: string) => {
     if (e) e.preventDefault();
+    if (activeReplaySession) return;
     const targetDevice = consoleDevice || selectedDevice;
     if (!targetDevice) return;
     const raw = (overrideCmd ?? cliInput).trim();
     if (!raw) return;
 
+    const promptBefore = getCliPrompt(targetDevice);
+    const prevHistoryLen = targetDevice.cliHistory.length;
     const result = executeDeviceCommand(targetDevice, raw, devices, links);
     setDevices(prev => prev.map(d => (d.id === targetDevice.id ? result.updatedDevice : d)));
+
+    if (isReplayRecording) {
+      const addedLines = result.updatedDevice.cliHistory.slice(prevHistoryLen + 1);
+      const hadError = addedLines.some(isCiscoCliErrorLine);
+      const outputPreview =
+        addedLines.find(line => line.trim().length > 0)?.trim().slice(0, 100) || '';
+      const step: LabReplayStep = {
+        id: `sim-step-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        elapsedMs: Date.now() - replayRecordingStartRef.current,
+        deviceId: targetDevice.id,
+        deviceName: targetDevice.name,
+        prompt: promptBefore,
+        command: raw,
+        hadError,
+        outputPreview
+      };
+      setReplayRecordingSteps(prev => [...prev, step]);
+    }
 
     if (!overrideCmd) {
       setCliInput('');
@@ -3596,6 +3865,7 @@ export const NetworkTopologySimulator: React.FC = () => {
   };
 
   const handleCliKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (activeReplaySession) return;
     const targetDevice = consoleDevice || selectedDevice;
     if (!targetDevice) return;
 
@@ -3748,6 +4018,11 @@ export const NetworkTopologySimulator: React.FC = () => {
     setActiveSavedLabId(null);
     setSelectedDeviceId(null);
     setSelectedDeviceIds([]);
+    setIsPlayingReplay(false);
+    setActiveReplaySession(null);
+    setReplayCursor(-1);
+    preReplayLiveSnapshotRef.current = null;
+    discardSimulatorRecording();
     closeAllConsoleTabs();
     setSelectedLinkId(null);
     setSelectedShapeId(null);
@@ -3988,6 +4263,11 @@ export const NetworkTopologySimulator: React.FC = () => {
       importedDevices.find(d => d.type === 'pc' || d.type === 'server') || importedDevices[0];
     setPingSourceId(preferredPingSource?.id || '');
 
+    setIsPlayingReplay(false);
+    setActiveReplaySession(null);
+    setReplayCursor(-1);
+    preReplayLiveSnapshotRef.current = null;
+    discardSimulatorRecording();
     closeAllConsoleTabs();
     setSelectedLinkId(null);
     setSelectedShapeId(null);
@@ -4143,6 +4423,11 @@ export const NetworkTopologySimulator: React.FC = () => {
         setActiveSavedLabId(null);
         setSelectedDeviceId(null);
         setSelectedDeviceIds([]);
+        setIsPlayingReplay(false);
+        setActiveReplaySession(null);
+        setReplayCursor(-1);
+        preReplayLiveSnapshotRef.current = null;
+        discardSimulatorRecording();
         closeAllConsoleTabs();
         setSelectedLinkId(null);
         setSelectedShapeId(null);
@@ -4210,6 +4495,11 @@ export const NetworkTopologySimulator: React.FC = () => {
     const firstId = record.devices[0]?.id || null;
     setSelectedDeviceId(firstId);
     setSelectedDeviceIds(firstId ? [firstId] : []);
+    setIsPlayingReplay(false);
+    setActiveReplaySession(null);
+    setReplayCursor(-1);
+    preReplayLiveSnapshotRef.current = null;
+    discardSimulatorRecording();
     closeAllConsoleTabs();
     setSelectedLinkId(null);
     setSelectedShapeId(null);
@@ -7589,7 +7879,10 @@ export const NetworkTopologySimulator: React.FC = () => {
                     type="button"
                     aria-label="Close all console tabs"
                     title="Close console"
-                    onClick={closeAllConsoleTabs}
+                    onClick={() => {
+                      if (activeReplaySession) exitSimulatorReplay(false);
+                      closeAllConsoleTabs();
+                    }}
                     className="p-1 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -7675,6 +7968,20 @@ export const NetworkTopologySimulator: React.FC = () => {
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
+                        <LabReplayHeaderButtons
+                          compact
+                          surface="adaptive"
+                          isRecording={isReplayRecording}
+                          recordingStepsCount={replayRecordingSteps.length}
+                          recordingElapsedMs={replayRecordingElapsedMs}
+                          savedCount={savedReplays.length}
+                          isReplaying={Boolean(activeReplaySession)}
+                          isDrawerOpen={isReplayDrawerOpen}
+                          onStartRecording={startSimulatorRecording}
+                          onStopRecordingClick={handleStopSimulatorRecordingClick}
+                          onToggleDrawer={() => setIsReplayDrawerOpen(prev => !prev)}
+                        />
+
                         {!isConsoleExpanded &&
                           (consoleOffset.x !== 0 || consoleOffset.y !== 0 || consoleSize !== null) && (
                             <button
@@ -7720,7 +8027,10 @@ export const NetworkTopologySimulator: React.FC = () => {
                           type="button"
                           aria-label="Close all console tabs"
                           title="Close console (Esc)"
-                          onClick={closeAllConsoleTabs}
+                          onClick={() => {
+                            if (activeReplaySession) exitSimulatorReplay(false);
+                            closeAllConsoleTabs();
+                          }}
                           className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
                         >
                           <X className="w-3.5 h-3.5" />
@@ -7806,6 +8116,58 @@ export const NetworkTopologySimulator: React.FC = () => {
 
                     {/* Active Device CLI Terminal */}
                     <div className="flex-1 min-h-0 flex flex-col bg-slate-950 text-slate-100 font-mono overflow-hidden">
+                          <LabReplayControls
+                            sessions={savedReplays}
+                            isRecording={isReplayRecording}
+                            recordingStepsCount={replayRecordingSteps.length}
+                            recordingElapsedMs={replayRecordingElapsedMs}
+                            isSavePromptOpen={isReplaySavePromptOpen}
+                            defaultSessionTitle={`${activePreset.title} · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                            activeSession={activeReplaySession}
+                            replayCursor={replayCursor}
+                            isPlaying={isPlayingReplay}
+                            playbackSpeed={replayPlaybackSpeed}
+                            isDrawerOpen={isReplayDrawerOpen}
+                            onConfirmSaveRecording={confirmSaveSimulatorRecording}
+                            onCancelSavePrompt={() => setIsReplaySavePromptOpen(false)}
+                            onDiscardRecording={discardSimulatorRecording}
+                            onSelectSession={enterSimulatorReplaySession}
+                            onDeleteSession={handleDeleteSimulatorReplay}
+                            onPlayPause={() => {
+                              if (!activeReplaySession) return;
+                              if (replayCursor >= activeReplaySession.steps.length - 1) {
+                                applySimulatorReplayStep(activeReplaySession, -1);
+                                setIsPlayingReplay(true);
+                              } else {
+                                setIsPlayingReplay(prev => !prev);
+                              }
+                            }}
+                            onStepBack={() => {
+                              if (!activeReplaySession || replayCursor < 0) return;
+                              setIsPlayingReplay(false);
+                              applySimulatorReplayStep(activeReplaySession, replayCursor - 1);
+                            }}
+                            onStepForward={() => {
+                              if (!activeReplaySession || replayCursor >= activeReplaySession.steps.length - 1) return;
+                              setIsPlayingReplay(false);
+                              applySimulatorReplayStep(activeReplaySession, replayCursor + 1);
+                            }}
+                            onRestart={() => {
+                              if (!activeReplaySession) return;
+                              setIsPlayingReplay(false);
+                              applySimulatorReplayStep(activeReplaySession, -1);
+                            }}
+                            onSeekStep={(idx) => {
+                              if (!activeReplaySession) return;
+                              setIsPlayingReplay(false);
+                              applySimulatorReplayStep(activeReplaySession, idx);
+                            }}
+                            onChangeSpeed={setReplayPlaybackSpeed}
+                            onExitReplay={() => exitSimulatorReplay(false)}
+                            onResumeLiveFromStep={() => exitSimulatorReplay(true)}
+                            onCloseDrawer={() => setIsReplayDrawerOpen(false)}
+                          />
+
                           <div
                             onClick={() => cliInputRef.current?.focus()}
                             className="flex-1 min-h-0 p-4 overflow-y-auto text-xs leading-relaxed space-y-1 cursor-text"
@@ -7832,9 +8194,14 @@ export const NetworkTopologySimulator: React.FC = () => {
                                 value={cliInput}
                                 onChange={(e) => setCliInput(e.target.value)}
                                 onKeyDown={handleCliKeyDown}
+                                disabled={Boolean(activeReplaySession)}
                                 autoFocus
-                                placeholder="Type command, ? for help, Tab to complete, Ctrl+Z to end..."
-                                className="flex-1 bg-transparent border-none outline-none text-cyan-300 font-mono text-xs p-0 placeholder-slate-600"
+                                placeholder={
+                                  activeReplaySession
+                                    ? 'Replay active — click "Resume Live Here" to configure or "Exit Replay"...'
+                                    : 'Type command, ? for help, Tab to complete, Ctrl+Z to end...'
+                                }
+                                className="flex-1 bg-transparent border-none outline-none text-cyan-300 font-mono text-xs p-0 placeholder-slate-600 disabled:opacity-60"
                               />
                             </form>
                             <div ref={terminalEndRef} />
@@ -7867,6 +8234,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                               <button
                                 key={snippet}
                                 type="button"
+                                disabled={Boolean(activeReplaySession)}
                                 onClick={() => {
                                   if (snippet.endsWith(' ')) {
                                     setCliInput(snippet);
@@ -7875,7 +8243,7 @@ export const NetworkTopologySimulator: React.FC = () => {
                                     handleRunCliCommand(undefined, snippet);
                                   }
                                 }}
-                                className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 whitespace-nowrap shrink-0"
+                                className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 border border-slate-700 whitespace-nowrap shrink-0"
                               >
                                 {snippet.trim()}
                               </button>
