@@ -657,27 +657,43 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const activeQuizPercent =
     activeQuizTotal > 0 ? Math.round((activeQuizCompleted / activeQuizTotal) * 100) : 0;
 
+  const isModuleQuizCompleted = useCallback(
+    (mod: CourseModule | undefined, idx: number): boolean => {
+      if (!mod) return false;
+      const quiz = moduleQuizzes[idx];
+      if (!quiz) return false;
+      if (checkpointStore[course.id]?.[quiz.id]?.passed) return true;
+      return mod.type === 'quiz' && currentUser.completedModuleIds.includes(mod.id);
+    },
+    [checkpointStore, course.id, currentUser.completedModuleIds, moduleQuizzes]
+  );
+
   const quizMastery = useMemo(() => {
     const courseResults = checkpointStore[course.id] || {};
     let passedCount = 0;
     let attemptedCount = 0;
     let scoreSum = 0;
 
-    moduleQuizzes.forEach(quiz => {
+    moduleQuizzes.forEach((quiz, idx) => {
       if (!quiz) return;
+      const mod = course.modules[idx];
       const res = courseResults[quiz.id];
       if (res) {
         attemptedCount += 1;
         scoreSum += res.score;
-        if (res.passed) {
-          passedCount += 1;
-        }
+      }
+      if (isModuleQuizCompleted(mod, idx)) {
+        passedCount += 1;
       }
     });
 
     const averageScore = attemptedCount > 0 ? Math.round(scoreSum / attemptedCount) : 0;
     return { passedCount, attemptedCount, averageScore };
-  }, [checkpointStore, course.id, moduleQuizzes]);
+  }, [checkpointStore, course.id, course.modules, isModuleQuizCompleted, moduleQuizzes]);
+
+  const pendingQuizCount = Math.max(0, totalQuizCount - quizMastery.passedCount);
+  const quizProgressPercent =
+    totalQuizCount > 0 ? Math.round((quizMastery.passedCount / totalQuizCount) * 100) : 0;
 
   const saveQuizResult = useCallback(
     (quizId: string, result: QuizResult) => {
@@ -1223,6 +1239,90 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                   </span>
                 </div>
               </div>
+
+              {/* Quiz Completion Progress Indicator (Completed vs Pending) */}
+              {totalQuizCount > 0 && (
+                <div className="pt-2 border-t border-emerald-200/70 dark:border-emerald-900/50 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2 text-[11px] tabular-nums">
+                    <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-200">
+                      <CheckSquare className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span>Quizzes</span>
+                    </span>
+                    <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                      <span className="font-bold text-emerald-700 dark:text-emerald-300">
+                        {quizMastery.passedCount}/{totalQuizCount} passed
+                      </span>
+                      <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">
+                        ·
+                      </span>
+                      <span
+                        className={
+                          pendingQuizCount === 0
+                            ? 'font-bold text-emerald-600 dark:text-emerald-400'
+                            : 'font-semibold text-amber-600 dark:text-amber-400'
+                        }
+                      >
+                        {pendingQuizCount === 0 ? 'All done' : `${pendingQuizCount} pending`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {totalQuizCount <= 24 ? (
+                    <div
+                      role="progressbar"
+                      aria-valuenow={quizMastery.passedCount}
+                      aria-valuemin={0}
+                      aria-valuemax={totalQuizCount}
+                      aria-label={`Quiz completion: ${quizMastery.passedCount} of ${totalQuizCount} completed, ${pendingQuizCount} pending`}
+                      className="flex items-center gap-1 w-full"
+                    >
+                      {quizzableModuleIndices.map((qIdx) => {
+                        const qMod = course.modules[qIdx];
+                        const qCfg = moduleQuizzes[qIdx];
+                        if (!qMod || !qCfg) return null;
+                        const qPassed = isModuleQuizCompleted(qMod, qIdx);
+                        const qResult = checkpointStore[course.id]?.[qCfg.id];
+                        const qStatusLabel = qPassed
+                          ? `Completed (${qResult?.score ?? 100}%)`
+                          : qResult
+                          ? `Pending retry (${qResult.score}%)`
+                          : 'Pending';
+
+                        return (
+                          <button
+                            key={`quiz-seg-${qMod.id}`}
+                            type="button"
+                            onClick={() => handleOpenModuleQuiz(qIdx, 'manual')}
+                            title={`${qMod.title} — ${qStatusLabel}`}
+                            aria-label={`${qMod.title} quiz: ${qStatusLabel}`}
+                            className={`h-1.5 flex-1 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                              qPassed
+                                ? 'bg-emerald-600 dark:bg-emerald-400'
+                                : qResult
+                                ? 'bg-amber-500 dark:bg-amber-400'
+                                : 'bg-amber-200/90 dark:bg-slate-700 hover:bg-amber-400 dark:hover:bg-amber-500'
+                            }`}
+                          />
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div
+                      role="progressbar"
+                      aria-valuenow={quizProgressPercent}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={`Quiz completion ${quizProgressPercent}%`}
+                      className="h-1.5 w-full bg-amber-200/70 dark:bg-slate-800 rounded-full overflow-hidden"
+                    >
+                      <div
+                        className="h-full bg-emerald-600 dark:bg-emerald-400 rounded-full transition-all"
+                        style={{ width: `${quizProgressPercent}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* 3-Level Nested Course Outline: 1.0 Chapter -> 1.1 Main Contents -> 1.1.1 Course Contents */}
@@ -1243,6 +1343,14 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                     const chapterTotal = chapterModules.length;
                     const isChapterCompleted = chapterTotal > 0 && chapterDoneCount === chapterTotal;
                     const chapterRatio = chapterTotal > 0 ? chapterDoneCount / chapterTotal : 0;
+                    const chapterQuizItems = chapterModules.filter(item =>
+                      Boolean(moduleQuizzes[item.flatIndex])
+                    );
+                    const chapterQuizTotal = chapterQuizItems.length;
+                    const chapterQuizPassed = chapterQuizItems.filter(item =>
+                      isModuleQuizCompleted(item.module, item.flatIndex)
+                    ).length;
+                    const chapterQuizPending = chapterQuizTotal - chapterQuizPassed;
                     const ringRadius = 7.5;
                     const ringCircumference = 2 * Math.PI * ringRadius;
 
@@ -1330,6 +1438,46 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                               <span className="tabular-nums mr-1.5">{chapter.chapterNumber}</span>
                               {chapter.title}
                             </span>
+                            {chapterQuizTotal > 0 && (
+                              <span className="mt-1 flex items-center gap-1.5 text-[10px] font-mono tabular-nums">
+                                <span className="inline-flex items-center gap-0.5 shrink-0">
+                                  {chapterQuizItems.slice(0, 6).map((qItem) => {
+                                    const qPassed = isModuleQuizCompleted(
+                                      qItem.module,
+                                      qItem.flatIndex
+                                    );
+                                    return (
+                                      <span
+                                        key={`ch-qdot-${qItem.module.id}`}
+                                        className={`w-1.5 h-1.5 rounded-full ${
+                                          qPassed
+                                            ? 'bg-emerald-500 dark:bg-emerald-400'
+                                            : 'bg-amber-400 dark:bg-amber-500'
+                                        }`}
+                                      />
+                                    );
+                                  })}
+                                  {chapterQuizTotal > 6 && (
+                                    <span className="text-[9px] text-slate-400 ml-0.5">
+                                      +{chapterQuizTotal - 6}
+                                    </span>
+                                  )}
+                                </span>
+                                <span
+                                  className={
+                                    chapterQuizPending === 0
+                                      ? 'font-semibold text-emerald-700 dark:text-emerald-400'
+                                      : 'font-semibold text-amber-700 dark:text-amber-400'
+                                  }
+                                >
+                                  {chapterQuizPassed}/{chapterQuizTotal}{' '}
+                                  {chapterQuizTotal === 1 ? 'quiz' : 'quizzes'}{' '}
+                                  {chapterQuizPending === 0
+                                    ? 'done'
+                                    : `· ${chapterQuizPending} pending`}
+                                </span>
+                              </span>
+                            )}
                           </button>
 
                           <div className="flex items-center gap-1 shrink-0 pt-0.5">
@@ -1385,14 +1533,30 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                               ).length;
                               const isSectionCompleted =
                                 sectionTotal > 0 && sectionDoneCount === sectionTotal;
+                              const sectionQuizItems = section.items.filter(item =>
+                                Boolean(moduleQuizzes[item.flatIndex])
+                              );
+                              const sectionQuizTotal = sectionQuizItems.length;
+                              const sectionQuizPassed = sectionQuizItems.filter(item =>
+                                isModuleQuizCompleted(item.module, item.flatIndex)
+                              ).length;
+                              const sectionQuizPending = sectionQuizTotal - sectionQuizPassed;
 
                               return (
                                 <div key={section.id} className="space-y-1">
                                   {/* Level 2 Subheader */}
                                   <div
                                     className={`group/sec flex items-start justify-between gap-1.5 px-2 py-1.5 rounded-md transition-colors ${
+                                      sectionQuizTotal > 0
+                                        ? sectionQuizPending === 0
+                                          ? 'border-l-2 border-emerald-500 dark:border-emerald-400'
+                                          : 'border-l-2 border-amber-400 dark:border-amber-500'
+                                        : ''
+                                    } ${
                                       isSectionSelected
                                         ? 'bg-white dark:bg-slate-800 shadow-2xs'
+                                        : sectionQuizTotal > 0 && sectionQuizPending === 0
+                                        ? 'bg-emerald-50/50 dark:bg-emerald-950/25 hover:bg-white/80 dark:hover:bg-slate-800/50'
                                         : 'hover:bg-white/70 dark:hover:bg-slate-800/50'
                                     }`}
                                   >
@@ -1449,6 +1613,41 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                         <span className="tabular-nums mr-1.5">{section.sectionNumber}</span>
                                         {section.title}
                                       </span>
+                                      {sectionQuizTotal > 0 && (
+                                        <span className="mt-0.5 flex items-center gap-1.5 text-[10px] font-mono tabular-nums">
+                                          <span className="inline-flex items-center gap-0.5 shrink-0">
+                                            {sectionQuizItems.slice(0, 6).map((qItem) => {
+                                              const qPassed = isModuleQuizCompleted(
+                                                qItem.module,
+                                                qItem.flatIndex
+                                              );
+                                              return (
+                                                <span
+                                                  key={`sec-qdot-${qItem.module.id}`}
+                                                  className={`w-1.5 h-1.5 rounded-full ${
+                                                    qPassed
+                                                      ? 'bg-emerald-500 dark:bg-emerald-400'
+                                                      : 'bg-amber-400 dark:bg-amber-500'
+                                                  }`}
+                                                />
+                                              );
+                                            })}
+                                          </span>
+                                          <span
+                                            className={
+                                              sectionQuizPending === 0
+                                                ? 'font-semibold text-emerald-700 dark:text-emerald-400'
+                                                : 'font-semibold text-amber-700 dark:text-amber-400'
+                                            }
+                                          >
+                                            {sectionQuizPassed}/{sectionQuizTotal}{' '}
+                                            {sectionQuizTotal === 1 ? 'quiz' : 'quizzes'}{' '}
+                                            {sectionQuizPending === 0
+                                              ? 'passed'
+                                              : `· ${sectionQuizPending} pending`}
+                                          </span>
+                                        </span>
+                                      )}
                                     </button>
 
                                     <div className="flex items-center gap-1 shrink-0 pt-0.5">
@@ -1512,6 +1711,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                           const modQuizResult = modQuiz
                                             ? checkpointStore[course.id]?.[modQuiz.id]
                                             : undefined;
+                                          const isModQuizPassed = isModuleQuizCompleted(m, idx);
+                                          const isDedicatedQuiz = m.type === 'quiz';
                                           const isQuizActive =
                                             playerMode === 'quiz' && idx === activeModuleIndex;
                                           const modBlockingVideo = getBlockingVideoForModule(idx);
@@ -1524,10 +1725,18 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                             <React.Fragment key={m.id}>
                                               <div
                                                 className={`group/mod relative w-full px-2 py-1.5 rounded-lg transition-colors flex items-start gap-1.5 ${
+                                                  isDedicatedQuiz && modQuiz
+                                                    ? isModQuizPassed
+                                                      ? 'border-l-2 border-emerald-500 dark:border-emerald-400'
+                                                      : 'border-l-2 border-amber-400 dark:border-amber-500'
+                                                    : ''
+                                                } ${
                                                   isActive
                                                     ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold shadow-2xs'
                                                     : isModMasteryLocked
                                                     ? 'text-slate-400 dark:text-slate-500 hover:bg-white/60 dark:hover:bg-slate-800/40'
+                                                    : isDedicatedQuiz && modQuiz && isModQuizPassed
+                                                    ? 'bg-emerald-50/45 dark:bg-emerald-950/20 hover:bg-white/80 dark:hover:bg-slate-800/50 text-slate-800 dark:text-slate-200'
                                                     : 'hover:bg-white/70 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
                                                 }`}
                                               >
@@ -1537,7 +1746,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                   className="flex-1 min-w-0 text-left flex items-start gap-2.5"
                                                 >
                                                   <div className="mt-0.5 shrink-0 relative z-10">
-                                                    {isDone ? (
+                                                    {isDone || isModQuizPassed ? (
                                                       <span
                                                         className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center"
                                                         aria-label="Completed"
@@ -1547,6 +1756,13 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                     ) : isModMasteryLocked ? (
                                                       <span className="w-4 h-4 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-600 dark:text-amber-400 flex items-center justify-center">
                                                         <Lock className="w-2.5 h-2.5" />
+                                                      </span>
+                                                    ) : isDedicatedQuiz && modQuiz ? (
+                                                      <span
+                                                        className="w-4 h-4 rounded-full border border-amber-500/80 bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center"
+                                                        aria-label="Quiz pending"
+                                                      >
+                                                        <Clock className="w-2.5 h-2.5" />
                                                       </span>
                                                     ) : (
                                                       <span
@@ -1571,6 +1787,27 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                     {isModMasteryLocked && modBlockingVideo ? (
                                                       <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 block mt-0.5">
                                                         Pass M{modBlockingVideo.moduleIndex + 1} quiz to unlock
+                                                      </span>
+                                                    ) : isDedicatedQuiz && modQuiz ? (
+                                                      <span
+                                                        className={`text-[10px] font-mono tabular-nums flex items-center gap-1 mt-0.5 ${
+                                                          isModQuizPassed
+                                                            ? 'text-emerald-700 dark:text-emerald-400 font-semibold'
+                                                            : 'text-amber-700 dark:text-amber-400 font-semibold'
+                                                        }`}
+                                                      >
+                                                        <span
+                                                          className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                                            isModQuizPassed
+                                                              ? 'bg-emerald-500 dark:bg-emerald-400'
+                                                              : 'bg-amber-500 dark:bg-amber-400'
+                                                          }`}
+                                                        />
+                                                        {isModQuizPassed
+                                                          ? `Quiz passed${modQuizResult ? ` · ${modQuizResult.score}%` : ''}`
+                                                          : modQuizResult
+                                                          ? `Quiz pending · Retry (${modQuizResult.score}%)`
+                                                          : `Quiz pending · ${modQuiz.questions.length} Qs`}
                                                       </span>
                                                     ) : !isDone && savedModPercent > 0 ? (
                                                       <span className="text-[10px] font-mono tabular-nums text-emerald-700 dark:text-emerald-400 block mt-0.5">
@@ -1618,37 +1855,51 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                       handleOpenModuleQuiz(idx, 'manual');
                                                     }
                                                   }}
-                                                  className={`w-full px-2.5 py-1.5 rounded-lg text-left transition-colors flex items-center justify-between gap-2 ${
+                                                  className={`w-full px-2.5 py-1.5 rounded-lg text-left transition-colors flex items-center justify-between gap-2 border ${
                                                     isQuizActive
-                                                      ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-900 dark:text-cyan-200 font-semibold'
-                                                      : 'text-slate-600 dark:text-slate-400 hover:bg-white/70 dark:hover:bg-slate-800/50'
+                                                      ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-800 text-blue-900 dark:text-cyan-200 font-semibold'
+                                                      : isModQuizPassed
+                                                      ? 'bg-emerald-50/75 dark:bg-emerald-950/30 border-emerald-200/80 dark:border-emerald-800/60 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100/70 dark:hover:bg-emerald-950/50'
+                                                      : 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200/75 dark:border-amber-900/50 text-slate-700 dark:text-slate-300 hover:bg-amber-100/60 dark:hover:bg-amber-950/40'
                                                   }`}
                                                 >
                                                   <div className="flex items-center gap-2 min-w-0">
-                                                    <CheckSquare
-                                                      className={`w-3.5 h-3.5 shrink-0 ${
-                                                        modQuizResult?.passed
-                                                          ? 'text-emerald-600 dark:text-emerald-400'
-                                                          : isQuizActive
-                                                          ? 'text-blue-600 dark:text-cyan-400'
-                                                          : 'text-slate-400'
-                                                      }`}
-                                                    />
+                                                    {isModQuizPassed ? (
+                                                      <CheckCircle2
+                                                        className={`w-3.5 h-3.5 shrink-0 ${
+                                                          isQuizActive
+                                                            ? 'text-blue-600 dark:text-cyan-400'
+                                                            : 'text-emerald-600 dark:text-emerald-400'
+                                                        }`}
+                                                      />
+                                                    ) : (
+                                                      <Clock
+                                                        className={`w-3.5 h-3.5 shrink-0 ${
+                                                          isQuizActive
+                                                            ? 'text-blue-600 dark:text-cyan-400'
+                                                            : 'text-amber-500 dark:text-amber-400'
+                                                        }`}
+                                                      />
+                                                    )}
                                                     <span className="text-[11px] truncate">
                                                       Module Quiz · {modQuiz.questions.length} Qs
                                                     </span>
                                                   </div>
-                                                  {modQuizResult && (
-                                                    <span
-                                                      className={`text-[10px] font-mono tabular-nums font-bold shrink-0 ${
-                                                        modQuizResult.passed
-                                                          ? 'text-emerald-600 dark:text-emerald-400'
-                                                          : 'text-amber-600 dark:text-amber-400'
-                                                      }`}
-                                                    >
-                                                      {modQuizResult.score}%
-                                                    </span>
-                                                  )}
+                                                  <span
+                                                    className={`text-[10px] font-mono tabular-nums font-bold shrink-0 ${
+                                                      isModQuizPassed
+                                                        ? 'text-emerald-700 dark:text-emerald-400'
+                                                        : 'text-amber-700 dark:text-amber-400'
+                                                    }`}
+                                                  >
+                                                    {isModQuizPassed
+                                                      ? modQuizResult
+                                                        ? `${modQuizResult.score}% · Passed`
+                                                        : 'Passed'
+                                                      : modQuizResult
+                                                      ? `${modQuizResult.score}% · Retry`
+                                                      : 'Pending'}
+                                                  </span>
                                                 </button>
                                               )}
                                             </React.Fragment>
