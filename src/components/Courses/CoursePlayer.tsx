@@ -5,9 +5,6 @@ import {
   ChevronLeft,
   ChevronDown,
   Award,
-  BookmarkCheck,
-  ArrowUp,
-  X,
   Calendar,
   AlertTriangle,
   XCircle,
@@ -17,8 +14,6 @@ import {
   CreditCard,
   FileText,
   ChevronUp,
-  BookOpen,
-  CheckCircle2,
   Plus,
   SquareStack,
   Edit3,
@@ -41,7 +36,6 @@ import {
 } from './HierarchyContentWorkspace';
 import { PersonalFlashcardModal } from '../Flashcards/PersonalFlashcardModal';
 import {
-  getBetweenModuleQuiz,
   getModuleQuiz,
   getPostVideoModuleQuiz
 } from '../../data/checkpointQuizzes';
@@ -162,7 +156,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   courseId,
   onBack,
   onViewCertificates,
-  onOpenPricing,
   onOpenCourseCheckout
 }) => {
   const {
@@ -264,8 +257,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     setExpandedSections(nextSec);
   };
 
-  // Player mode: 'study' (module lessons/labs) or 'quiz' (per-module MCQ Quiz Mode)
-  const [playerMode, setPlayerMode] = useState<'study' | 'quiz'>('study');
   const [selectedOutlineNode, setSelectedOutlineNode] = useState<
     | { level: 'module' }
     | { level: 'chapter'; chapterId: string }
@@ -273,7 +264,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   >({ level: 'module' });
   const [openHierarchyEditorOnSelect, setOpenHierarchyEditorOnSelect] = useState<boolean>(false);
   const [openModuleEditorOnSelect, setOpenModuleEditorOnSelect] = useState<boolean>(false);
-  const [quizOrigin, setQuizOrigin] = useState<'manual' | 'next-step'>('manual');
   const [checkpointStore, setCheckpointStore] = useState<CheckpointStore>(() =>
     readCheckpointStore(currentUser.id)
   );
@@ -289,12 +279,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   const [videoSeekRequest, setVideoSeekRequest] = useState<{ seconds: number; nonce: number } | null>(
     null
   );
-  const [liveQuizProgress, setLiveQuizProgress] = useState<{
-    quizKey: string;
-    answeredCount: number;
-    totalCount: number;
-    percent: number;
-  } | null>(null);
 
   // Reading scroll progress state
   const moduleContentRef = useRef<HTMLDivElement>(null);
@@ -307,7 +291,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     const targetModId = store[course.id]?.lastModuleId || initialMod.id;
     return store[course.id]?.modules?.[targetModId]?.percent ?? 0;
   });
-  const [resumedFromPercent, setResumedFromPercent] = useState<number | null>(null);
 
   // Reload reading & checkpoint stores if user or courseId changes
   useEffect(() => {
@@ -317,12 +300,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     setWatchedVideosStore(readWatchedVideosStore(currentUser.id));
     setPostQuizModalModuleIndex(null);
     setInstructorMasteryBypass(false);
-    setPlayerMode('study');
     setSelectedOutlineNode({ level: 'module' });
     setOpenHierarchyEditorOnSelect(false);
     setOpenModuleEditorOnSelect(false);
-    setQuizOrigin('manual');
-    setLiveQuizProgress(null);
     setLiveVideoSeconds(0);
     setVideoSeekRequest(null);
     const lastModId = freshStore[course.id]?.lastModuleId;
@@ -406,10 +386,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
   // Save active module reference & restore its saved scroll position whenever course or module changes
   useEffect(() => {
-    if (!activeModule || playerMode === 'quiz' || selectedOutlineNode.level !== 'module') return;
+    if (!activeModule || selectedOutlineNode.level !== 'module') return;
 
     isRestoringRef.current = true;
-    setResumedFromPercent(null);
 
     const store = readReadingStore(currentUser.id);
     const courseState = store[course.id];
@@ -462,9 +441,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
           const clampedY = Math.min(docMaxScroll, Math.max(0, targetScrollY));
           window.scrollTo({ top: clampedY, behavior: 'auto' });
-          if (savedProgress.percent > 0) {
-            setResumedFromPercent(savedProgress.percent);
-          }
         } else {
           window.scrollTo({ top: 0, behavior: 'auto' });
         }
@@ -485,11 +461,11 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       }
       isRestoringRef.current = false;
     };
-  }, [course.id, activeModule?.id, currentUser.id, playerMode]);
+  }, [course.id, activeModule?.id, currentUser.id]);
 
   // Listen for scroll events on the active module and persist reading progress to localStorage
   useEffect(() => {
-    if (!activeModule || playerMode === 'quiz' || selectedOutlineNode.level !== 'module') return;
+    if (!activeModule || selectedOutlineNode.level !== 'module') return;
 
     let pendingMetrics: { scrollY: number; scrollRatio: number; percent: number } | null = null;
 
@@ -546,22 +522,17 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       }
       writePendingToStorage();
     };
-  }, [course.id, activeModule?.id, currentUser.id, playerMode, selectedOutlineNode.level, computeScrollMetrics, persistModuleReading]);
+  }, [course.id, activeModule?.id, currentUser.id, selectedOutlineNode.level, computeScrollMetrics, persistModuleReading]);
 
   const flushCurrentModuleProgress = useCallback(() => {
-    if (!activeModule || isRestoringRef.current || playerMode === 'quiz' || selectedOutlineNode.level !== 'module') return;
+    if (!activeModule || isRestoringRef.current || selectedOutlineNode.level !== 'module') return;
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
     const metrics = computeScrollMetrics();
     persistModuleReading(course.id, activeModule.id, metrics);
-  }, [activeModule, playerMode, selectedOutlineNode.level, course.id, computeScrollMetrics, persistModuleReading]);
-
-  const handleJumpToTop = () => {
-    setResumedFromPercent(null);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  }, [activeModule, selectedOutlineNode.level, course.id, computeScrollMetrics, persistModuleReading]);
 
   const isModuleCompleted = (modId: string) => currentUser.completedModuleIds.includes(modId);
 
@@ -582,12 +553,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     () => course.modules.map((mod, idx) => getModuleQuiz(course, mod, idx)),
     [course]
   );
-
-  const quizzableModuleIndices = useMemo(
-    () => moduleQuizzes.map((q, idx) => (q ? idx : -1)).filter(idx => idx >= 0),
-    [moduleQuizzes]
-  );
-  const totalQuizCount = quizzableModuleIndices.length;
 
   const postVideoQuizzes = useMemo(
     () =>
@@ -647,42 +612,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
   );
 
   const activeModuleQuiz = moduleQuizzes[activeModuleIndex] || null;
-  const activeQuizKey =
-    activeModule && activeModuleQuiz
-      ? `quiz-mode:${course.id}:${activeModule.id}:${activeModuleQuiz.id}`
-      : '';
-
-  const handleActiveQuizProgressChange = useCallback(
-    (progress: { answeredCount: number; totalCount: number; percent: number }) => {
-      if (!activeQuizKey) return;
-      setLiveQuizProgress(prev => {
-        if (
-          prev &&
-          prev.quizKey === activeQuizKey &&
-          prev.answeredCount === progress.answeredCount &&
-          prev.totalCount === progress.totalCount &&
-          prev.percent === progress.percent
-        ) {
-          return prev;
-        }
-        return {
-          quizKey: activeQuizKey,
-          answeredCount: progress.answeredCount,
-          totalCount: progress.totalCount,
-          percent: progress.percent
-        };
-      });
-    },
-    [activeQuizKey]
-  );
-
-  const activeQuizTotal = activeModuleQuiz?.questions.length ?? 0;
-  const activeQuizCompleted =
-    liveQuizProgress && liveQuizProgress.quizKey === activeQuizKey
-      ? liveQuizProgress.answeredCount
-      : 0;
-  const activeQuizPercent =
-    activeQuizTotal > 0 ? Math.round((activeQuizCompleted / activeQuizTotal) * 100) : 0;
 
   const isModuleQuizCompleted = useCallback(
     (mod: CourseModule | undefined, idx: number): boolean => {
@@ -694,33 +623,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     },
     [checkpointStore, course.id, currentUser.completedModuleIds, moduleQuizzes]
   );
-
-  const quizMastery = useMemo(() => {
-    const courseResults = checkpointStore[course.id] || {};
-    let passedCount = 0;
-    let attemptedCount = 0;
-    let scoreSum = 0;
-
-    moduleQuizzes.forEach((quiz, idx) => {
-      if (!quiz) return;
-      const mod = course.modules[idx];
-      const res = courseResults[quiz.id];
-      if (res) {
-        attemptedCount += 1;
-        scoreSum += res.score;
-      }
-      if (isModuleQuizCompleted(mod, idx)) {
-        passedCount += 1;
-      }
-    });
-
-    const averageScore = attemptedCount > 0 ? Math.round(scoreSum / attemptedCount) : 0;
-    return { passedCount, attemptedCount, averageScore };
-  }, [checkpointStore, course.id, course.modules, isModuleQuizCompleted, moduleQuizzes]);
-
-  const pendingQuizCount = Math.max(0, totalQuizCount - quizMastery.passedCount);
-  const quizProgressPercent =
-    totalQuizCount > 0 ? Math.round((quizMastery.passedCount / totalQuizCount) * 100) : 0;
 
   const saveQuizResult = useCallback(
     (quizId: string, result: QuizResult) => {
@@ -800,14 +702,11 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       : null;
 
   const isViewingHierarchyContent =
-    playerMode === 'study' &&
     selectedOutlineNode.level !== 'module' &&
     Boolean(activeHierarchyChapter);
 
   const handleSelectHierarchyChapter = (chapterId: string, openEditor = false) => {
     flushCurrentModuleProgress();
-    setPlayerMode('study');
-    setQuizOrigin('manual');
     setExpandedChapters(prev => ({ ...prev, [chapterId]: true }));
     setOpenHierarchyEditorOnSelect(openEditor);
     setSelectedOutlineNode({ level: 'chapter', chapterId });
@@ -820,8 +719,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     openEditor = false
   ) => {
     flushCurrentModuleProgress();
-    setPlayerMode('study');
-    setQuizOrigin('manual');
     setExpandedChapters(prev => ({ ...prev, [chapterId]: true }));
     setExpandedSections(prev => ({ ...prev, [sectionId]: true }));
     setOpenHierarchyEditorOnSelect(openEditor);
@@ -923,36 +820,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     window.setTimeout(() => setFlashcardSavedToast(null), 3200);
   };
 
-  const handleOpenModuleQuiz = (moduleIndex: number, origin: 'manual' | 'next-step' = 'manual') => {
-    if (!moduleQuizzes[moduleIndex]) return;
-    flushCurrentModuleProgress();
-    setSelectedOutlineNode({ level: 'module' });
-    setOpenModuleEditorOnSelect(false);
-    setActiveModuleIndex(moduleIndex);
-    setQuizOrigin(origin);
-    setPlayerMode('quiz');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleSwitchPlayerMode = (nextMode: 'study' | 'quiz') => {
-    if (nextMode === playerMode && selectedOutlineNode.level === 'module') return;
-    if (nextMode === 'quiz') {
-      if (totalQuizCount === 0) return;
-      const targetQuizIndex = moduleQuizzes[activeModuleIndex]
-        ? activeModuleIndex
-        : quizzableModuleIndices[0];
-      if (typeof targetQuizIndex === 'number') {
-        handleOpenModuleQuiz(targetQuizIndex, 'manual');
-      }
-    } else {
-      setQuizOrigin('manual');
-      setSelectedOutlineNode({ level: 'module' });
-      setOpenModuleEditorOnSelect(false);
-      setPlayerMode('study');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  };
-
   const handleSelectModule = (idx: number, openEditor = false) => {
     const wasViewingHierarchy = selectedOutlineNode.level !== 'module';
     flushCurrentModuleProgress();
@@ -965,15 +832,13 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       }
     }
     setSelectedOutlineNode({ level: 'module' });
-    setQuizOrigin('manual');
     if (openEditor && canEditCourseContent) {
-      setPlayerMode('study');
       setOpenModuleEditorOnSelect(true);
     } else {
       setOpenModuleEditorOnSelect(false);
     }
     setActiveModuleIndex(idx);
-    if (playerMode === 'quiz' || openEditor || wasViewingHierarchy) {
+    if (openEditor || wasViewingHierarchy) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -991,45 +856,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       return;
     }
 
-    if (playerMode === 'quiz') {
-      if (activeModule.type === 'video' && activeModuleQuiz) {
-        const videoPassed = Boolean(checkpointStore[course.id]?.[activeModuleQuiz.id]?.passed);
-        if (!videoPassed && !(currentUser.role !== 'student' && instructorMasteryBypass)) {
-          setPostQuizModalModuleIndex(activeModuleIndex);
-          return;
-        }
-      }
-
-      if (quizOrigin === 'next-step') {
-        const nextIdx = activeModuleIndex + 1;
-        if (nextIdx < course.modules.length) {
-          setActiveModuleIndex(nextIdx);
-          setPlayerMode('study');
-          setQuizOrigin('manual');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        } else {
-          setPlayerMode('study');
-          setQuizOrigin('manual');
-          if (progressPercent === 100) {
-            onViewCertificates();
-          }
-        }
-      } else {
-        const nextQuizIdx = quizzableModuleIndices.find(idx => idx > activeModuleIndex);
-        if (typeof nextQuizIdx === 'number') {
-          setActiveModuleIndex(nextQuizIdx);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        } else {
-          setPlayerMode('study');
-          setQuizOrigin('manual');
-          if (progressPercent === 100) {
-            onViewCertificates();
-          }
-        }
-      }
-      return;
-    }
-
     flushCurrentModuleProgress();
 
     // Video lecture mastery gate: only require passing the post-module quiz when one exists
@@ -1042,40 +868,18 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           return;
         }
       }
-
-      completeModule(course.id, activeModule.id);
-      if (activeModuleIndex < course.modules.length - 1) {
-        setActiveModuleIndex(prev => prev + 1);
-      } else if (progressPercent === 100) {
-        onViewCertificates();
-      }
-      return;
     }
 
     completeModule(course.id, activeModule.id);
 
     if (activeModuleIndex < course.modules.length - 1) {
-      const nextModule = course.modules[activeModuleIndex + 1];
-      const betweenQuiz = getBetweenModuleQuiz(course, activeModule, nextModule);
-      const existingCheckpoint = activeModuleQuiz
-        ? checkpointStore[course.id]?.[activeModuleQuiz.id]
-        : undefined;
-
-      if (betweenQuiz && !existingCheckpoint?.passed) {
-        handleOpenModuleQuiz(activeModuleIndex, 'next-step');
-      } else {
-        setActiveModuleIndex(prev => prev + 1);
-      }
+      setActiveModuleIndex(prev => prev + 1);
+    } else if (progressPercent === 100) {
+      onViewCertificates();
     }
   };
 
   const handlePrevModule = () => {
-    if (playerMode === 'quiz') {
-      setPlayerMode('study');
-      setQuizOrigin('manual');
-      return;
-    }
-
     if (activeModuleIndex > 0) {
       flushCurrentModuleProgress();
       setActiveModuleIndex(prev => prev - 1);
@@ -1110,53 +914,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           </div>
         </div>
 
-        {/* Mode Switcher, Progress & Actions */}
+        {/* Progress & Actions */}
         <div className="flex flex-wrap items-center justify-between lg:justify-end gap-3 shrink-0">
-          {/* Segmented Study Mode / Quiz Mode Toggle (Quiz Mode shown when course has quizzes) */}
-          {totalQuizCount > 0 && (
-            <div
-              role="tablist"
-              aria-label="Course player mode"
-              className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={playerMode === 'study'}
-                onClick={() => handleSwitchPlayerMode('study')}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                  playerMode === 'study'
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <BookOpen className="w-3.5 h-3.5 shrink-0" />
-                <span>Study Mode</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={playerMode === 'quiz'}
-                onClick={() => handleSwitchPlayerMode('quiz')}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                  playerMode === 'quiz'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <CheckSquare className="w-3.5 h-3.5 shrink-0" />
-                <span>Quiz Mode</span>
-                <span
-                  className={`font-mono text-[10px] tabular-nums ${
-                    playerMode === 'quiz' ? 'text-blue-100' : 'text-slate-400 dark:text-slate-500'
-                  }`}
-                >
-                  {quizMastery.passedCount}/{totalQuizCount}
-                </span>
-              </button>
-            </div>
-          )}
-
           {!isViewingLockedContent && (
             <>
               <button
@@ -1299,90 +1058,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                   </span>
                 </div>
               </div>
-
-              {/* Quiz Completion Progress Indicator (Completed vs Pending) */}
-              {totalQuizCount > 0 && (
-                <div className="pt-2 border-t border-emerald-200/70 dark:border-emerald-900/50 space-y-1.5">
-                  <div className="flex items-center justify-between gap-2 text-[11px] tabular-nums">
-                    <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-200">
-                      <CheckSquare className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                      <span>Quizzes</span>
-                    </span>
-                    <div className="flex items-center gap-1.5 font-mono text-[10px]">
-                      <span className="font-bold text-emerald-700 dark:text-emerald-300">
-                        {quizMastery.passedCount}/{totalQuizCount} passed
-                      </span>
-                      <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">
-                        ·
-                      </span>
-                      <span
-                        className={
-                          pendingQuizCount === 0
-                            ? 'font-bold text-emerald-600 dark:text-emerald-400'
-                            : 'font-semibold text-amber-600 dark:text-amber-400'
-                        }
-                      >
-                        {pendingQuizCount === 0 ? 'All done' : `${pendingQuizCount} pending`}
-                      </span>
-                    </div>
-                  </div>
-
-                  {totalQuizCount <= 24 ? (
-                    <div
-                      role="progressbar"
-                      aria-valuenow={quizMastery.passedCount}
-                      aria-valuemin={0}
-                      aria-valuemax={totalQuizCount}
-                      aria-label={`Quiz completion: ${quizMastery.passedCount} of ${totalQuizCount} completed, ${pendingQuizCount} pending`}
-                      className="flex items-center gap-1 w-full"
-                    >
-                      {quizzableModuleIndices.map((qIdx) => {
-                        const qMod = course.modules[qIdx];
-                        const qCfg = moduleQuizzes[qIdx];
-                        if (!qMod || !qCfg) return null;
-                        const qPassed = isModuleQuizCompleted(qMod, qIdx);
-                        const qResult = checkpointStore[course.id]?.[qCfg.id];
-                        const qStatusLabel = qPassed
-                          ? `Completed (${qResult?.score ?? 100}%)`
-                          : qResult
-                          ? `Pending retry (${qResult.score}%)`
-                          : 'Pending';
-
-                        return (
-                          <button
-                            key={`quiz-seg-${qMod.id}`}
-                            type="button"
-                            onClick={() => handleOpenModuleQuiz(qIdx, 'manual')}
-                            title={`${qMod.title} — ${qStatusLabel}`}
-                            aria-label={`${qMod.title} quiz: ${qStatusLabel}`}
-                            className={`h-1.5 flex-1 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                              qPassed
-                                ? 'bg-emerald-600 dark:bg-emerald-400'
-                                : qResult
-                                ? 'bg-amber-500 dark:bg-amber-400'
-                                : 'bg-amber-200/90 dark:bg-slate-700 hover:bg-amber-400 dark:hover:bg-amber-500'
-                            }`}
-                          />
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div
-                      role="progressbar"
-                      aria-valuenow={quizProgressPercent}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-label={`Quiz completion ${quizProgressPercent}%`}
-                      className="h-1.5 w-full bg-amber-200/70 dark:bg-slate-800 rounded-full overflow-hidden"
-                    >
-                      <div
-                        className="h-full bg-emerald-600 dark:bg-emerald-400 rounded-full transition-all"
-                        style={{ width: `${quizProgressPercent}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* 3-Level Nested Course Outline: 1.0 Chapter -> 1.1 Main Contents -> 1.1.1 Course Contents */}
@@ -1392,7 +1067,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                   {hierarchyTree.map((chapter) => {
                     const isChapterOpen = Boolean(expandedChapters[chapter.id]);
                     const isChapterSelected =
-                      playerMode === 'study' &&
                       selectedOutlineNode.level === 'chapter' &&
                       selectedOutlineNode.chapterId === chapter.id;
                     const chapterHasContent = Boolean(chapter.contentMarkdown?.trim());
@@ -1403,14 +1077,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                     const chapterTotal = chapterModules.length;
                     const isChapterCompleted = chapterTotal > 0 && chapterDoneCount === chapterTotal;
                     const chapterRatio = chapterTotal > 0 ? chapterDoneCount / chapterTotal : 0;
-                    const chapterQuizItems = chapterModules.filter(item =>
-                      Boolean(moduleQuizzes[item.flatIndex])
-                    );
-                    const chapterQuizTotal = chapterQuizItems.length;
-                    const chapterQuizPassed = chapterQuizItems.filter(item =>
-                      isModuleQuizCompleted(item.module, item.flatIndex)
-                    ).length;
-                    const chapterQuizPending = chapterQuizTotal - chapterQuizPassed;
                     const ringRadius = 7.5;
                     const ringCircumference = 2 * Math.PI * ringRadius;
 
@@ -1518,46 +1184,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                               <span className="tabular-nums mr-1.5">{chapter.chapterNumber}</span>
                               {chapter.title}
                             </span>
-                            {chapterQuizTotal > 0 && (
-                              <span className="mt-1 flex items-center gap-1.5 text-[10px] font-mono tabular-nums">
-                                <span className="inline-flex items-center gap-0.5 shrink-0">
-                                  {chapterQuizItems.slice(0, 6).map((qItem) => {
-                                    const qPassed = isModuleQuizCompleted(
-                                      qItem.module,
-                                      qItem.flatIndex
-                                    );
-                                    return (
-                                      <span
-                                        key={`ch-qdot-${qItem.module.id}`}
-                                        className={`w-1.5 h-1.5 rounded-full ${
-                                          qPassed
-                                            ? 'bg-emerald-500 dark:bg-emerald-400'
-                                            : 'bg-amber-400 dark:bg-amber-500'
-                                        }`}
-                                      />
-                                    );
-                                  })}
-                                  {chapterQuizTotal > 6 && (
-                                    <span className="text-[9px] text-slate-400 ml-0.5">
-                                      +{chapterQuizTotal - 6}
-                                    </span>
-                                  )}
-                                </span>
-                                <span
-                                  className={
-                                    chapterQuizPending === 0
-                                      ? 'font-semibold text-emerald-700 dark:text-emerald-400'
-                                      : 'font-semibold text-amber-700 dark:text-amber-400'
-                                  }
-                                >
-                                  {chapterQuizPassed}/{chapterQuizTotal}{' '}
-                                  {chapterQuizTotal === 1 ? 'quiz' : 'quizzes'}{' '}
-                                  {chapterQuizPending === 0
-                                    ? 'done'
-                                    : `· ${chapterQuizPending} pending`}
-                                </span>
-                              </span>
-                            )}
                           </button>
 
                           <div className="flex items-center gap-1 shrink-0 pt-0.5">
@@ -1603,7 +1229,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                             {chapter.mainContents.map((section) => {
                               const isSectionOpen = Boolean(expandedSections[section.id]);
                               const isSectionSelected =
-                                playerMode === 'study' &&
                                 selectedOutlineNode.level === 'section' &&
                                 selectedOutlineNode.sectionId === section.id;
                               const sectionHasContent = Boolean(section.contentMarkdown?.trim());
@@ -1613,30 +1238,14 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                               ).length;
                               const isSectionCompleted =
                                 sectionTotal > 0 && sectionDoneCount === sectionTotal;
-                              const sectionQuizItems = section.items.filter(item =>
-                                Boolean(moduleQuizzes[item.flatIndex])
-                              );
-                              const sectionQuizTotal = sectionQuizItems.length;
-                              const sectionQuizPassed = sectionQuizItems.filter(item =>
-                                isModuleQuizCompleted(item.module, item.flatIndex)
-                              ).length;
-                              const sectionQuizPending = sectionQuizTotal - sectionQuizPassed;
 
                               return (
                                 <div key={section.id} className="space-y-1">
                                   {/* Level 2 Subheader */}
                                   <div
                                     className={`group/sec flex items-start justify-between gap-1.5 px-2 py-1.5 rounded-md transition-colors ${
-                                      sectionQuizTotal > 0
-                                        ? sectionQuizPending === 0
-                                          ? 'border-l-2 border-emerald-500 dark:border-emerald-400'
-                                          : 'border-l-2 border-amber-400 dark:border-amber-500'
-                                        : ''
-                                    } ${
                                       isSectionSelected
                                         ? 'bg-white dark:bg-slate-800 shadow-2xs'
-                                        : sectionQuizTotal > 0 && sectionQuizPending === 0
-                                        ? 'bg-emerald-50/50 dark:bg-emerald-950/25 hover:bg-white/80 dark:hover:bg-slate-800/50'
                                         : 'hover:bg-white/70 dark:hover:bg-slate-800/50'
                                     }`}
                                   >
@@ -1713,41 +1322,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                         <span className="tabular-nums mr-1.5">{section.sectionNumber}</span>
                                         {section.title}
                                       </span>
-                                      {sectionQuizTotal > 0 && (
-                                        <span className="mt-0.5 flex items-center gap-1.5 text-[10px] font-mono tabular-nums">
-                                          <span className="inline-flex items-center gap-0.5 shrink-0">
-                                            {sectionQuizItems.slice(0, 6).map((qItem) => {
-                                              const qPassed = isModuleQuizCompleted(
-                                                qItem.module,
-                                                qItem.flatIndex
-                                              );
-                                              return (
-                                                <span
-                                                  key={`sec-qdot-${qItem.module.id}`}
-                                                  className={`w-1.5 h-1.5 rounded-full ${
-                                                    qPassed
-                                                      ? 'bg-emerald-500 dark:bg-emerald-400'
-                                                      : 'bg-amber-400 dark:bg-amber-500'
-                                                  }`}
-                                                />
-                                              );
-                                            })}
-                                          </span>
-                                          <span
-                                            className={
-                                              sectionQuizPending === 0
-                                                ? 'font-semibold text-emerald-700 dark:text-emerald-400'
-                                                : 'font-semibold text-amber-700 dark:text-amber-400'
-                                            }
-                                          >
-                                            {sectionQuizPassed}/{sectionQuizTotal}{' '}
-                                            {sectionQuizTotal === 1 ? 'quiz' : 'quizzes'}{' '}
-                                            {sectionQuizPending === 0
-                                              ? 'passed'
-                                              : `· ${sectionQuizPending} pending`}
-                                          </span>
-                                        </span>
-                                      )}
                                     </button>
 
                                     <div className="flex items-center gap-1 shrink-0 pt-0.5">
@@ -1799,7 +1373,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                       ) : (
                                         section.items.map(({ module: m, flatIndex: idx, itemNumber }) => {
                                           const isActive =
-                                            playerMode === 'study' &&
                                             selectedOutlineNode.level === 'module' &&
                                             idx === activeModuleIndex;
                                           const isDone = isModuleCompleted(m.id);
@@ -1813,8 +1386,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                             : undefined;
                                           const isModQuizPassed = isModuleQuizCompleted(m, idx);
                                           const isDedicatedQuiz = m.type === 'quiz';
-                                          const isQuizActive =
-                                            playerMode === 'quiz' && idx === activeModuleIndex;
                                           const modBlockingVideo = getBlockingVideoForModule(idx);
                                           const isModMasteryLocked =
                                             Boolean(modBlockingVideo) &&
@@ -1943,65 +1514,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                   ) : null}
                                                 </div>
                                               </div>
-
-                                              {/* Per-Module Quiz Mode Trigger */}
-                                              {modQuiz && m.type !== 'quiz' && (
-                                                <button
-                                                  type="button"
-                                                  onClick={() => {
-                                                    if (m.type === 'video' && !isModMasteryLocked) {
-                                                      setPostQuizModalModuleIndex(idx);
-                                                    } else {
-                                                      handleOpenModuleQuiz(idx, 'manual');
-                                                    }
-                                                  }}
-                                                  className={`w-full px-2.5 py-1.5 rounded-lg text-left transition-colors flex items-center justify-between gap-2 border ${
-                                                    isQuizActive
-                                                      ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-800 text-blue-900 dark:text-cyan-200 font-semibold'
-                                                      : isModQuizPassed
-                                                      ? 'bg-emerald-50/75 dark:bg-emerald-950/30 border-emerald-200/80 dark:border-emerald-800/60 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100/70 dark:hover:bg-emerald-950/50'
-                                                      : 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200/75 dark:border-amber-900/50 text-slate-700 dark:text-slate-300 hover:bg-amber-100/60 dark:hover:bg-amber-950/40'
-                                                  }`}
-                                                >
-                                                  <div className="flex items-center gap-2 min-w-0">
-                                                    {isModQuizPassed ? (
-                                                      <CheckCircle2
-                                                        className={`w-3.5 h-3.5 shrink-0 ${
-                                                          isQuizActive
-                                                            ? 'text-blue-600 dark:text-cyan-400'
-                                                            : 'text-emerald-600 dark:text-emerald-400'
-                                                        }`}
-                                                      />
-                                                    ) : (
-                                                      <Clock
-                                                        className={`w-3.5 h-3.5 shrink-0 ${
-                                                          isQuizActive
-                                                            ? 'text-blue-600 dark:text-cyan-400'
-                                                            : 'text-amber-500 dark:text-amber-400'
-                                                        }`}
-                                                      />
-                                                    )}
-                                                    <span className="text-[11px] truncate">
-                                                      Module Quiz · {modQuiz.questions.length} Qs
-                                                    </span>
-                                                  </div>
-                                                  <span
-                                                    className={`text-[10px] font-mono tabular-nums font-bold shrink-0 ${
-                                                      isModQuizPassed
-                                                        ? 'text-emerald-700 dark:text-emerald-400'
-                                                        : 'text-amber-700 dark:text-amber-400'
-                                                    }`}
-                                                  >
-                                                    {isModQuizPassed
-                                                      ? modQuizResult
-                                                        ? `${modQuizResult.score}% · Passed`
-                                                        : 'Passed'
-                                                      : modQuizResult
-                                                      ? `${modQuizResult.score}% · Retry`
-                                                      : 'Pending'}
-                                                  </span>
-                                                </button>
-                                              )}
                                             </React.Fragment>
                                           );
                                         })
@@ -2119,163 +1631,170 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           ref={moduleContentRef}
           className={`${isOutlineSidebarCollapsed ? 'lg:col-span-4' : 'lg:col-span-3'} space-y-4`}
         >
-          {/* Workspace Collapse/Expand Outline Strip */}
-          <div className="px-3.5 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <button
-                type="button"
-                onClick={() => setIsOutlineSidebarCollapsed(prev => !prev)}
-                aria-expanded={!isOutlineSidebarCollapsed}
-                aria-label={
-                  isOutlineSidebarCollapsed
-                    ? 'Show course outline sidebar'
-                    : 'Collapse course outline sidebar'
+          {/* Frozen Workspace Header Strip: Outline Collapse + Title + Icon-Only Prev/Next */}
+          {(() => {
+            let prevDisabled = false;
+            let prevTitle = 'Previous Page';
+            let onPrevClick = () => {};
+
+            let nextDisabled = false;
+            let nextTitle = 'Next Page';
+            let onNextClick = () => {};
+
+            if (isViewingHierarchyContent && activeHierarchyChapter) {
+              if (!activeHierarchySection) {
+                prevDisabled = !previousHierarchyChapter;
+                prevTitle = previousHierarchyChapter
+                  ? `Previous Chapter: ${previousHierarchyChapter.chapterNumber} ${previousHierarchyChapter.title}`
+                  : 'First chapter';
+                onPrevClick = () => {
+                  if (previousHierarchyChapter) {
+                    handleSelectHierarchyChapter(previousHierarchyChapter.id, false);
+                  }
+                };
+
+                const firstSection = activeHierarchyChapter.mainContents[0] || null;
+                if (firstSection) {
+                  nextTitle = `Next: ${firstSection.sectionNumber} ${firstSection.title}`;
+                  onNextClick = () =>
+                    handleSelectHierarchySection(activeHierarchyChapter.id, firstSection.id, false);
+                } else if (nextHierarchyChapter) {
+                  nextTitle = `Next Chapter: ${nextHierarchyChapter.chapterNumber} ${nextHierarchyChapter.title}`;
+                  onNextClick = () =>
+                    handleSelectHierarchyChapter(nextHierarchyChapter.id, false);
+                } else {
+                  nextDisabled = true;
+                  nextTitle = 'No next section available';
                 }
-                title={
-                  isOutlineSidebarCollapsed
-                    ? 'Show Course Outline'
-                    : 'Collapse Course Outline'
+              } else {
+                prevDisabled = false;
+                prevTitle = `Previous: ${activeHierarchyChapter.chapterNumber} ${activeHierarchyChapter.title}`;
+                onPrevClick = () => handleSelectHierarchyChapter(activeHierarchyChapter.id, false);
+
+                const firstLesson = activeHierarchySection.items[0] || null;
+                if (firstLesson) {
+                  nextTitle = `Next: ${firstLesson.itemNumber} ${firstLesson.module.title}`;
+                  onNextClick = () => handleSelectModule(firstLesson.flatIndex, false);
+                } else if (nextHierarchySection) {
+                  nextTitle = `Next: ${nextHierarchySection.sectionNumber} ${nextHierarchySection.title}`;
+                  onNextClick = () =>
+                    handleSelectHierarchySection(
+                      nextHierarchySection.chapterId,
+                      nextHierarchySection.id,
+                      false
+                    );
+                } else if (nextHierarchyChapter) {
+                  nextTitle = `Next Chapter: ${nextHierarchyChapter.chapterNumber} ${nextHierarchyChapter.title}`;
+                  onNextClick = () => handleSelectHierarchyChapter(nextHierarchyChapter.id, false);
+                } else {
+                  nextDisabled = true;
+                  nextTitle = 'No next lesson available';
                 }
-                className="inline-flex items-center justify-center p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:border-emerald-500 dark:hover:border-emerald-400 text-slate-700 dark:text-slate-200 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-              >
-                {isOutlineSidebarCollapsed ? (
-                  <PanelLeftOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                ) : (
-                  <PanelLeftClose className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-                )}
-              </button>
+              }
+            } else {
+              prevDisabled = activeModuleIndex === 0;
+              prevTitle =
+                activeModuleIndex > 0
+                  ? `Previous: ${course.modules[activeModuleIndex - 1]?.title || 'Previous Module'}`
+                  : 'First module';
+              onPrevClick = handlePrevModule;
 
-              <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                {isViewingHierarchyContent && activeHierarchyChapter
-                  ? activeHierarchySection
-                    ? `${activeHierarchySection.sectionNumber} ${activeHierarchySection.title}`
-                    : `${activeHierarchyChapter.chapterNumber} ${activeHierarchyChapter.title}`
-                  : activeBreadcrumb
-                  ? `${activeBreadcrumb.itemNumber} ${activeModule.title}`
-                  : activeModule.title}
-              </span>
-            </div>
+              nextDisabled = false;
+              onNextClick = handleNextModule;
+              if (isStudentPaymentRequired) {
+                nextTitle = `Pay $${course.price} & Unlock Next Modules`;
+              } else if (isViewingMasteryLocked && activeBlockingVideo) {
+                nextTitle = `Complete Module ${activeBlockingVideo.moduleIndex + 1} Quiz to Unlock`;
+              } else if (
+                activeModule.type === 'video' &&
+                Boolean(postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) &&
+                !checkpointStore[course.id]?.[
+                  (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)!.id
+                ]?.passed
+              ) {
+                nextTitle = 'Take Quiz to Unlock Next';
+              } else if (activeModuleIndex === course.modules.length - 1) {
+                nextTitle = 'Finish & Generate Certificate';
+              } else {
+                nextTitle = `Complete & Next: ${course.modules[activeModuleIndex + 1]?.title || 'Next Module'}`;
+              }
+            }
 
-            {isOutlineSidebarCollapsed && (
-              <span className="text-[11px] font-mono tabular-nums font-semibold text-emerald-700 dark:text-emerald-300 shrink-0">
-                {completedCount}/{course.modules.length} ({progressPercent}%)
-              </span>
-            )}
-          </div>
-          {/* Course Expiration Notice Banner */}
-          {isEnrolled && enrollment && expiryInfo && (expiryInfo.status === 'expiring_soon' || expiryInfo.status === 'expired') && (
-            <div
-              className={`px-4 py-3 rounded-2xl border shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs ${
-                expiryInfo.status === 'expired'
-                  ? 'bg-red-50 dark:bg-red-950/35 border-red-200 dark:border-red-900/60 text-red-800 dark:text-red-200'
-                  : 'bg-amber-50 dark:bg-amber-950/35 border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-200'
-              }`}
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                {expiryInfo.status === 'expired' ? (
-                  <XCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
-                ) : (
-                  <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                )}
-                <p className="tabular-nums">
-                  {expiryInfo.status === 'expired' ? (
-                    <>
-                      <strong>Course access expired on {formatEnrollmentDate(enrollment.expiresAt)}</strong>{' '}
-                      ({expiryInfo.countdownLabel}). Renew your plan or contact an administrator to extend enrollment.
-                    </>
-                  ) : (
-                    <>
-                      <strong>Course access expires on {formatEnrollmentDate(enrollment.expiresAt)}</strong>{' '}
-                      ({expiryInfo.countdownLabel}). Complete your remaining modules and earn your certificate before the end date.
-                    </>
-                  )}
-                </p>
-              </div>
+            return (
+              <div className="sticky top-[62px] z-20 px-3.5 py-2 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsOutlineSidebarCollapsed(prev => !prev)}
+                    aria-expanded={!isOutlineSidebarCollapsed}
+                    aria-label={
+                      isOutlineSidebarCollapsed
+                        ? 'Show course outline sidebar'
+                        : 'Collapse course outline sidebar'
+                    }
+                    title={
+                      isOutlineSidebarCollapsed
+                        ? 'Show Course Outline'
+                        : 'Collapse Course Outline'
+                    }
+                    className="inline-flex items-center justify-center w-9 h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:border-emerald-500 dark:hover:border-emerald-400 text-slate-700 dark:text-slate-200 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    {isOutlineSidebarCollapsed ? (
+                      <PanelLeftOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                    ) : (
+                      <PanelLeftClose className="w-4 h-4 text-slate-600 dark:text-slate-300" aria-hidden="true" />
+                    )}
+                  </button>
 
-              {(onOpenCourseCheckout && currentUser.role === 'student' && course.price > 0 && expiryInfo.status === 'expired') ? (
-                <button
-                  type="button"
-                  onClick={() => onOpenCourseCheckout(course)}
-                  className="px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 text-white transition-colors bg-red-600 hover:bg-red-500"
-                >
-                  Renew Access · ${course.price}
-                </button>
-              ) : onOpenPricing ? (
-                <button
-                  type="button"
-                  onClick={onOpenPricing}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 text-white transition-colors ${
-                    expiryInfo.status === 'expired'
-                      ? 'bg-red-600 hover:bg-red-500'
-                      : 'bg-amber-600 hover:bg-amber-500'
-                  }`}
-                >
-                  {expiryInfo.status === 'expired' ? 'Renew Access' : 'Extend Plan'}
-                </button>
-              ) : null}
-            </div>
-          )}
-
-          {/* Reading Progress & Resume Banner (shown in Study Mode for unlocked Level 3 modules) */}
-          {playerMode === 'study' && !isViewingHierarchyContent && !isViewingLockedContent && !isViewingMasteryLocked && (
-            <div className="px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 min-w-0">
-                  <BookmarkCheck className="w-4 h-4 text-blue-600 dark:text-cyan-400 shrink-0" />
-                  {resumedFromPercent !== null ? (
-                    <span className="truncate tabular-nums">
-                      Resumed <strong className="text-slate-900 dark:text-white">{activeModule.title}</strong> from your last scroll position ({resumedFromPercent}%)
-                    </span>
-                  ) : (
-                    <span className="truncate">
-                      Reading progress auto-saved for <strong className="text-slate-900 dark:text-white">{activeModule.title}</strong>
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="font-mono text-[11px] font-bold tabular-nums text-blue-600 dark:text-cyan-400">
-                    {currentReadingPercent}% read
+                  <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                    {isViewingHierarchyContent && activeHierarchyChapter
+                      ? activeHierarchySection
+                        ? `${activeHierarchySection.sectionNumber} ${activeHierarchySection.title}`
+                        : `${activeHierarchyChapter.chapterNumber} ${activeHierarchyChapter.title}`
+                      : activeBreadcrumb
+                      ? `${activeBreadcrumb.itemNumber} ${activeModule.title}`
+                      : activeModule.title}
                   </span>
-                  {resumedFromPercent !== null && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={handleJumpToTop}
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-cyan-400 whitespace-nowrap"
-                      >
-                        <ArrowUp className="w-3 h-3" />
-                        <span>Top</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setResumedFromPercent(null)}
-                        aria-label="Dismiss resume notice"
-                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </>
+                </div>
+
+                <div className="flex items-center gap-2.5 shrink-0">
+                  {isOutlineSidebarCollapsed && (
+                    <span className="hidden sm:inline-block text-[11px] font-mono tabular-nums font-semibold text-emerald-700 dark:text-emerald-300 shrink-0">
+                      {completedCount}/{course.modules.length} ({progressPercent}%)
+                    </span>
                   )}
+
+                  <div
+                    role="group"
+                    aria-label="Page navigation"
+                    className="inline-flex items-center gap-1.5 shrink-0"
+                  >
+                    <button
+                      type="button"
+                      onClick={onPrevClick}
+                      disabled={prevDisabled}
+                      title={prevTitle}
+                      aria-label={prevTitle}
+                      className="inline-flex items-center justify-center w-9 h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 hover:border-slate-300 dark:hover:border-slate-600 disabled:opacity-35 disabled:pointer-events-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    >
+                      <ChevronLeft className="w-4 h-4" aria-hidden="true" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={onNextClick}
+                      disabled={nextDisabled}
+                      title={nextTitle}
+                      aria-label={nextTitle}
+                      className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-sm disabled:opacity-35 disabled:pointer-events-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    >
+                      <ChevronRight className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
               </div>
-
-              <div
-                role="progressbar"
-                aria-valuenow={currentReadingPercent}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-label={`Module reading progress ${currentReadingPercent}%`}
-                className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden"
-              >
-                <div
-                  className="h-full bg-gradient-to-r from-blue-600 to-cyan-400 rounded-full transition-[width] duration-150"
-                  style={{ width: `${currentReadingPercent}%` }}
-                />
-              </div>
-            </div>
-          )}
-
+            );
+          })()}
           {/* First-Level Chapter & Second-Level Section Content Reading / Writing Stage */}
           {isViewingHierarchyContent && activeHierarchyChapter ? (
             <HierarchyContentWorkspace
@@ -2285,35 +1804,12 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               canEdit={canEditCourseContent}
               startInEditMode={openHierarchyEditorOnSelect}
               onConsumeStartInEditMode={() => setOpenHierarchyEditorOnSelect(false)}
-              onSelectChapter={(chapterId, openEditor) =>
-                handleSelectHierarchyChapter(chapterId, Boolean(openEditor))
-              }
               onSelectSection={(chapterId, sectionId, openEditor) =>
                 handleSelectHierarchySection(chapterId, sectionId, Boolean(openEditor))
               }
-              onOpenModule={(flatIndex) => handleSelectModule(flatIndex, false)}
               onSaveContent={handleSaveHierarchyContent}
               onBackToActiveModule={() => setSelectedOutlineNode({ level: 'module' })}
               activeModuleTitle={activeModule?.title}
-              previousChapter={
-                previousHierarchyChapter
-                  ? {
-                      id: previousHierarchyChapter.id,
-                      chapterNumber: previousHierarchyChapter.chapterNumber,
-                      title: previousHierarchyChapter.title
-                    }
-                  : null
-              }
-              nextChapter={
-                nextHierarchyChapter
-                  ? {
-                      id: nextHierarchyChapter.id,
-                      chapterNumber: nextHierarchyChapter.chapterNumber,
-                      title: nextHierarchyChapter.title
-                    }
-                  : null
-              }
-              nextSection={nextHierarchySection}
             />
           ) : isViewingLockedContent ? (
             <div className="p-6 sm:p-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm text-center space-y-5">
@@ -2373,8 +1869,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setPlayerMode('study');
-                    setQuizOrigin('manual');
                     setActiveModuleIndex(0);
                   }}
                   className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold transition-colors"
@@ -2409,7 +1903,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                   type="button"
                   onClick={() => {
                     setActiveModuleIndex(activeBlockingVideo.moduleIndex);
-                    setPlayerMode('study');
                     setPostQuizModalModuleIndex(activeBlockingVideo.moduleIndex);
                   }}
                   className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-sm flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
@@ -2421,8 +1914,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setPlayerMode('study');
-                    setQuizOrigin('manual');
                     setActiveModuleIndex(activeBlockingVideo.moduleIndex);
                   }}
                   className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
@@ -2441,520 +1932,210 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                 )}
               </div>
             </div>
-          ) : playerMode === 'quiz' && activeModuleQuiz ? (
-            <div className="space-y-4">
-              {/* Quiz Mode Mastery Header & Per-Module Selector Strip */}
-              <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3.5">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="space-y-0.5 min-w-0">
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                      Quiz Mode · Test Your Knowledge by Module
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 tabular-nums">
-                      <span>
-                        Passed <strong className="text-slate-800 dark:text-slate-200">{quizMastery.passedCount}/{totalQuizCount}</strong> {totalQuizCount === 1 ? 'quiz' : 'quizzes'}
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span>
-                        Average score <strong className="text-blue-600 dark:text-cyan-400">{quizMastery.attemptedCount > 0 ? `${quizMastery.averageScore}%` : '—'}</strong>
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span>Passing any module quiz marks that module complete</span>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleSwitchPlayerMode('study')}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  >
-                    <BookOpen className="w-3.5 h-3.5" />
-                    <span>Return to Study Mode</span>
-                  </button>
-                </div>
-
-                {/* Active Quiz Progress Tracker */}
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums">
-                    <span className="font-semibold text-slate-700 dark:text-slate-200">
-                      Active Quiz Progress:{' '}
-                      <strong className="text-slate-900 dark:text-white">
-                        {activeQuizCompleted} of {activeQuizTotal}
-                      </strong>{' '}
-                      questions completed
-                    </span>
-                    <span
-                      className={`font-mono text-[11px] font-bold ${
-                        activeQuizTotal > 0 && activeQuizCompleted === activeQuizTotal
-                          ? 'text-emerald-600 dark:text-emerald-400'
-                          : 'text-blue-600 dark:text-cyan-400'
-                      }`}
-                    >
-                      {activeQuizPercent}%
-                    </span>
-                  </div>
-                  <div
-                    role="progressbar"
-                    aria-valuenow={activeQuizCompleted}
-                    aria-valuemin={0}
-                    aria-valuemax={activeQuizTotal}
-                    aria-label={`Active module quiz progress: ${activeQuizCompleted} of ${activeQuizTotal} questions completed`}
-                    className="h-1.5 w-full bg-slate-200 dark:bg-slate-900 rounded-full overflow-hidden"
-                  >
-                    <div
-                      className={`h-full rounded-full transition-[width] duration-200 motion-reduce:transition-none ${
-                        activeQuizTotal > 0 && activeQuizCompleted === activeQuizTotal
-                          ? 'bg-emerald-500 dark:bg-emerald-400'
-                          : 'bg-gradient-to-r from-blue-600 to-cyan-400'
-                      }`}
-                      style={{ width: `${activeQuizPercent}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Module-by-Module Quiz Switcher (only modules with an actual quiz) */}
-                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
-                  {quizzableModuleIndices.map((idx) => {
-                    const mod = course.modules[idx];
-                    const qConfig = moduleQuizzes[idx];
-                    if (!mod || !qConfig) return null;
-                    const res = checkpointStore[course.id]?.[qConfig.id];
-                    const isSelected = idx === activeModuleIndex;
-                    const modBlocked =
-                      Boolean(getBlockingVideoForModule(idx)) &&
-                      !(currentUser.role !== 'student' && instructorMasteryBypass);
-                    const isLocked = (isStudentPaymentRequired && idx > 0) || modBlocked;
-
-                    return (
-                      <button
-                        key={mod.id}
-                        type="button"
-                        onClick={() => handleOpenModuleQuiz(idx, 'manual')}
-                        title={mod.title}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono tabular-nums transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                          isSelected
-                            ? 'bg-blue-600 border-blue-600 text-white font-bold shadow-sm'
-                            : res?.passed
-                            ? 'bg-emerald-50/80 dark:bg-emerald-950/35 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 hover:border-emerald-400'
-                            : res
-                            ? 'bg-amber-50/80 dark:bg-amber-950/35 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 hover:border-amber-400'
-                            : 'bg-slate-50 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400 dark:hover:border-cyan-500'
-                        }`}
-                      >
-                        {isLocked ? (
-                          <Lock className="w-3 h-3 shrink-0" />
-                        ) : res?.passed ? (
-                          <CheckCircle2
-                            className={`w-3.5 h-3.5 shrink-0 ${
-                              isSelected ? 'text-white' : 'text-emerald-600 dark:text-emerald-400'
-                            }`}
-                          />
-                        ) : null}
-                        <span>M{idx + 1}</span>
-                        {res ? (
-                          <span className="opacity-90">· {res.score}%</span>
-                        ) : (
-                          <span className="opacity-70">· {qConfig.questions.length} Qs</span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <InteractiveQuiz
-                quizKey={activeQuizKey}
-                title={activeModuleQuiz.title}
-                subtitle={activeModuleQuiz.subtitle}
-                questions={activeModuleQuiz.questions}
-                passingScore={activeModuleQuiz.passingScore}
-                mode="quiz-mode"
-                allowModeToggle={true}
-                requirePassToContinue={activeModule.type === 'video'}
-                previousModuleTitle={activeModule.title}
-                onProgressChange={handleActiveQuizProgressChange}
-                nextModuleTitle={(() => {
-                  if (quizOrigin === 'next-step') {
-                    return activeModuleIndex < course.modules.length - 1
-                      ? course.modules[activeModuleIndex + 1]?.title
-                      : undefined;
-                  }
-                  const nextQuizIdx = quizzableModuleIndices.find(idx => idx > activeModuleIndex);
-                  return typeof nextQuizIdx === 'number' ? course.modules[nextQuizIdx]?.title : undefined;
-                })()}
-                continueLabel={(() => {
-                  if (quizOrigin === 'next-step' && activeModuleIndex < course.modules.length - 1) {
-                    return `Continue to Module ${activeModuleIndex + 2}`;
-                  }
-                  const nextQuizIdx = quizzableModuleIndices.find(idx => idx > activeModuleIndex);
-                  if (typeof nextQuizIdx === 'number') {
-                    return `Next: Module ${nextQuizIdx + 1} Quiz`;
-                  }
-                  return progressPercent === 100
-                    ? 'Finish & View Certificate'
-                    : 'Return to Study Mode';
-                })()}
-                previousResult={checkpointStore[course.id]?.[activeModuleQuiz.id] || null}
-                allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
-                onComplete={(result) => {
-                  saveQuizResult(activeModuleQuiz.id, result);
-                  recordStudyTime(30, 'course', activeModule.id);
-                  if (result.passed && !isStudentPaymentRequired) {
-                    completeModule(course.id, activeModule.id);
-                  }
-                }}
-                onContinue={handleNextModule}
-                onSkip={
-                  quizOrigin === 'next-step' &&
-                  activeModule.type !== 'video' &&
-                  activeModuleIndex < course.modules.length - 1
-                    ? () => {
-                        setPlayerMode('study');
-                        setQuizOrigin('manual');
-                        setActiveModuleIndex(prev => prev + 1);
-                      }
-                    : undefined
-                }
-                onBackToModule={() => {
-                  setPlayerMode('study');
-                  setQuizOrigin('manual');
-                }}
-              />
-            </div>
           ) : (
-            <>
-              <ModuleContentWorkspace
-                courseCode={course.code}
-                breadcrumb={activeBreadcrumb}
-                module={activeModule}
-                moduleIndex={activeModuleIndex}
-                canEdit={canEditCourseContent}
-                startInEditMode={openModuleEditorOnSelect}
-                onConsumeStartInEditMode={() => setOpenModuleEditorOnSelect(false)}
-                onSelectChapter={(chapterId) => handleSelectHierarchyChapter(chapterId, false)}
-                onSelectSection={(chapterId, sectionId) =>
-                  handleSelectHierarchySection(chapterId, sectionId, false)
-                }
-                onSaveModuleContent={handleSaveModuleContent}
-              >
-                {/* Video Module with Interactive Player & Automatic Post-Module Mastery Quiz */}
-                {activeModule.type === 'video' && (
-                  <div className="space-y-4">
-                    <VideoLecturePlayer
-                      courseId={course.id}
-                      module={activeModule}
-                      moduleIndex={activeModuleIndex}
-                      passingScore={
-                        (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)?.passingScore ?? 75
-                      }
-                      hasPostQuiz={Boolean(postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)}
-                      isQuizPassed={Boolean(
-                        (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) &&
-                          checkpointStore[course.id]?.[
-                            (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)!.id
-                          ]?.passed
-                      )}
-                      hasWatchedVideo={Boolean(watchedVideosStore[course.id]?.[activeModule.id])}
-                      nextModuleTitle={
-                        activeModuleIndex < course.modules.length - 1
-                          ? course.modules[activeModuleIndex + 1]?.title
-                          : undefined
-                      }
-                      onLectureCompleted={() => {
-                        markVideoWatched(course.id, activeModule.id);
-                        if (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) {
-                          setPostQuizModalModuleIndex(activeModuleIndex);
-                        } else if (!isStudentPaymentRequired) {
-                          completeModule(course.id, activeModule.id);
-                        }
-                      }}
-                      onOpenPostQuiz={() => setPostQuizModalModuleIndex(activeModuleIndex)}
-                      onStudyTimeTick={(seconds, modId) => recordStudyTime(seconds, 'course', modId)}
-                      onCurrentTimeChange={setLiveVideoSeconds}
-                      seekToRequest={videoSeekRequest}
-                      onOpenQuickNotes={() => setIsQuickNotesOpen(true)}
-                      quickNotesCount={
-                        quickNotes.filter(
-                          n => n.courseId === course.id && n.moduleId === activeModule.id
-                        ).length
-                      }
-                    />
-                    {activeModule.contentMarkdown?.trim() && (
-                      <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
-                        <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                          Lesson Companion Notes
-                        </h3>
-                        <MarkdownProse content={activeModule.contentMarkdown} />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Lab Module (Cisco IOS Terminal + Topology) */}
-                {activeModule.type === 'lab' && (
-                  <div className="space-y-4">
-                    <InteractiveCliTerminal
-                      module={activeModule}
-                      courseId={course.id}
-                      onCompleted={() => {
-                        if (!isStudentPaymentRequired) {
-                          completeModule(course.id, activeModule.id);
-                        }
-                      }}
-                    />
-                    {activeModule.contentMarkdown?.trim() && (
-                      <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
-                        <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                          Lab Notes &amp; Walkthrough
-                        </h3>
-                        <MarkdownProse content={activeModule.contentMarkdown} />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Wireshark PCAP Module */}
-                {activeModule.type === 'pcap' && (
-                  <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                        Packet Capture Dissector
-                      </h2>
-                      <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-mono text-[10px] font-bold">
-                        Wireshark Packet Dissector
-                      </span>
-                    </div>
-
-                    {/* Simulated Packet Table */}
-                    <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden font-mono text-[11px]">
-                      <table className="w-full text-left">
-                        <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                          <tr>
-                            <th className="p-2">No.</th>
-                            <th className="p-2">Time</th>
-                            <th className="p-2">Source</th>
-                            <th className="p-2">Destination</th>
-                            <th className="p-2">Protocol</th>
-                            <th className="p-2">Length</th>
-                            <th className="p-2">Info</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-800 dark:text-slate-200">
-                          <tr className="bg-blue-50/50 dark:bg-blue-950/20">
-                            <td className="p-2">1</td>
-                            <td className="p-2">0.000000</td>
-                            <td className="p-2">10.0.0.1</td>
-                            <td className="p-2">224.0.0.5</td>
-                            <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
-                            <td className="p-2">82</td>
-                            <td className="p-2 truncate max-w-xs">Hello Packet (Area 0.0.0.0, Priority 1, Dead 40s)</td>
-                          </tr>
-                          <tr>
-                            <td className="p-2">2</td>
-                            <td className="p-2">0.142010</td>
-                            <td className="p-2">10.0.0.2</td>
-                            <td className="p-2">224.0.0.5</td>
-                            <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
-                            <td className="p-2">82</td>
-                            <td className="p-2 truncate max-w-xs">Hello Packet (Area 0.0.0.0, Priority 1, Dead 40s)</td>
-                          </tr>
-                          <tr className="bg-emerald-50/50 dark:bg-emerald-950/20">
-                            <td className="p-2">3</td>
-                            <td className="p-2">0.281944</td>
-                            <td className="p-2">10.0.0.1</td>
-                            <td className="p-2">10.0.0.2</td>
-                            <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
-                            <td className="p-2">66</td>
-                            <td className="p-2 truncate max-w-xs">DB Description (Init, More, Master)</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {activeModule.contentMarkdown?.trim() && (
-                      <MarkdownProse content={activeModule.contentMarkdown} />
-                    )}
-                  </div>
-                )}
-
-                {/* Quiz Module (Powered by InteractiveQuiz with immediate feedback & scoring) */}
-                {activeModule.type === 'quiz' && activeModule.quiz && (
-                  <div className="space-y-4">
-                    {activeModule.contentMarkdown?.trim() && (
-                      <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
-                        <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                          Assessment Briefing
-                        </h3>
-                        <MarkdownProse content={activeModule.contentMarkdown} />
-                      </div>
-                    )}
-                    <InteractiveQuiz
-                      quizKey={`${course.id}:${activeModule.id}`}
-                      title={activeModule.title}
-                      subtitle={activeModule.summary}
-                      questions={activeModule.quiz.questions}
-                      passingScore={
-                        activeModule.quiz.passingScore ||
-                        course.gradingCriteria?.quizPassingScore ||
-                        75
-                      }
-                      mode="module"
-                      allowModeToggle={true}
-                      nextModuleTitle={
-                        activeModuleIndex < course.modules.length - 1
-                          ? course.modules[activeModuleIndex + 1]?.title
-                          : undefined
-                      }
-                      previousResult={
-                        checkpointStore[course.id]?.[`module:${activeModule.id}`] || null
-                      }
-                      allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
-                      onComplete={(result) => {
-                        saveQuizResult(`module:${activeModule.id}`, result);
-                        if (result.passed && !isStudentPaymentRequired) {
-                          completeModule(course.id, activeModule.id);
-                        }
-                      }}
-                      onContinue={
-                        activeModuleIndex < course.modules.length - 1
-                          ? () => handleNextModule()
-                          : undefined
-                      }
-                    />
-                  </div>
-                )}
-              </ModuleContentWorkspace>
-
-              {/* Post-Module Quiz Mode Callout at Bottom of Every Non-Quiz Module */}
-              {activeModule.type !== 'quiz' && activeModuleQuiz && (
-                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-cyan-400 shrink-0">
-                      <CheckSquare className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0 space-y-0.5">
-                      <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-900 dark:text-slate-100">
-                        <span>{activeModuleQuiz.title}</span>
-                        {checkpointStore[course.id]?.[activeModuleQuiz.id] && (
-                          <span
-                            className={`font-mono text-[11px] tabular-nums ${
-                              checkpointStore[course.id][activeModuleQuiz.id].passed
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : 'text-amber-600 dark:text-amber-400'
-                            }`}
-                          >
-                            · Best {checkpointStore[course.id][activeModuleQuiz.id].score}%
-                            {checkpointStore[course.id][activeModuleQuiz.id].passed
-                              ? ' (Passed)'
-                              : ' (Retry)'}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        Test your knowledge after Module {activeModuleIndex + 1} with{' '}
-                        {activeModuleQuiz.questions.length} multiple-choice questions (Pass{' '}
-                        {activeModuleQuiz.passingScore}%).
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (activeModule.type === 'video') {
-                        setPostQuizModalModuleIndex(activeModuleIndex);
-                      } else {
-                        handleOpenModuleQuiz(activeModuleIndex, 'manual');
-                      }
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200 dark:border-cyan-800 bg-white dark:bg-slate-800 text-xs font-semibold text-blue-700 dark:text-cyan-300 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors duration-150 motion-reduce:transition-none whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  >
-                    <CheckSquare className="w-3.5 h-3.5" />
-                    <span>
-                      {checkpointStore[course.id]?.[activeModuleQuiz.id]
-                        ? 'Retake Post-Module Quiz'
-                        : activeModule.type === 'video'
-                        ? 'Start Post-Lecture Quiz'
-                        : 'Test in Quiz Mode'}
-                    </span>
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Bottom Next/Previous Step Bar (only shown for Level 3 Module views) */}
-          {!isViewingHierarchyContent && !isViewingLockedContent && !isViewingMasteryLocked && (
-            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={handlePrevModule}
-                disabled={activeModuleIndex === 0 && playerMode === 'study'}
-                className="flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>
-                  {playerMode === 'quiz'
-                    ? `Back to Module ${activeModuleIndex + 1} Study`
-                    : 'Previous Module'}
-                </span>
-              </button>
-
-              <div className="flex items-center gap-2">
-                {playerMode === 'study' && activeModule.type !== 'quiz' && activeModuleQuiz && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (activeModule.type === 'video') {
-                        setPostQuizModalModuleIndex(activeModuleIndex);
-                      } else {
-                        handleOpenModuleQuiz(activeModuleIndex, 'manual');
-                      }
-                    }}
-                    className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  >
-                    <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-                    <span>{activeModule.type === 'video' ? 'Mastery Quiz' : 'Module Quiz'}</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={handleNextModule}
-                  className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md transition-all whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                >
-                  <span>
-                    {isStudentPaymentRequired
-                      ? `Pay $${course.price} & Unlock Next Modules`
-                      : playerMode === 'quiz'
-                      ? quizOrigin === 'next-step' && activeModuleIndex < course.modules.length - 1
-                        ? `Proceed to Module ${activeModuleIndex + 2}`
-                        : (() => {
-                            const nextQuizIdx = quizzableModuleIndices.find(
-                              idx => idx > activeModuleIndex
-                            );
-                            if (typeof nextQuizIdx === 'number') {
-                              return `Next: Module ${nextQuizIdx + 1} Quiz`;
-                            }
-                            return progressPercent === 100
-                              ? 'Finish & View Certificate'
-                              : 'Return to Study Mode';
-                          })()
-                      : activeModule.type === 'video' &&
-                        Boolean(postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) &&
-                        !checkpointStore[course.id]?.[
+            <ModuleContentWorkspace
+              courseCode={course.code}
+              breadcrumb={activeBreadcrumb}
+              module={activeModule}
+              moduleIndex={activeModuleIndex}
+              canEdit={canEditCourseContent}
+              startInEditMode={openModuleEditorOnSelect}
+              onConsumeStartInEditMode={() => setOpenModuleEditorOnSelect(false)}
+              onSelectChapter={(chapterId) => handleSelectHierarchyChapter(chapterId, false)}
+              onSelectSection={(chapterId, sectionId) =>
+                handleSelectHierarchySection(chapterId, sectionId, false)
+              }
+              onSaveModuleContent={handleSaveModuleContent}
+            >
+              {/* Video Module with Interactive Player & Automatic Post-Module Mastery Quiz */}
+              {activeModule.type === 'video' && (
+                <div className="space-y-4">
+                  <VideoLecturePlayer
+                    courseId={course.id}
+                    module={activeModule}
+                    moduleIndex={activeModuleIndex}
+                    passingScore={
+                      (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)?.passingScore ?? 75
+                    }
+                    hasPostQuiz={Boolean(postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)}
+                    isQuizPassed={Boolean(
+                      (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) &&
+                        checkpointStore[course.id]?.[
                           (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz)!.id
                         ]?.passed
-                      ? 'Take Quiz to Unlock Next'
-                      : activeModuleIndex === course.modules.length - 1
-                      ? 'Finish & Generate Certificate'
-                      : 'Complete & Next Module'}
-                  </span>
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
+                    )}
+                    hasWatchedVideo={Boolean(watchedVideosStore[course.id]?.[activeModule.id])}
+                    nextModuleTitle={
+                      activeModuleIndex < course.modules.length - 1
+                        ? course.modules[activeModuleIndex + 1]?.title
+                        : undefined
+                    }
+                    onLectureCompleted={() => {
+                      markVideoWatched(course.id, activeModule.id);
+                      if (postVideoQuizzes[activeModuleIndex] || activeModuleQuiz) {
+                        setPostQuizModalModuleIndex(activeModuleIndex);
+                      } else if (!isStudentPaymentRequired) {
+                        completeModule(course.id, activeModule.id);
+                      }
+                    }}
+                    onOpenPostQuiz={() => setPostQuizModalModuleIndex(activeModuleIndex)}
+                    onStudyTimeTick={(seconds, modId) => recordStudyTime(seconds, 'course', modId)}
+                    onCurrentTimeChange={setLiveVideoSeconds}
+                    seekToRequest={videoSeekRequest}
+                    onOpenQuickNotes={() => setIsQuickNotesOpen(true)}
+                    quickNotesCount={
+                      quickNotes.filter(
+                        n => n.courseId === course.id && n.moduleId === activeModule.id
+                      ).length
+                    }
+                  />
+                  {activeModule.contentMarkdown?.trim() && (
+                    <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+                      <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Lesson Companion Notes
+                      </h3>
+                      <MarkdownProse content={activeModule.contentMarkdown} />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Lab Module (Cisco IOS Terminal + Topology) */}
+              {activeModule.type === 'lab' && (
+                <div className="space-y-4">
+                  <InteractiveCliTerminal
+                    module={activeModule}
+                    courseId={course.id}
+                    onCompleted={() => {
+                      if (!isStudentPaymentRequired) {
+                        completeModule(course.id, activeModule.id);
+                      }
+                    }}
+                  />
+                  {activeModule.contentMarkdown?.trim() && (
+                    <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+                      <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Lab Notes &amp; Walkthrough
+                      </h3>
+                      <MarkdownProse content={activeModule.contentMarkdown} />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Wireshark PCAP Module */}
+              {activeModule.type === 'pcap' && (
+                <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
+                      Packet Capture Dissector
+                    </h2>
+                    <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-mono text-[10px] font-bold">
+                      Wireshark Packet Dissector
+                    </span>
+                  </div>
+
+                  {/* Simulated Packet Table */}
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden font-mono text-[11px]">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                        <tr>
+                          <th className="p-2">No.</th>
+                          <th className="p-2">Time</th>
+                          <th className="p-2">Source</th>
+                          <th className="p-2">Destination</th>
+                          <th className="p-2">Protocol</th>
+                          <th className="p-2">Length</th>
+                          <th className="p-2">Info</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-800 dark:text-slate-200">
+                        <tr className="bg-blue-50/50 dark:bg-blue-950/20">
+                          <td className="p-2">1</td>
+                          <td className="p-2">0.000000</td>
+                          <td className="p-2">10.0.0.1</td>
+                          <td className="p-2">224.0.0.5</td>
+                          <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
+                          <td className="p-2">82</td>
+                          <td className="p-2 truncate max-w-xs">Hello Packet (Area 0.0.0.0, Priority 1, Dead 40s)</td>
+                        </tr>
+                        <tr>
+                          <td className="p-2">2</td>
+                          <td className="p-2">0.142010</td>
+                          <td className="p-2">10.0.0.2</td>
+                          <td className="p-2">224.0.0.5</td>
+                          <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
+                          <td className="p-2">82</td>
+                          <td className="p-2 truncate max-w-xs">Hello Packet (Area 0.0.0.0, Priority 1, Dead 40s)</td>
+                        </tr>
+                        <tr className="bg-emerald-50/50 dark:bg-emerald-950/20">
+                          <td className="p-2">3</td>
+                          <td className="p-2">0.281944</td>
+                          <td className="p-2">10.0.0.1</td>
+                          <td className="p-2">10.0.0.2</td>
+                          <td className="p-2 text-cyan-600 dark:text-cyan-400 font-bold">OSPF</td>
+                          <td className="p-2">66</td>
+                          <td className="p-2 truncate max-w-xs">DB Description (Init, More, Master)</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {activeModule.contentMarkdown?.trim() && (
+                    <MarkdownProse content={activeModule.contentMarkdown} />
+                  )}
+                </div>
+              )}
+
+              {/* Quiz Module (Powered by InteractiveQuiz with immediate feedback & scoring) */}
+              {activeModule.type === 'quiz' && activeModule.quiz && (
+                <div className="space-y-4">
+                  {activeModule.contentMarkdown?.trim() && (
+                    <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+                      <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Assessment Briefing
+                      </h3>
+                      <MarkdownProse content={activeModule.contentMarkdown} />
+                    </div>
+                  )}
+                  <InteractiveQuiz
+                    quizKey={`${course.id}:${activeModule.id}`}
+                    title={activeModule.title}
+                    subtitle={activeModule.summary}
+                    questions={activeModule.quiz.questions}
+                    passingScore={
+                      activeModule.quiz.passingScore ||
+                      course.gradingCriteria?.quizPassingScore ||
+                      75
+                    }
+                    mode="module"
+                    allowModeToggle={true}
+                    nextModuleTitle={
+                      activeModuleIndex < course.modules.length - 1
+                        ? course.modules[activeModuleIndex + 1]?.title
+                        : undefined
+                    }
+                    previousResult={
+                      checkpointStore[course.id]?.[`module:${activeModule.id}`] || null
+                    }
+                    allowRetakes={course.gradingCriteria?.allowQuizRetakes ?? true}
+                    onComplete={(result) => {
+                      saveQuizResult(`module:${activeModule.id}`, result);
+                      if (result.passed && !isStudentPaymentRequired) {
+                        completeModule(course.id, activeModule.id);
+                      }
+                    }}
+                    onContinue={
+                      activeModuleIndex < course.modules.length - 1
+                        ? () => handleNextModule()
+                        : undefined
+                    }
+                  />
+                </div>
+              )}
+            </ModuleContentWorkspace>
           )}
+
         </div>
 
       </div>
@@ -2997,8 +2178,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               const completedIdx = postQuizModalModuleIndex;
               setPostQuizModalModuleIndex(null);
               if (completedIdx < course.modules.length - 1) {
-                setPlayerMode('study');
-                setQuizOrigin('manual');
                 setActiveModuleIndex(completedIdx + 1);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               } else if (progressPercent === 100) {
@@ -3041,7 +2220,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
         activeModule={activeModule}
         currentVideoSeconds={liveVideoSeconds}
         onSeekVideo={(seconds) => {
-          setPlayerMode('study');
           setSelectedOutlineNode({ level: 'module' });
           setVideoSeekRequest(prev => ({
             seconds,
@@ -3052,7 +2230,6 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           if (targetCourseId !== course.id) return;
           const targetIdx = course.modules.findIndex(m => m.id === targetModuleId);
           if (targetIdx >= 0) {
-            setPlayerMode('study');
             setSelectedOutlineNode({ level: 'module' });
             setActiveModuleIndex(targetIdx);
             window.scrollTo({ top: 0, behavior: 'smooth' });

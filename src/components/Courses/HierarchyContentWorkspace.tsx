@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
-  ChevronLeft,
-  ChevronRight,
   Code2,
   Edit3,
   Eye,
@@ -30,9 +28,7 @@ interface HierarchyContentWorkspaceProps {
   canEdit?: boolean;
   startInEditMode?: boolean;
   onConsumeStartInEditMode?: () => void;
-  onSelectChapter: (chapterId: string, openEditor?: boolean) => void;
   onSelectSection: (chapterId: string, sectionId: string, openEditor?: boolean) => void;
-  onOpenModule: (flatIndex: number) => void;
   onSaveContent: (payload: {
     level: 'chapter' | 'section';
     chapterId: string;
@@ -43,9 +39,6 @@ interface HierarchyContentWorkspaceProps {
   }) => void;
   onBackToActiveModule: () => void;
   activeModuleTitle?: string;
-  previousChapter?: { id: string; chapterNumber: string; title: string } | null;
-  nextChapter?: { id: string; chapterNumber: string; title: string } | null;
-  nextSection?: { chapterId: string; id: string; sectionNumber: string; title: string } | null;
 }
 
 function renderInlineFormatting(text: string): React.ReactNode[] {
@@ -211,15 +204,10 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
   canEdit = false,
   startInEditMode = false,
   onConsumeStartInEditMode,
-  onSelectChapter,
   onSelectSection,
-  onOpenModule,
   onSaveContent,
   onBackToActiveModule,
-  activeModuleTitle,
-  previousChapter = null,
-  nextChapter = null,
-  nextSection = null
+  activeModuleTitle
 }) => {
   const isSectionLevel = Boolean(section);
   const targetTitle = section ? section.title : chapter.title;
@@ -533,8 +521,8 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                 ) : (
                   <>
                     {isSectionLevel
-                      ? 'Use the Course Outline or click Next below to explore lessons in '
-                      : 'Use the Course Outline or click Next below to explore sections in '}
+                      ? 'Use the Course Outline or the Next arrow above to explore lessons in '
+                      : 'Use the Course Outline or the Next arrow above to explore sections in '}
                     <strong className="text-slate-800 dark:text-slate-200">
                       {targetNumber} {targetTitle}
                     </strong>
@@ -556,109 +544,6 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
           </div>
         )}
       </div>
-
-      {/* Bottom Chapter / Section Navigation Bar */}
-      {(() => {
-        const firstSection = !section ? chapter.mainContents[0] || null : null;
-        const firstLesson = section ? section.items[0] || null : null;
-
-        type NextTarget =
-          | { kind: 'section'; chapterId: string; sectionId: string; label: string; title: string }
-          | { kind: 'module'; flatIndex: number; label: string; title: string }
-          | { kind: 'chapter'; chapterId: string; label: string; title: string }
-          | null;
-
-        let nextTarget: NextTarget = null;
-        if (!section) {
-          if (firstSection) {
-            nextTarget = {
-              kind: 'section',
-              chapterId: chapter.id,
-              sectionId: firstSection.id,
-              label: `Next · ${firstSection.sectionNumber}`,
-              title: `${firstSection.sectionNumber} ${firstSection.title}`
-            };
-          } else if (nextChapter) {
-            nextTarget = {
-              kind: 'chapter',
-              chapterId: nextChapter.id,
-              label: `Next Chapter · ${nextChapter.chapterNumber}`,
-              title: `${nextChapter.chapterNumber} ${nextChapter.title}`
-            };
-          }
-        } else {
-          if (firstLesson) {
-            nextTarget = {
-              kind: 'module',
-              flatIndex: firstLesson.flatIndex,
-              label: `Next · ${firstLesson.itemNumber}`,
-              title: `${firstLesson.itemNumber} ${firstLesson.module.title}`
-            };
-          } else if (nextSection) {
-            nextTarget = {
-              kind: 'section',
-              chapterId: nextSection.chapterId,
-              sectionId: nextSection.id,
-              label: `Next · ${nextSection.sectionNumber}`,
-              title: `${nextSection.sectionNumber} ${nextSection.title}`
-            };
-          } else if (nextChapter) {
-            nextTarget = {
-              kind: 'chapter',
-              chapterId: nextChapter.id,
-              label: `Next Chapter · ${nextChapter.chapterNumber}`,
-              title: `${nextChapter.chapterNumber} ${nextChapter.title}`
-            };
-          }
-        }
-
-        const handleNextClick = () => {
-          if (!nextTarget) return;
-          if (nextTarget.kind === 'section') {
-            onSelectSection(nextTarget.chapterId, nextTarget.sectionId, false);
-          } else if (nextTarget.kind === 'module') {
-            onOpenModule(nextTarget.flatIndex);
-          } else {
-            onSelectChapter(nextTarget.chapterId, false);
-          }
-        };
-
-        return (
-          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-3">
-            {section ? (
-              <button
-                type="button"
-                onClick={() => onSelectChapter(chapter.id, false)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Back to {chapter.chapterNumber} Chapter</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={!previousChapter}
-                onClick={() => previousChapter && onSelectChapter(previousChapter.id, false)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors whitespace-nowrap shrink-0"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Previous Chapter</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              disabled={!nextTarget}
-              onClick={handleNextClick}
-              title={nextTarget ? nextTarget.title : 'No next item available'}
-              className="ml-auto inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white text-xs font-semibold shadow-md transition-all whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-            >
-              <span>{nextTarget ? nextTarget.label : 'Next'}</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        );
-      })()}
     </div>
   );
 };
