@@ -523,5 +523,57 @@ service cloud.firestore {
         && isVerified()
         && isOwner(existing().ownerUid);
     }
+
+    function isValidCourseBookmark(data) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'courseId', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerUid', 'courseId', 'courseCode', 'courseTitle',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && isValidId(data.courseId)
+        && (!('courseCode' in data) || (data.courseCode is string && data.courseCode.size() <= 64))
+        && (!('courseTitle' in data) || (data.courseTitle is string && data.courseTitle.size() <= 200))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /courseBookmarks/{bookmarkId} {
+      allow get: if isValidId(bookmarkId)
+        && isVerified()
+        && (resource == null || isOwner(existing().ownerUid));
+
+      allow list: if isVerified()
+        && resource.data.ownerUid == request.auth.uid;
+
+      allow create: if isValidId(bookmarkId)
+        && isVerified()
+        && isValidCourseBookmark(incoming())
+        && incoming().id == bookmarkId
+        && incoming().ownerUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(bookmarkId)
+        && isVerified()
+        && isValidCourseBookmark(incoming())
+        && isOwner(existing().ownerUid)
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().courseId == existing().courseId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'courseCode', 'courseTitle', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(bookmarkId)
+        && isVerified()
+        && isOwner(existing().ownerUid);
+    }
   }
 }

@@ -243,6 +243,7 @@ const AcademyApp: React.FC = () => {
             onViewCertificates={() => setCurrentTab('certificates')}
             onOpenPricing={() => setIsPaymentOpen(true)}
             onOpenCliLab={() => setCurrentTab('lab-sandbox')}
+            onBrowseCourses={() => setCurrentTab('courses')}
             onOpenCourseCheckout={(course, receipt) => {
               setCheckoutCourse(course);
               setCheckoutReceipt(receipt || null);

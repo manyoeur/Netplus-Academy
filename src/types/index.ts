@@ -351,3 +351,14 @@ export interface CoursePaymentRecord {
   accessExpiresAt: string;
 }
 
+export interface CourseBookmark {
+  id: string;
+  ownerUid: string;
+  courseId: string;
+  courseCode?: string;
+  courseTitle?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+

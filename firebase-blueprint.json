@@ -743,6 +743,58 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "CourseBookmark": {
+      "title": "CourseBookmark",
+      "description": "Student-saved favorite course bookmark synced to the student dashboard",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Deterministic bookmark identifier (bm_{ownerUid}_{courseId})",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase UID of the student who saved the bookmark",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Bookmarked course identifier",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "courseCode": {
+          "type": "string",
+          "description": "Optional course code snapshot",
+          "maxLength": 64
+        },
+        "courseTitle": {
+          "type": "string",
+          "description": "Optional course title snapshot",
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "courseId",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -777,6 +829,10 @@
     "/quickNotes/{noteId}": {
       "schema": { "$ref": "#/entities/QuickNote" },
       "description": "Owner-isolated student quick notes captured while watching course videos."
+    },
+    "/courseBookmarks/{bookmarkId}": {
+      "schema": { "$ref": "#/entities/CourseBookmark" },
+      "description": "Owner-isolated student course bookmarks for quick dashboard Favorites access."
     }
   }
 }

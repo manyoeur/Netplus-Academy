@@ -17,7 +17,8 @@ import {
   ClassAnnouncement,
   AttendanceStatus,
   CoursePaymentMethod,
-  CoursePaymentRecord
+  CoursePaymentRecord,
+  CourseBookmark
 } from '../types';
 import { createDefaultCourseEnrollment } from '../utils/enrollmentDates';
 import { mergeModuleHierarchyIntoChapters } from '../utils/courseHierarchy';
@@ -50,7 +51,10 @@ import {
   deletePersonalFlashcardFromFirestore,
   fetchQuickNotesFromFirestore,
   saveQuickNoteToFirestore,
-  deleteQuickNoteFromFirestore
+  deleteQuickNoteFromFirestore,
+  fetchCourseBookmarksFromFirestore,
+  saveCourseBookmarkToFirestore,
+  deleteCourseBookmarkFromFirestore
 } from '../firebase';
 import {
   CardMasteryStatus,
@@ -95,6 +99,13 @@ import {
   saveLocalQuickNotes,
   sanitizeNoteId
 } from '../utils/quickNotes';
+import {
+  buildBookmarkDocId,
+  loadLocalCourseBookmarks,
+  mergeCourseBookmarks,
+  normalizeCourseBookmark,
+  saveLocalCourseBookmarks
+} from '../utils/courseBookmarks';
 import { 
   INITIAL_USERS, 
   INITIAL_COURSES, 
@@ -190,6 +201,10 @@ interface AcademyContextType {
   quickNotes: QuickNote[];
   saveQuickNote: (input: QuickNoteInput) => QuickNote;
   deleteQuickNote: (noteId: string) => void;
+  courseBookmarks: CourseBookmark[];
+  bookmarkedCourseIds: string[];
+  isCourseBookmarked: (courseId: string) => boolean;
+  toggleCourseBookmark: (courseId: string) => boolean;
   addCourse: (course: Course) => void;
   updateCourse: (courseId: string, updated: Partial<Course>) => void;
   deleteCourse: (courseId: string) => void;
@@ -437,6 +452,16 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   useEffect(() => {
     setQuickNotes(loadLocalQuickNotes(currentUser.id));
+  }, [currentUser.id]);
+
+  const [courseBookmarks, setCourseBookmarks] = useState<CourseBookmark[]>(() =>
+    loadLocalCourseBookmarks(currentUser.id)
+  );
+  const courseBookmarksRef = useRef<CourseBookmark[]>(courseBookmarks);
+  courseBookmarksRef.current = courseBookmarks;
+
+  useEffect(() => {
+    setCourseBookmarks(loadLocalCourseBookmarks(currentUser.id));
   }, [currentUser.id]);
 
   const [invitations, setInvitations] = useState<Invitation[]>(() => {
@@ -757,6 +782,28 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
               const remoteMs = remoteMatch ? Date.parse(remoteMatch.updatedAt) || 0 : -1;
               if (!remoteMatch || localMs > remoteMs) {
                 saveQuickNoteToFirestore(note).catch(() => {});
+              }
+            }
+          }
+        })
+        .catch(() => {});
+
+      fetchCourseBookmarksFromFirestore()
+        .then(remoteBookmarks => {
+          const localBookmarks = loadLocalCourseBookmarks(resolvedId);
+          const mergedBookmarks = mergeCourseBookmarks(localBookmarks, remoteBookmarks, resolvedId);
+          saveLocalCourseBookmarks(resolvedId, mergedBookmarks);
+          if (resolvedId === currentUser.id || resolvedId === fbUser.uid) {
+            setCourseBookmarks(mergedBookmarks);
+          }
+          if (remoteBookmarks !== null) {
+            const remoteByCourse = new Map(remoteBookmarks.map(b => [b.courseId, b]));
+            for (const bm of localBookmarks) {
+              const remoteMatch = remoteByCourse.get(bm.courseId);
+              const localMs = Date.parse(bm.updatedAt) || 0;
+              const remoteMs = remoteMatch ? Date.parse(remoteMatch.updatedAt) || 0 : -1;
+              if (!remoteMatch || localMs > remoteMs) {
+                saveCourseBookmarkToFirestore(bm).catch(() => {});
               }
             }
           }
@@ -1852,6 +1899,52 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     deleteQuickNoteFromFirestore(noteId).catch(() => {});
   };
 
+  const bookmarkedCourseIds = courseBookmarks.map(b => b.courseId);
+
+  const isCourseBookmarked = (courseId: string): boolean => {
+    return courseBookmarks.some(b => b.courseId === courseId);
+  };
+
+  const toggleCourseBookmark = (courseId: string): boolean => {
+    const activeUserId = currentUser.id;
+    const alreadyBookmarked = courseBookmarksRef.current.some(b => b.courseId === courseId);
+
+    if (alreadyBookmarked) {
+      setCourseBookmarks(prev => {
+        const next = prev.filter(b => b.courseId !== courseId);
+        saveLocalCourseBookmarks(activeUserId, next);
+        return next;
+      });
+      deleteCourseBookmarkFromFirestore(courseId).catch(() => {});
+      return false;
+    }
+
+    const nowIso = new Date().toISOString();
+    const matchedCourse = courses.find(c => c.id === courseId);
+    const bookmark = normalizeCourseBookmark(
+      {
+        id: buildBookmarkDocId(activeUserId, courseId),
+        ownerUid: activeUserId,
+        courseId,
+        courseCode: matchedCourse?.code,
+        courseTitle: matchedCourse?.title,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      },
+      activeUserId
+    );
+
+    setCourseBookmarks(prev => {
+      const filtered = prev.filter(b => b.courseId !== courseId);
+      const next = [bookmark, ...filtered];
+      saveLocalCourseBookmarks(activeUserId, next);
+      return next;
+    });
+
+    saveCourseBookmarkToFirestore(bookmark).catch(() => {});
+    return true;
+  };
+
   const completeModule = (courseId: string, moduleId: string) => {
     recordLearningActivity('Module completion');
     const targetCourse = courses.find(c => c.id === courseId);
@@ -1956,6 +2049,13 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const deleteCourse = (courseId: string) => {
     setCourses(prev => prev.filter(c => c.id !== courseId));
+    setCourseBookmarks(prev => {
+      if (!prev.some(b => b.courseId === courseId)) return prev;
+      const next = prev.filter(b => b.courseId !== courseId);
+      saveLocalCourseBookmarks(currentUser.id, next);
+      return next;
+    });
+    deleteCourseBookmarkFromFirestore(courseId).catch(() => {});
   };
 
   const addModuleToCourse = (courseId: string, newModule: CourseModule, insertAtIndex?: number) => {
@@ -2953,6 +3053,10 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         quickNotes,
         saveQuickNote,
         deleteQuickNote,
+        courseBookmarks,
+        bookmarkedCourseIds,
+        isCourseBookmarked,
+        toggleCourseBookmark,
         addCourse,
         updateCourse,
         deleteCourse,

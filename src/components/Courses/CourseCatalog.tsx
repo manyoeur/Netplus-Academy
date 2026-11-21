@@ -16,7 +16,8 @@ import {
   TrendingUp,
   Signal,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Bookmark
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course } from '../../types';
@@ -64,9 +65,17 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
   onOpenPaymentModal,
   onOpenCourseCheckout
 }) => {
-  const { courses, currentUser, enrollInCourse } = useAcademy();
+  const {
+    courses,
+    currentUser,
+    enrollInCourse,
+    bookmarkedCourseIds,
+    isCourseBookmarked,
+    toggleCourseBookmark
+  } = useAcademy();
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedLevel, setSelectedLevel] = useState<string>('All');
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState<boolean>(false);
   const [sortBy, setSortBy] = useState<SortOption>('recommended');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<CatalogViewMode>(() => {
@@ -155,6 +164,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
     const filtered = courses.filter(c => {
       const matchesCat = matchesSelectedCategory(c, selectedCategory);
       const matchesLevel = selectedLevel === 'All' || c.level === selectedLevel;
+      const matchesFavorite = !showFavoritesOnly || bookmarkedCourseIds.includes(c.id);
       const matchesSearch =
         !q ||
         c.title.toLowerCase().includes(q) ||
@@ -169,7 +179,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
             (m.chapterTitle || '').toLowerCase().includes(q) ||
             (m.mainContentTitle || '').toLowerCase().includes(q)
         );
-      return matchesCat && matchesLevel && matchesSearch;
+      return matchesCat && matchesLevel && matchesFavorite && matchesSearch;
     });
 
     if (sortBy === 'recommended') return filtered;
@@ -216,7 +226,15 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
         return a.idx - b.idx;
       })
       .map(entry => entry.course);
-  }, [courses, selectedCategory, selectedLevel, searchQuery, sortBy]);
+  }, [
+    courses,
+    selectedCategory,
+    selectedLevel,
+    showFavoritesOnly,
+    bookmarkedCourseIds,
+    searchQuery,
+    sortBy
+  ]);
 
   const sortSummaryLabel = useMemo(() => {
     switch (sortBy) {
@@ -240,12 +258,14 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
   const hasActiveFilters =
     selectedCategory !== 'All' ||
     selectedLevel !== 'All' ||
+    showFavoritesOnly ||
     searchQuery.trim() !== '' ||
     sortBy !== 'recommended';
 
   const resetFilters = () => {
     setSelectedCategory('All');
     setSelectedLevel('All');
+    setShowFavoritesOnly(false);
     setSearchQuery('');
     setSortBy('recommended');
   };
@@ -491,6 +511,32 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                 {lvl === 'All' ? 'All Levels' : lvl}
               </button>
             ))}
+
+            <button
+              type="button"
+              onClick={() => setShowFavoritesOnly(prev => !prev)}
+              aria-pressed={showFavoritesOnly}
+              title="Show only courses saved in My Favorites"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
+                showFavoritesOnly
+                  ? 'bg-amber-500 text-white font-semibold shadow-2xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              <Bookmark
+                className={`w-3.5 h-3.5 ${
+                  showFavoritesOnly
+                    ? 'fill-current'
+                    : bookmarkedCourseIds.length > 0
+                    ? 'text-amber-500 fill-amber-500'
+                    : ''
+                }`}
+              />
+              <span>My Favorites</span>
+              <span className="font-mono text-[11px] tabular-nums opacity-85">
+                ({bookmarkedCourseIds.length})
+              </span>
+            </button>
           </div>
         </div>
 
@@ -540,6 +586,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
           {filteredCourses.map(course => {
             const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
+            const isBookmarked = isCourseBookmarked(course.id);
             const enrollment = resolveCourseEnrollment(currentUser, course);
             const expiryInfo = enrollment ? getEnrollmentExpirationInfo(enrollment) : null;
             const totalModules = course.modules.length;
@@ -561,6 +608,27 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                   className="aspect-video group/thumb"
                   imgClassName="group-hover:scale-105 group-hover/thumb:scale-[1.07] transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-transform motion-reduce:transform-none motion-reduce:transition-none"
                 >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleCourseBookmark(course.id);
+                    }}
+                    aria-pressed={isBookmarked}
+                    aria-label={
+                      isBookmarked
+                        ? `Remove ${course.title} from My Favorites`
+                        : `Save ${course.title} to My Favorites`
+                    }
+                    title={isBookmarked ? 'Saved in My Favorites' : 'Save to My Favorites'}
+                    className={`absolute top-2.5 right-2.5 z-20 p-2 rounded-xl backdrop-blur-md border transition-all shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+                      isBookmarked
+                        ? 'bg-amber-500/95 border-amber-300/70 text-white hover:bg-amber-600'
+                        : 'bg-slate-950/55 border-white/15 text-white/90 hover:bg-slate-950/80 hover:text-amber-300'
+                    }`}
+                  >
+                    <Bookmark className={`w-4 h-4 ${isBookmarked ? 'fill-current' : ''}`} />
+                  </button>
                   <div
                     aria-hidden="true"
                     className="absolute inset-0 bg-gradient-to-tr from-blue-500/10 via-transparent to-cyan-400/15 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
@@ -745,6 +813,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
         <div className="space-y-4">
           {filteredCourses.map(course => {
             const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
+            const isBookmarked = isCourseBookmarked(course.id);
             const enrollment = resolveCourseEnrollment(currentUser, course);
             const expiryInfo = enrollment ? getEnrollmentExpirationInfo(enrollment) : null;
             const totalModules = course.modules.length;
@@ -766,6 +835,27 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                   className="w-full md:w-64 lg:w-72 shrink-0 aspect-video md:aspect-auto md:min-h-[176px] group/thumb"
                   imgClassName="group-hover:scale-105 group-hover/thumb:scale-[1.07] transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-transform motion-reduce:transform-none motion-reduce:transition-none"
                 >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleCourseBookmark(course.id);
+                    }}
+                    aria-pressed={isBookmarked}
+                    aria-label={
+                      isBookmarked
+                        ? `Remove ${course.title} from My Favorites`
+                        : `Save ${course.title} to My Favorites`
+                    }
+                    title={isBookmarked ? 'Saved in My Favorites' : 'Save to My Favorites'}
+                    className={`absolute top-2.5 right-2.5 z-20 p-2 rounded-xl backdrop-blur-md border transition-all shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+                      isBookmarked
+                        ? 'bg-amber-500/95 border-amber-300/70 text-white hover:bg-amber-600'
+                        : 'bg-slate-950/55 border-white/15 text-white/90 hover:bg-slate-950/80 hover:text-amber-300'
+                    }`}
+                  >
+                    <Bookmark className={`w-4 h-4 ${isBookmarked ? 'fill-current' : ''}`} />
+                  </button>
                   <div
                     aria-hidden="true"
                     className="absolute inset-0 bg-gradient-to-tr from-blue-500/10 via-transparent to-cyan-400/15 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"

@@ -19,7 +19,9 @@ import {
   FileText,
   Flame,
   NotebookPen,
-  Clock as ClockIcon
+  Clock as ClockIcon,
+  Bookmark,
+  Compass
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course, CoursePaymentRecord } from '../../types';
@@ -41,6 +43,7 @@ interface StudentDashboardProps {
   onViewCertificates: () => void;
   onOpenPricing: () => void;
   onOpenCliLab: () => void;
+  onBrowseCourses?: () => void;
   onOpenCourseCheckout?: (course: Course | null, receipt?: CoursePaymentRecord) => void;
 }
 
@@ -52,6 +55,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onViewCertificates,
   onOpenPricing,
   onOpenCliLab,
+  onBrowseCourses,
   onOpenCourseCheckout
 }) => {
   const {
@@ -65,6 +69,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     quickNotes,
     saveQuickNote,
     deleteQuickNote,
+    bookmarkedCourseIds,
+    isCourseBookmarked,
+    toggleCourseBookmark,
+    enrollInCourse,
   } = useAcademy();
   const [isQuickNotesOpen, setIsQuickNotesOpen] = useState(false);
   const [viewMode, setViewMode] = useState<DashboardViewMode>(() => {
@@ -102,6 +110,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       p.studentId === currentUser.id ||
       (p.studentEmail && p.studentEmail.toLowerCase() === currentUser.email.toLowerCase())
   );
+
+  const favoriteItems = bookmarkedCourseIds
+    .map(courseId => courses.find(c => c.id === courseId))
+    .filter((course): course is Course => Boolean(course))
+    .map(course => {
+      const isEnrolled = currentUser.enrolledCourseIds.includes(course.id);
+      const enrollment = resolveCourseEnrollment(currentUser, course);
+      const expiryInfo = enrollment ? getEnrollmentExpirationInfo(enrollment) : null;
+      return { course, isEnrolled, enrollment, expiryInfo };
+    });
 
   return (
     <div className="w-full space-y-8">
@@ -277,6 +295,231 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         onSelectCourse={onSelectCourse}
       />
 
+      {/* My Favorites Section */}
+      <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <Bookmark className="w-5 h-5 text-amber-500 fill-amber-500 shrink-0" />
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                  My Favorites
+                </h2>
+                <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                  {favoriteItems.length} {favoriteItems.length === 1 ? 'saved' : 'saved'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Bookmarked courses pinned to your dashboard for quick access.
+              </p>
+            </div>
+          </div>
+
+          {onBrowseCourses && (
+            <button
+              type="button"
+              onClick={onBrowseCourses}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-cyan-500 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-cyan-300 transition-colors whitespace-nowrap shrink-0"
+            >
+              <Compass className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+              <span>Browse Catalog</span>
+            </button>
+          )}
+        </div>
+
+        {favoriteItems.length === 0 ? (
+          <div className="p-6 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-dashed border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                No favorite courses saved yet
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Click the bookmark icon on any course in the Course Catalog or Course Player to save it here for quick access later.
+              </p>
+            </div>
+            {onBrowseCourses && (
+              <button
+                type="button"
+                onClick={onBrowseCourses}
+                className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 self-start sm:self-center"
+              >
+                <span>Explore Courses</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {favoriteItems.map(({ course, isEnrolled, expiryInfo }) => {
+              const totalModules = course.modules.length;
+              const completedCount = course.modules.filter(m =>
+                currentUser.completedModuleIds.includes(m.id)
+              ).length;
+              const progressPercent =
+                totalModules > 0 ? Math.round((completedCount / totalModules) * 100) : 0;
+
+              return (
+                <div
+                  key={`fav-${course.id}`}
+                  onClick={() => onSelectCourse(course.id)}
+                  className="rounded-2xl bg-slate-50/70 dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:shadow-md hover:border-amber-400 dark:hover:border-amber-500/50 transition-all flex flex-col group cursor-pointer"
+                >
+                  <CourseThumbnail
+                    course={course}
+                    className="aspect-video"
+                    imgClassName="group-hover:scale-[1.03] transition-transform duration-300"
+                  >
+                    <span className="absolute top-2.5 left-3 z-10 px-2 py-0.5 rounded bg-slate-950/70 backdrop-blur-sm border border-white/15 text-white text-[10px] font-bold uppercase tracking-wider">
+                      {course.level}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleCourseBookmark(course.id);
+                      }}
+                      aria-pressed={true}
+                      aria-label={`Remove ${course.title} from My Favorites`}
+                      title="Remove from My Favorites"
+                      className="absolute top-2.5 right-2.5 z-20 p-2 rounded-xl bg-amber-500/95 hover:bg-amber-600 border border-amber-300/70 text-white shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+                    >
+                      <Bookmark className="w-3.5 h-3.5 fill-current" />
+                    </button>
+
+                    <div className="absolute bottom-2.5 left-3.5 right-3.5 flex items-center justify-between gap-2 z-10">
+                      <span className="font-mono text-[11px] font-bold tracking-wider text-cyan-300">
+                        {course.code}
+                      </span>
+                      {isEnrolled ? (
+                        progressPercent === 100 ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-300">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Completed</span>
+                          </span>
+                        ) : (
+                          <span className="font-mono text-[11px] font-semibold text-slate-200 tabular-nums">
+                            {progressPercent}% done
+                          </span>
+                        )
+                      ) : (
+                        <span className="font-mono text-[11px] font-bold text-amber-300 tabular-nums">
+                          {course.price > 0 ? `$${course.price}` : 'Free'}
+                        </span>
+                      )}
+                    </div>
+                  </CourseThumbnail>
+
+                  <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate tabular-nums">
+                        {course.category} · {course.durationHours}h · {totalModules} modules
+                      </p>
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1 group-hover:text-blue-600 dark:group-hover:text-cyan-400 transition-colors">
+                        {course.title}
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">
+                        {course.subtitle}
+                      </p>
+                    </div>
+
+                    {isEnrolled && (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                          <span>
+                            {completedCount}/{totalModules} modules
+                          </span>
+                          <span className="font-bold text-blue-600 dark:text-cyan-400">
+                            {progressPercent}%
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              progressPercent === 100
+                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                                : 'bg-gradient-to-r from-blue-600 to-cyan-400'
+                            }`}
+                            style={{ width: `${progressPercent}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between gap-2">
+                      {isEnrolled && expiryInfo?.status === 'expired' ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (course.price > 0 && onOpenCourseCheckout) {
+                              onOpenCourseCheckout(course);
+                            } else {
+                              onOpenPricing();
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>{course.price > 0 ? `Renew · $${course.price}` : 'Renew Access'}</span>
+                        </button>
+                      ) : isEnrolled ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectCourse(course.id);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                        >
+                          <BookOpen className="w-3.5 h-3.5" />
+                          <span>{progressPercent === 100 ? 'Review' : 'Continue Lesson'}</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const needsStudentPayment =
+                              currentUser.role === 'student' && course.price > 0;
+                            if (needsStudentPayment && onOpenCourseCheckout) {
+                              onOpenCourseCheckout(course);
+                              return;
+                            }
+                            enrollInCourse(course.id);
+                            onSelectCourse(course.id);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                        >
+                          <span>
+                            {currentUser.role === 'student' && course.price > 0
+                              ? `Enroll · $${course.price}`
+                              : 'Enroll Now'}
+                          </span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleCourseBookmark(course.id);
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-red-300 dark:hover:border-red-500/40 text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 text-xs font-medium transition-colors whitespace-nowrap shrink-0"
+                        title="Remove from My Favorites"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* Enrolled Courses Progress Section */}
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -361,6 +604,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <span className="absolute top-2.5 left-3 z-10 px-2 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-wider shadow-sm">
                       {course.level}
                     </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleCourseBookmark(course.id);
+                      }}
+                      aria-pressed={isCourseBookmarked(course.id)}
+                      aria-label={
+                        isCourseBookmarked(course.id)
+                          ? `Remove ${course.title} from My Favorites`
+                          : `Save ${course.title} to My Favorites`
+                      }
+                      title={
+                        isCourseBookmarked(course.id)
+                          ? 'Saved in My Favorites'
+                          : 'Save to My Favorites'
+                      }
+                      className={`absolute top-2.5 right-2.5 z-20 p-1.5 rounded-xl backdrop-blur-md border transition-all shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+                        isCourseBookmarked(course.id)
+                          ? 'bg-amber-500/95 border-amber-300/70 text-white hover:bg-amber-600'
+                          : 'bg-slate-950/55 border-white/15 text-white/90 hover:bg-slate-950/80 hover:text-amber-300'
+                      }`}
+                    >
+                      <Bookmark
+                        className={`w-3.5 h-3.5 ${
+                          isCourseBookmarked(course.id) ? 'fill-current' : ''
+                        }`}
+                      />
+                    </button>
                     <div className="absolute bottom-2.5 left-3.5 right-3.5 flex items-center justify-between gap-2 z-10">
                       <span className="font-mono text-[11px] font-bold tracking-wider text-cyan-300">
                         {course.code}
@@ -526,6 +798,36 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <span className="absolute top-2.5 left-2.5 z-10 px-2.5 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-wider shadow-sm">
                       {course.level}
                     </span>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleCourseBookmark(course.id);
+                      }}
+                      aria-pressed={isCourseBookmarked(course.id)}
+                      aria-label={
+                        isCourseBookmarked(course.id)
+                          ? `Remove ${course.title} from My Favorites`
+                          : `Save ${course.title} to My Favorites`
+                      }
+                      title={
+                        isCourseBookmarked(course.id)
+                          ? 'Saved in My Favorites'
+                          : 'Save to My Favorites'
+                      }
+                      className={`absolute top-2.5 right-2.5 z-20 p-1.5 rounded-xl backdrop-blur-md border transition-all shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+                        isCourseBookmarked(course.id)
+                          ? 'bg-amber-500/95 border-amber-300/70 text-white hover:bg-amber-600'
+                          : 'bg-slate-950/55 border-white/15 text-white/90 hover:bg-slate-950/80 hover:text-amber-300'
+                      }`}
+                    >
+                      <Bookmark
+                        className={`w-3.5 h-3.5 ${
+                          isCourseBookmarked(course.id) ? 'fill-current' : ''
+                        }`}
+                      />
+                    </button>
 
                     <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
                       <div className="w-11 h-11 rounded-full bg-slate-950/45 border-2 border-white/90 flex items-center justify-center text-white shadow-lg group-hover:scale-105 transition-transform">

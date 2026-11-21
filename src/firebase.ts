@@ -52,6 +52,12 @@ import {
   sanitizeNoteTags,
   sanitizeVideoTimestamp
 } from './utils/quickNotes';
+import {
+  CourseBookmark,
+  buildBookmarkDocId,
+  normalizeCourseBookmark,
+  sanitizeBookmarkIdPart
+} from './utils/courseBookmarks';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -1036,6 +1042,112 @@ export async function deleteQuickNoteFromFirestore(noteId: string): Promise<bool
     return false;
   }
 }
+
+export async function fetchCourseBookmarksFromFirestore(): Promise<CourseBookmark[] | null> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return null;
+  const uid = auth.currentUser.uid;
+  const path = 'courseBookmarks';
+  try {
+    const q = query(collection(db, path), where('ownerUid', '==', uid));
+    const snap = await getDocs(q);
+    return snap.docs
+      .filter(d => d.data()?.ownerUid === uid)
+      .map(d => {
+        const data = d.data() as Record<string, any>;
+        const createdAtIso =
+          data.createdAt && typeof data.createdAt.toDate === 'function'
+            ? data.createdAt.toDate().toISOString()
+            : typeof data.createdAt === 'string'
+            ? data.createdAt
+            : new Date().toISOString();
+        const updatedAtIso =
+          data.updatedAt && typeof data.updatedAt.toDate === 'function'
+            ? data.updatedAt.toDate().toISOString()
+            : typeof data.updatedAt === 'string'
+            ? data.updatedAt
+            : createdAtIso;
+
+        return normalizeCourseBookmark(
+          {
+            id: String(data.id || d.id),
+            ownerUid: uid,
+            courseId: String(data.courseId || ''),
+            courseCode: typeof data.courseCode === 'string' ? data.courseCode : undefined,
+            courseTitle: typeof data.courseTitle === 'string' ? data.courseTitle : undefined,
+            createdAt: createdAtIso,
+            updatedAt: updatedAtIso
+          },
+          uid
+        );
+      });
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+    return null;
+  }
+}
+
+export async function saveCourseBookmarkToFirestore(
+  bookmark: CourseBookmark
+): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const uid = auth.currentUser.uid;
+  const safeCourseId = sanitizeBookmarkIdPart(bookmark.courseId, 'course', 128);
+  const safeId = buildBookmarkDocId(uid, safeCourseId);
+  const bookmarkPath = `courseBookmarks/${safeId}`;
+  const ref = doc(db, 'courseBookmarks', safeId);
+
+  const safeCourseCode = bookmark.courseCode?.trim().slice(0, 64);
+  const safeCourseTitle = bookmark.courseTitle?.trim().slice(0, 200);
+
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, {
+        courseCode: safeCourseCode || deleteField(),
+        courseTitle: safeCourseTitle || deleteField(),
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      await setDoc(ref, {
+        id: safeId,
+        ownerUid: uid,
+        courseId: safeCourseId,
+        ...(safeCourseCode ? { courseCode: safeCourseCode } : {}),
+        ...(safeCourseTitle ? { courseTitle: safeCourseTitle } : {}),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.WRITE, bookmarkPath);
+    }
+    return false;
+  }
+}
+
+export async function deleteCourseBookmarkFromFirestore(
+  courseId: string
+): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const uid = auth.currentUser.uid;
+  const safeCourseId = sanitizeBookmarkIdPart(courseId, 'course', 128);
+  const safeId = buildBookmarkDocId(uid, safeCourseId);
+  const bookmarkPath = `courseBookmarks/${safeId}`;
+  try {
+    await deleteDoc(doc(db, 'courseBookmarks', safeId));
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.DELETE, bookmarkPath);
+    }
+    return false;
+  }
+}
+
 
 
 

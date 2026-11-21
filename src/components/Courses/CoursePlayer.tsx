@@ -20,7 +20,8 @@ import {
   Check,
   PanelLeftClose,
   PanelLeftOpen,
-  NotebookPen
+  NotebookPen,
+  Bookmark
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import { Course, CourseModule } from '../../types';
@@ -170,10 +171,13 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     quickNotes,
     saveQuickNote,
     deleteQuickNote,
+    isCourseBookmarked,
+    toggleCourseBookmark,
     updateCourse,
     updateModuleInCourse
   } = useAcademy();
   const course = courses.find(c => c.id === courseId) || courses[0];
+  const isBookmarked = isCourseBookmarked(course.id);
   const canEditCourseContent =
     currentUser.role === 'admin' || currentUser.role === 'instructor';
 
@@ -916,6 +920,34 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
         {/* Progress & Actions */}
         <div className="flex flex-wrap items-center justify-between lg:justify-end gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => toggleCourseBookmark(course.id)}
+            aria-pressed={isBookmarked}
+            aria-label={
+              isBookmarked
+                ? `Remove ${course.title} from My Favorites`
+                : `Save ${course.title} to My Favorites`
+            }
+            title={
+              isBookmarked
+                ? 'Saved in My Favorites (click to remove)'
+                : 'Save course to My Favorites on your dashboard'
+            }
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
+              isBookmarked
+                ? 'border-amber-400 dark:border-amber-500/60 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50'
+                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-amber-400 dark:hover:border-amber-500 text-slate-700 dark:text-slate-200'
+            }`}
+          >
+            <Bookmark
+              className={`w-3.5 h-3.5 ${
+                isBookmarked ? 'text-amber-500 fill-amber-500' : 'text-slate-500 dark:text-slate-400'
+              }`}
+            />
+            <span>{isBookmarked ? 'Saved' : 'Save'}</span>
+          </button>
+
           {!isViewingLockedContent && (
             <>
               <button
