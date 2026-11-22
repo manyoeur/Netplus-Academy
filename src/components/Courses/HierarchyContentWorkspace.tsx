@@ -11,6 +11,7 @@ import {
   List,
   Plus,
   Save,
+  Table2,
   Type,
   X
 } from 'lucide-react';
@@ -30,6 +31,14 @@ import {
   processImageFileToDataUrl,
   updateMarkdownImageAtIndex
 } from './MarkdownImageModal';
+import {
+  isMarkdownTableStart,
+  MarkdownTableModal,
+  parseTableAlignments,
+  splitMarkdownTableRow,
+  updateMarkdownTableAtIndex
+} from './MarkdownTableModal';
+import { EditableMarkdownTable } from './EditableMarkdownTable';
 import { ResizableMarkdownImage } from './ResizableMarkdownImage';
 
 interface HierarchyContentWorkspaceProps {
@@ -53,6 +62,22 @@ interface HierarchyContentWorkspaceProps {
 }
 
 const STANDALONE_IMAGE_RE = /^!\[([^\]]*)\]\(([^)\s]+)\)$/;
+
+function applyMarkdownTableInsertion(
+  prev: string,
+  tableMarkdown: string,
+  selection: { start: number; end: number } | null
+): string {
+  const start = selection?.start ?? prev.length;
+  const end = selection?.end ?? prev.length;
+  const before = prev.slice(0, start);
+  const after = prev.slice(end);
+  const leading =
+    before.length === 0 ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+  const trailing =
+    after.length === 0 ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+  return `${before}${leading}${tableMarkdown}${trailing}${after}`;
+}
 
 function applyMarkdownImageInsertion(
   prev: string,
@@ -175,6 +200,18 @@ export interface MarkdownProseProps {
   onResizeImage?: (imageIndex: number, width: number, height: number) => void;
   onResetImageSize?: (imageIndex: number) => void;
   onChangeImageAlign?: (imageIndex: number, align: MarkdownImageAlign) => void;
+  editableTables?: boolean;
+  onUpdateTableCell?: (
+    tableIndex: number,
+    section: 'header' | 'body',
+    rowIndex: number,
+    colIndex: number,
+    value: string
+  ) => void;
+  onAddTableRow?: (tableIndex: number) => void;
+  onRemoveTableRow?: (tableIndex: number, rowIndex: number) => void;
+  onAddTableColumn?: (tableIndex: number) => void;
+  onRemoveTableColumn?: (tableIndex: number, colIndex: number) => void;
 }
 
 export const MarkdownProse: React.FC<MarkdownProseProps> = ({
@@ -182,12 +219,19 @@ export const MarkdownProse: React.FC<MarkdownProseProps> = ({
   editableImages = false,
   onResizeImage,
   onResetImageSize,
-  onChangeImageAlign
+  onChangeImageAlign,
+  editableTables = false,
+  onUpdateTableCell,
+  onAddTableRow,
+  onRemoveTableRow,
+  onAddTableColumn,
+  onRemoveTableColumn
 }) => {
   const lines = content.replace(/\r\n/g, '\n').split('\n');
   const blocks: React.ReactNode[] = [];
   let i = 0;
   let imageCounter = 0;
+  let tableCounter = 0;
   const imageControls: MarkdownImageEditCallbacks = {
     allocateIndex: () => imageCounter++,
     editable: editableImages,
@@ -300,6 +344,44 @@ export const MarkdownProse: React.FC<MarkdownProseProps> = ({
       continue;
     }
 
+    // Markdown table (| Col 1 | Col 2 |)
+    if (isMarkdownTableStart(lines, i)) {
+      const tableIndex = tableCounter++;
+      const headers = splitMarkdownTableRow(lines[i]);
+      const alignments = parseTableAlignments(lines[i + 1]) || headers.map(() => 'left' as const);
+      i += 2;
+      const bodyRows: string[][] = [];
+      while (
+        i < lines.length &&
+        lines[i].trim() &&
+        lines[i].includes('|') &&
+        !lines[i].trim().startsWith('```')
+      ) {
+        const rawCells = splitMarkdownTableRow(lines[i]);
+        const normalizedRow = headers.map((_, colIdx) => rawCells[colIdx] ?? '');
+        bodyRows.push(normalizedRow);
+        i += 1;
+      }
+
+      blocks.push(
+        <EditableMarkdownTable
+          key={`table-${i}-${tableIndex}`}
+          headers={headers}
+          alignments={alignments}
+          rows={bodyRows}
+          tableIndex={tableIndex}
+          editable={editableTables}
+          renderCellText={(segment) => renderInlineFormatting(segment, imageControls)}
+          onUpdateCell={onUpdateTableCell}
+          onAddRow={onAddTableRow}
+          onRemoveRow={onRemoveTableRow}
+          onAddColumn={onAddTableColumn}
+          onRemoveColumn={onRemoveTableColumn}
+        />
+      );
+      continue;
+    }
+
     // Standalone Markdown image
     const standaloneImageMatch = line.trim().match(STANDALONE_IMAGE_RE);
     if (standaloneImageMatch) {
@@ -328,6 +410,7 @@ export const MarkdownProse: React.FC<MarkdownProseProps> = ({
       lines[i].trim() &&
       !lines[i].startsWith('#') &&
       !lines[i].trim().startsWith('```') &&
+      !isMarkdownTableStart(lines, i) &&
       !STANDALONE_IMAGE_RE.test(lines[i].trim()) &&
       !/^\s*[-*]\s+/.test(lines[i]) &&
       !/^\s*\d+\.\s+/.test(lines[i])
@@ -375,6 +458,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
   const [draftSummary, setDraftSummary] = useState<string>(targetSummary);
   const [draftContent, setDraftContent] = useState<string>(targetContent);
   const [isImageModalOpen, setIsImageModalOpen] = useState<boolean>(false);
+  const [isTableModalOpen, setIsTableModalOpen] = useState<boolean>(false);
   const [imageInsertError, setImageInsertError] = useState<string | null>(null);
   const [isTextareaDragOver, setIsTextareaDragOver] = useState<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -389,6 +473,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
     setDraftContent(targetContent);
     setEditorTab('write');
     setIsImageModalOpen(false);
+    setIsTableModalOpen(false);
     setImageInsertError(null);
     setIsEditing(canEdit && startInEditMode);
   }, [targetKey, targetTitle, targetSummary, targetContent, canEdit, startInEditMode]);
@@ -410,6 +495,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
       setDraftContent(targetContent);
       setEditorTab('write');
       setIsImageModalOpen(false);
+      setIsTableModalOpen(false);
       setImageInsertError(null);
       setIsEditing(true);
     }
@@ -516,6 +602,104 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
     }
     setImageInsertError(null);
     setIsImageModalOpen(true);
+  };
+
+  const handleOpenTableModal = () => {
+    const el = textareaRef.current;
+    if (el) {
+      savedSelectionRef.current = {
+        start: el.selectionStart ?? draftContent.length,
+        end: el.selectionEnd ?? draftContent.length
+      };
+    } else {
+      savedSelectionRef.current = {
+        start: draftContent.length,
+        end: draftContent.length
+      };
+    }
+    setIsTableModalOpen(true);
+  };
+
+  const insertTableMarkdown = (tableMarkdown: string) => {
+    const el = textareaRef.current;
+    const sel = savedSelectionRef.current ?? (el
+      ? {
+          start: el.selectionStart ?? draftContent.length,
+          end: el.selectionEnd ?? draftContent.length
+        }
+      : null);
+    savedSelectionRef.current = null;
+    setDraftContent(prev => applyMarkdownTableInsertion(prev, tableMarkdown, sel));
+    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
+  };
+
+  const handleUpdateTableCell = (
+    tableIndex: number,
+    section: 'header' | 'body',
+    rowIndex: number,
+    colIndex: number,
+    value: string
+  ) => {
+    setDraftContent(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (section === 'header') {
+          const nextHeaders = [...table.headers];
+          nextHeaders[colIndex] = value;
+          return { ...table, headers: nextHeaders };
+        }
+        const nextRows = table.rows.map((r, rIdx) =>
+          rIdx === rowIndex ? r.map((c, cIdx) => (cIdx === colIndex ? value : c)) : r
+        );
+        return { ...table, rows: nextRows };
+      })
+    );
+  };
+
+  const handleAddTableRow = (tableIndex: number) => {
+    setDraftContent(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => ({
+        ...table,
+        rows: [...table.rows, Array.from({ length: table.headers.length }, () => '')]
+      }))
+    );
+  };
+
+  const handleRemoveTableRow = (tableIndex: number, rowIndex: number) => {
+    setDraftContent(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (table.rows.length <= 1) return table;
+        return {
+          ...table,
+          rows: table.rows.filter((_, idx) => idx !== rowIndex)
+        };
+      })
+    );
+  };
+
+  const handleAddTableColumn = (tableIndex: number) => {
+    setDraftContent(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (table.headers.length >= 10) return table;
+        return {
+          headers: [...table.headers, `Column ${table.headers.length + 1}`],
+          alignments: [...table.alignments, 'left'],
+          rows: table.rows.map(r => [...r, ''])
+        };
+      })
+    );
+  };
+
+  const handleRemoveTableColumn = (tableIndex: number, colIndex: number) => {
+    setDraftContent(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (table.headers.length <= 1) return table;
+        return {
+          headers: table.headers.filter((_, idx) => idx !== colIndex),
+          alignments: table.alignments.filter((_, idx) => idx !== colIndex),
+          rows: table.rows.map(r => r.filter((_, idx) => idx !== colIndex))
+        };
+      })
+    );
   };
 
   const handleDirectImageFile = async (file: File) => {
@@ -729,6 +913,15 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                     </button>
                     <button
                       type="button"
+                      onClick={handleOpenTableModal}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+                      title="Insert an editable table grid with custom rows and columns"
+                    >
+                      <Table2 className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                      <span>Table</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={handleOpenImageModal}
                       className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
                       title="Upload, drag/paste, or insert an image URL"
@@ -788,10 +981,10 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                   {imageInsertError && (
                     <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
                   )}
-                  {countMarkdownImages(draftContent) > 0 && (
+                  {(countMarkdownImages(draftContent) > 0 || /^\|.*\|/m.test(draftContent)) && (
                     <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300">
                       <span>
-                        Images detected — switch to <strong>Split</strong> or <strong>Preview</strong> to drag image edges or corners to resize.
+                        Switch to <strong>Split</strong> or <strong>Preview</strong> to edit table grid cells inline or drag image handles to resize.
                       </span>
                       <button
                         type="button"
@@ -799,7 +992,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                         className="inline-flex items-center gap-1 font-semibold text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
                       >
                         <Columns2 className="w-3 h-3" />
-                        <span>Open Split Resize View</span>
+                        <span>Open Split Visual View</span>
                       </button>
                     </div>
                   )}
@@ -869,10 +1062,16 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                         onResizeImage={handleResizeImage}
                         onResetImageSize={handleResetImageSize}
                         onChangeImageAlign={handleChangeImageAlign}
+                        editableTables
+                        onUpdateTableCell={handleUpdateTableCell}
+                        onAddTableRow={handleAddTableRow}
+                        onRemoveTableRow={handleRemoveTableRow}
+                        onAddTableColumn={handleAddTableColumn}
+                        onRemoveTableColumn={handleRemoveTableColumn}
                       />
                     ) : (
                       <p className="text-xs text-slate-400 italic">
-                        Start typing on the left or click Insert Image to preview and resize visuals here.
+                        Start typing on the left or click Table / Insert Image to edit visuals and grids here.
                       </p>
                     )}
                   </div>
@@ -892,6 +1091,12 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                       onResizeImage={handleResizeImage}
                       onResetImageSize={handleResetImageSize}
                       onChangeImageAlign={handleChangeImageAlign}
+                      editableTables
+                      onUpdateTableCell={handleUpdateTableCell}
+                      onAddTableRow={handleAddTableRow}
+                      onRemoveTableRow={handleRemoveTableRow}
+                      onAddTableColumn={handleAddTableColumn}
+                      onRemoveTableColumn={handleRemoveTableColumn}
                     />
                   ) : (
                     <p className="text-xs text-slate-400 italic">
@@ -905,7 +1110,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 Supports Markdown headings (<code className="font-mono">##</code>), lists,{' '}
-                <code className="font-mono">**bold**</code>, code blocks, and images (upload, drag/paste, or URL).
+                <code className="font-mono">**bold**</code>, tables (<code className="font-mono">| col |</code> with <code className="font-mono">&lt;br&gt;</code> line breaks), code blocks, and images.
               </p>
 
               <div className="flex items-center gap-2 shrink-0">
@@ -930,6 +1135,11 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
               isOpen={isImageModalOpen}
               onClose={() => setIsImageModalOpen(false)}
               onInsert={({ src, alt, placement }) => insertImageMarkdown(src, alt, placement)}
+            />
+            <MarkdownTableModal
+              isOpen={isTableModalOpen}
+              onClose={() => setIsTableModalOpen(false)}
+              onInsert={insertTableMarkdown}
             />
           </form>
         ) : targetContent.trim() ? (
@@ -1026,6 +1236,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
   const [draftVideoDuration, setDraftVideoDuration] = useState<string>(module.videoDuration || '');
   const [draftContent, setDraftContent] = useState<string>(targetContent);
   const [isImageModalOpen, setIsImageModalOpen] = useState<boolean>(false);
+  const [isTableModalOpen, setIsTableModalOpen] = useState<boolean>(false);
   const [imageInsertError, setImageInsertError] = useState<string | null>(null);
   const [isTextareaDragOver, setIsTextareaDragOver] = useState<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1043,6 +1254,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     setDraftContent(targetContent);
     setEditorTab('write');
     setIsImageModalOpen(false);
+    setIsTableModalOpen(false);
     setImageInsertError(null);
     setIsEditing(canEdit && startInEditMode);
   }, [
@@ -1088,6 +1300,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
       setDraftContent(targetContent);
       setEditorTab('write');
       setIsImageModalOpen(false);
+      setIsTableModalOpen(false);
       setImageInsertError(null);
       setIsEditing(true);
     }
@@ -1208,6 +1421,104 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     }
     setImageInsertError(null);
     setIsImageModalOpen(true);
+  };
+
+  const handleOpenTableModal = () => {
+    const el = textareaRef.current;
+    if (el) {
+      savedSelectionRef.current = {
+        start: el.selectionStart ?? draftContent.length,
+        end: el.selectionEnd ?? draftContent.length
+      };
+    } else {
+      savedSelectionRef.current = {
+        start: draftContent.length,
+        end: draftContent.length
+      };
+    }
+    setIsTableModalOpen(true);
+  };
+
+  const insertTableMarkdown = (tableMarkdown: string) => {
+    const el = textareaRef.current;
+    const sel = savedSelectionRef.current ?? (el
+      ? {
+          start: el.selectionStart ?? draftContent.length,
+          end: el.selectionEnd ?? draftContent.length
+        }
+      : null);
+    savedSelectionRef.current = null;
+    setDraftContent(prev => applyMarkdownTableInsertion(prev, tableMarkdown, sel));
+    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
+  };
+
+  const handleUpdateTableCell = (
+    tableIndex: number,
+    section: 'header' | 'body',
+    rowIndex: number,
+    colIndex: number,
+    value: string
+  ) => {
+    setDraftContent(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (section === 'header') {
+          const nextHeaders = [...table.headers];
+          nextHeaders[colIndex] = value;
+          return { ...table, headers: nextHeaders };
+        }
+        const nextRows = table.rows.map((r, rIdx) =>
+          rIdx === rowIndex ? r.map((c, cIdx) => (cIdx === colIndex ? value : c)) : r
+        );
+        return { ...table, rows: nextRows };
+      })
+    );
+  };
+
+  const handleAddTableRow = (tableIndex: number) => {
+    setDraftContent(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => ({
+        ...table,
+        rows: [...table.rows, Array.from({ length: table.headers.length }, () => '')]
+      }))
+    );
+  };
+
+  const handleRemoveTableRow = (tableIndex: number, rowIndex: number) => {
+    setDraftContent(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (table.rows.length <= 1) return table;
+        return {
+          ...table,
+          rows: table.rows.filter((_, idx) => idx !== rowIndex)
+        };
+      })
+    );
+  };
+
+  const handleAddTableColumn = (tableIndex: number) => {
+    setDraftContent(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (table.headers.length >= 10) return table;
+        return {
+          headers: [...table.headers, `Column ${table.headers.length + 1}`],
+          alignments: [...table.alignments, 'left'],
+          rows: table.rows.map(r => [...r, ''])
+        };
+      })
+    );
+  };
+
+  const handleRemoveTableColumn = (tableIndex: number, colIndex: number) => {
+    setDraftContent(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (table.headers.length <= 1) return table;
+        return {
+          headers: table.headers.filter((_, idx) => idx !== colIndex),
+          alignments: table.alignments.filter((_, idx) => idx !== colIndex),
+          rows: table.rows.map(r => r.filter((_, idx) => idx !== colIndex))
+        };
+      })
+    );
   };
 
   const handleDirectImageFile = async (file: File) => {
@@ -1463,6 +1774,15 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                     </button>
                     <button
                       type="button"
+                      onClick={handleOpenTableModal}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+                      title="Insert an editable table grid with custom rows and columns"
+                    >
+                      <Table2 className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                      <span>Table</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={handleOpenImageModal}
                       className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
                       title="Upload, drag/paste, or insert an image URL"
@@ -1522,10 +1842,10 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                   {imageInsertError && (
                     <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
                   )}
-                  {countMarkdownImages(draftContent) > 0 && (
+                  {(countMarkdownImages(draftContent) > 0 || /^\|.*\|/m.test(draftContent)) && (
                     <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300">
                       <span>
-                        Images detected — switch to <strong>Split</strong> or <strong>Preview</strong> to drag image edges or corners to resize.
+                        Switch to <strong>Split</strong> or <strong>Preview</strong> to edit table grid cells inline or drag image handles to resize.
                       </span>
                       <button
                         type="button"
@@ -1533,7 +1853,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                         className="inline-flex items-center gap-1 font-semibold text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
                       >
                         <Columns2 className="w-3 h-3" />
-                        <span>Open Split Resize View</span>
+                        <span>Open Split Visual View</span>
                       </button>
                     </div>
                   )}
@@ -1603,10 +1923,16 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                         onResizeImage={handleResizeImage}
                         onResetImageSize={handleResetImageSize}
                         onChangeImageAlign={handleChangeImageAlign}
+                        editableTables
+                        onUpdateTableCell={handleUpdateTableCell}
+                        onAddTableRow={handleAddTableRow}
+                        onRemoveTableRow={handleRemoveTableRow}
+                        onAddTableColumn={handleAddTableColumn}
+                        onRemoveTableColumn={handleRemoveTableColumn}
                       />
                     ) : (
                       <p className="text-xs text-slate-400 italic">
-                        Start typing on the left or click Insert Image to preview and resize visuals here.
+                        Start typing on the left or click Table / Insert Image to edit visuals and grids here.
                       </p>
                     )}
                   </div>
@@ -1626,6 +1952,12 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                       onResizeImage={handleResizeImage}
                       onResetImageSize={handleResetImageSize}
                       onChangeImageAlign={handleChangeImageAlign}
+                      editableTables
+                      onUpdateTableCell={handleUpdateTableCell}
+                      onAddTableRow={handleAddTableRow}
+                      onRemoveTableRow={handleRemoveTableRow}
+                      onAddTableColumn={handleAddTableColumn}
+                      onRemoveTableColumn={handleRemoveTableColumn}
                     />
                   ) : (
                     <p className="text-xs text-slate-400 italic">
@@ -1639,7 +1971,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 Supports Markdown headings (<code className="font-mono">##</code>), lists,{' '}
-                <code className="font-mono">**bold**</code>, code blocks, and images (upload, drag/paste, or URL).
+                <code className="font-mono">**bold**</code>, tables (<code className="font-mono">| col |</code> with <code className="font-mono">&lt;br&gt;</code> line breaks), code blocks, and images.
               </p>
 
               <div className="flex items-center gap-2 shrink-0">
@@ -1664,6 +1996,11 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
               isOpen={isImageModalOpen}
               onClose={() => setIsImageModalOpen(false)}
               onInsert={({ src, alt, placement }) => insertImageMarkdown(src, alt, placement)}
+            />
+            <MarkdownTableModal
+              isOpen={isTableModalOpen}
+              onClose={() => setIsTableModalOpen(false)}
+              onInsert={insertTableMarkdown}
             />
           </form>
         ) : module.type === 'theory' ? (
