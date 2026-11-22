@@ -215,6 +215,13 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
   const targetContent = section ? section.contentMarkdown || '' : chapter.contentMarkdown || '';
   const targetNumber = section ? section.sectionNumber : chapter.chapterNumber;
 
+  const targetKey = `${chapter.id}::${section?.id || 'chapter'}`;
+  const prevTargetKeyRef = useRef<string>(targetKey);
+  const consumeStartInEditModeRef = useRef(onConsumeStartInEditMode);
+  useEffect(() => {
+    consumeStartInEditModeRef.current = onConsumeStartInEditMode;
+  }, [onConsumeStartInEditMode]);
+
   const [isEditing, setIsEditing] = useState<boolean>(canEdit && startInEditMode);
   const [editorTab, setEditorTab] = useState<'write' | 'preview'>('write');
   const [draftTitle, setDraftTitle] = useState<string>(targetTitle);
@@ -222,30 +229,52 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
   const [draftContent, setDraftContent] = useState<string>(targetContent);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Reset editor state only when navigating to a different chapter or section
   useEffect(() => {
+    if (prevTargetKeyRef.current === targetKey) return;
+    prevTargetKeyRef.current = targetKey;
     setDraftTitle(targetTitle);
     setDraftSummary(targetSummary);
     setDraftContent(targetContent);
     setEditorTab('write');
-    if (canEdit && startInEditMode) {
+    setIsEditing(canEdit && startInEditMode);
+  }, [targetKey, targetTitle, targetSummary, targetContent, canEdit, startInEditMode]);
+
+  // Keep drafts synced with external prop updates only when not actively editing
+  useEffect(() => {
+    if (isEditing) return;
+    setDraftTitle(targetTitle);
+    setDraftSummary(targetSummary);
+    setDraftContent(targetContent);
+  }, [isEditing, targetTitle, targetSummary, targetContent]);
+
+  // Consume one-shot startInEditMode trigger without exiting edit mode once consumed
+  useEffect(() => {
+    if (!startInEditMode) return;
+    if (canEdit) {
+      setDraftTitle(targetTitle);
+      setDraftSummary(targetSummary);
+      setDraftContent(targetContent);
+      setEditorTab('write');
       setIsEditing(true);
-      onConsumeStartInEditMode?.();
-    } else {
-      if (startInEditMode) {
-        onConsumeStartInEditMode?.();
-      }
+    }
+    consumeStartInEditModeRef.current?.();
+  }, [startInEditMode, canEdit, targetTitle, targetSummary, targetContent]);
+
+  useEffect(() => {
+    if (!canEdit) {
       setIsEditing(false);
     }
-  }, [
-    chapter.id,
-    section?.id,
-    targetTitle,
-    targetSummary,
-    targetContent,
-    canEdit,
-    startInEditMode,
-    onConsumeStartInEditMode
-  ]);
+  }, [canEdit]);
+
+  const enterEditMode = () => {
+    if (!canEdit) return;
+    setDraftTitle(targetTitle);
+    setDraftSummary(targetSummary);
+    setDraftContent(targetContent);
+    setEditorTab('write');
+    setIsEditing(true);
+  };
 
   const insertSnippet = (before: string, after = '', placeholder = '') => {
     const el = textareaRef.current;
@@ -312,7 +341,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
               !isEditing ? (
                 <button
                   type="button"
-                  onClick={() => setIsEditing(true)}
+                  onClick={enterEditMode}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   <Edit3 className="w-3.5 h-3.5" />
@@ -534,7 +563,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
             {canEdit && (
               <button
                 type="button"
-                onClick={() => setIsEditing(true)}
+                onClick={enterEditMode}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors whitespace-nowrap"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -575,6 +604,12 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
   const itemNumber = breadcrumb?.itemNumber || `M${moduleIndex + 1}`;
   const targetContent = module.contentMarkdown || '';
 
+  const prevModuleIdRef = useRef<string>(module.id);
+  const consumeStartInEditModeRef = useRef(onConsumeStartInEditMode);
+  useEffect(() => {
+    consumeStartInEditModeRef.current = onConsumeStartInEditMode;
+  }, [onConsumeStartInEditMode]);
+
   const [isEditing, setIsEditing] = useState<boolean>(canEdit && startInEditMode);
   const [editorTab, setEditorTab] = useState<'write' | 'preview'>('write');
   const [draftTitle, setDraftTitle] = useState<string>(module.title);
@@ -585,7 +620,10 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
   const [draftContent, setDraftContent] = useState<string>(targetContent);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Reset editor state only when switching to a different lesson module
   useEffect(() => {
+    if (prevModuleIdRef.current === module.id) return;
+    prevModuleIdRef.current = module.id;
     setDraftTitle(module.title);
     setDraftSummary(module.summary || '');
     setDraftDurationMin(module.durationMin || 20);
@@ -593,15 +631,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     setDraftVideoDuration(module.videoDuration || '');
     setDraftContent(targetContent);
     setEditorTab('write');
-    if (canEdit && startInEditMode) {
-      setIsEditing(true);
-      onConsumeStartInEditMode?.();
-    } else {
-      if (startInEditMode) {
-        onConsumeStartInEditMode?.();
-      }
-      setIsEditing(false);
-    }
+    setIsEditing(canEdit && startInEditMode);
   }, [
     module.id,
     module.title,
@@ -611,9 +641,70 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     module.videoDuration,
     targetContent,
     canEdit,
-    startInEditMode,
-    onConsumeStartInEditMode
+    startInEditMode
   ]);
+
+  // Keep drafts synced with external prop updates only when not actively editing
+  useEffect(() => {
+    if (isEditing) return;
+    setDraftTitle(module.title);
+    setDraftSummary(module.summary || '');
+    setDraftDurationMin(module.durationMin || 20);
+    setDraftVideoUrl(module.videoUrl || '');
+    setDraftVideoDuration(module.videoDuration || '');
+    setDraftContent(targetContent);
+  }, [
+    isEditing,
+    module.title,
+    module.summary,
+    module.durationMin,
+    module.videoUrl,
+    module.videoDuration,
+    targetContent
+  ]);
+
+  // Consume one-shot startInEditMode trigger without exiting edit mode once consumed
+  useEffect(() => {
+    if (!startInEditMode) return;
+    if (canEdit) {
+      setDraftTitle(module.title);
+      setDraftSummary(module.summary || '');
+      setDraftDurationMin(module.durationMin || 20);
+      setDraftVideoUrl(module.videoUrl || '');
+      setDraftVideoDuration(module.videoDuration || '');
+      setDraftContent(targetContent);
+      setEditorTab('write');
+      setIsEditing(true);
+    }
+    consumeStartInEditModeRef.current?.();
+  }, [
+    startInEditMode,
+    canEdit,
+    module.title,
+    module.summary,
+    module.durationMin,
+    module.videoUrl,
+    module.videoDuration,
+    targetContent
+  ]);
+
+  useEffect(() => {
+    if (!canEdit) {
+      setIsEditing(false);
+    }
+  }, [canEdit]);
+
+  const enterEditMode = () => {
+    if (!canEdit) return;
+    setDraftTitle(module.title);
+    setDraftSummary(module.summary || '');
+    setDraftDurationMin(module.durationMin || 20);
+    setDraftVideoUrl(module.videoUrl || '');
+    setDraftVideoDuration(module.videoDuration || '');
+    setDraftContent(targetContent);
+    setEditorTab('write');
+    setIsEditing(true);
+  };
 
   const insertSnippet = (before: string, after = '', placeholder = '') => {
     const el = textareaRef.current;
@@ -694,7 +785,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
               {!isEditing ? (
                 <button
                   type="button"
-                  onClick={() => setIsEditing(true)}
+                  onClick={enterEditMode}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   <Edit3 className="w-3.5 h-3.5" />
@@ -945,7 +1036,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
               {canEdit && (
                 <button
                   type="button"
-                  onClick={() => setIsEditing(true)}
+                  onClick={enterEditMode}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors whitespace-nowrap"
                 >
                   <Plus className="w-3.5 h-3.5" />

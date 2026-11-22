@@ -296,7 +296,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     return store[course.id]?.modules?.[targetModId]?.percent ?? 0;
   });
 
-  // Reload reading & checkpoint stores if user or courseId changes
+  // Reload reading & checkpoint stores only if user or courseId changes
   useEffect(() => {
     const freshStore = readReadingStore(currentUser.id);
     setReadingStore(freshStore);
@@ -312,7 +312,22 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     const lastModId = freshStore[course.id]?.lastModuleId;
     const foundIdx = lastModId ? course.modules.findIndex(m => m.id === lastModId) : -1;
     setActiveModuleIndex(foundIdx >= 0 ? foundIdx : 0);
-  }, [currentUser.id, course.id, course.modules.length]);
+  }, [currentUser.id, course.id]);
+
+  // Clamp activeModuleIndex only if modules are removed without resetting active editing view
+  useEffect(() => {
+    setActiveModuleIndex(prev =>
+      course.modules.length === 0 ? 0 : Math.min(prev, course.modules.length - 1)
+    );
+  }, [course.modules.length]);
+
+  const consumeHierarchyEditorOnSelect = useCallback(() => {
+    setOpenHierarchyEditorOnSelect(false);
+  }, []);
+
+  const consumeModuleEditorOnSelect = useCallback(() => {
+    setOpenModuleEditorOnSelect(false);
+  }, []);
 
   // Reset live video timestamp when active module changes
   useEffect(() => {
@@ -1835,7 +1850,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               section={activeHierarchySection}
               canEdit={canEditCourseContent}
               startInEditMode={openHierarchyEditorOnSelect}
-              onConsumeStartInEditMode={() => setOpenHierarchyEditorOnSelect(false)}
+              onConsumeStartInEditMode={consumeHierarchyEditorOnSelect}
               onSelectSection={(chapterId, sectionId, openEditor) =>
                 handleSelectHierarchySection(chapterId, sectionId, Boolean(openEditor))
               }
@@ -1972,7 +1987,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               moduleIndex={activeModuleIndex}
               canEdit={canEditCourseContent}
               startInEditMode={openModuleEditorOnSelect}
-              onConsumeStartInEditMode={() => setOpenModuleEditorOnSelect(false)}
+              onConsumeStartInEditMode={consumeModuleEditorOnSelect}
               onSelectChapter={(chapterId) => handleSelectHierarchyChapter(chapterId, false)}
               onSelectSection={(chapterId, sectionId) =>
                 handleSelectHierarchySection(chapterId, sectionId, false)
