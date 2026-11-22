@@ -816,6 +816,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     const cleanTitle = draftTitle.trim() || targetTitle;
     onSaveContent({
       level: isSectionLevel ? 'section' : 'chapter',
@@ -1699,6 +1700,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     const cleanTitle = draftTitle.trim() || module.title;
     const payload: Partial<CourseModule> = {
       title: cleanTitle,
