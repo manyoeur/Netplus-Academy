@@ -795,6 +795,111 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "LabDraft": {
+      "title": "LabDraft",
+      "description": "Owner-isolated active working diagram draft auto-saved periodically from NetworkTopologySimulator.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user who owns this active diagram draft",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "presetId": {
+          "type": "string",
+          "description": "Active lab preset identifier",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "activeSavedLabId": {
+          "type": "string",
+          "description": "Optional saved project ID if editing an existing saved topology",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Optional working diagram title",
+          "maxLength": 120
+        },
+        "canvasWidth": {
+          "type": "integer",
+          "description": "Logical diagram canvas width in pixels"
+        },
+        "canvasHeight": {
+          "type": "integer",
+          "description": "Logical diagram canvas height in pixels"
+        },
+        "showCustomLabels": {
+          "type": "boolean",
+          "description": "Whether custom device labels are visible on the diagram"
+        },
+        "gridSettings": {
+          "type": "object",
+          "description": "Diagram grid visibility, snap-to-grid, size, and visual style"
+        },
+        "devices": {
+          "type": "array",
+          "description": "Working list of simulated routers, switches, PCs, and servers"
+        },
+        "links": {
+          "type": "array",
+          "description": "Working list of Ethernet, Fiber, and Serial cable connections"
+        },
+        "shapes": {
+          "type": "array",
+          "description": "Working list of topology boundary rectangles and circles"
+        },
+        "labels": {
+          "type": "array",
+          "description": "Working list of floating diagram annotation labels"
+        },
+        "deviceCount": {
+          "type": "integer",
+          "description": "Number of devices in the working draft (0-80)"
+        },
+        "linkCount": {
+          "type": "integer",
+          "description": "Number of links in the working draft (0-160)"
+        },
+        "clientUpdatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Client ISO timestamp of the latest canvas modification for conflict comparison with IndexedDB"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "uid",
+        "presetId",
+        "canvasWidth",
+        "canvasHeight",
+        "showCustomLabels",
+        "gridSettings",
+        "devices",
+        "links",
+        "shapes",
+        "labels",
+        "deviceCount",
+        "linkCount",
+        "clientUpdatedAt",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -833,6 +938,10 @@
     "/courseBookmarks/{bookmarkId}": {
       "schema": { "$ref": "#/entities/CourseBookmark" },
       "description": "Owner-isolated student course bookmarks for quick dashboard Favorites access."
+    },
+    "/labDrafts/{userId}": {
+      "schema": { "$ref": "#/entities/LabDraft" },
+      "description": "Owner-isolated active working diagram draft periodically auto-saved by NetworkTopologySimulator."
     }
   }
 }

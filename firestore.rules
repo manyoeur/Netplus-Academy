@@ -575,5 +575,82 @@ service cloud.firestore {
         && isVerified()
         && isOwner(existing().ownerUid);
     }
+
+    function isValidLabDraft(data) {
+      return data.keys().hasAll([
+          'uid', 'presetId', 'canvasWidth', 'canvasHeight', 'showCustomLabels',
+          'gridSettings', 'devices', 'links', 'shapes', 'labels',
+          'deviceCount', 'linkCount', 'clientUpdatedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'presetId', 'activeSavedLabId', 'title', 'canvasWidth',
+          'canvasHeight', 'showCustomLabels', 'gridSettings', 'devices',
+          'links', 'shapes', 'labels', 'deviceCount', 'linkCount',
+          'clientUpdatedAt', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && isValidId(data.presetId)
+        && (!('activeSavedLabId' in data) || isValidId(data.activeSavedLabId))
+        && (!('title' in data) || (data.title is string && data.title.size() <= 120))
+        && data.canvasWidth is int && data.canvasWidth >= 600 && data.canvasWidth <= 6000
+        && data.canvasHeight is int && data.canvasHeight >= 400 && data.canvasHeight <= 4000
+        && data.showCustomLabels is bool
+        && data.gridSettings is map
+        && data.gridSettings.keys().hasAll(['showGrid', 'snapToGrid', 'gridSize', 'gridStyle'])
+        && data.gridSettings.keys().hasOnly(['showGrid', 'snapToGrid', 'gridSize', 'gridStyle'])
+        && data.gridSettings.showGrid is bool
+        && data.gridSettings.snapToGrid is bool
+        && data.gridSettings.gridSize is int && data.gridSettings.gridSize >= 5 && data.gridSettings.gridSize <= 100
+        && data.gridSettings.gridStyle is string && data.gridSettings.gridStyle in ['lines', 'dots']
+        && data.devices is list && data.devices.size() <= 80
+        && (data.devices.size() == 0 || data.devices[0] is map)
+        && data.links is list && data.links.size() <= 160
+        && (data.links.size() == 0 || data.links[0] is map)
+        && data.shapes is list && data.shapes.size() <= 60
+        && (data.shapes.size() == 0 || data.shapes[0] is map)
+        && data.labels is list && data.labels.size() <= 80
+        && (data.labels.size() == 0 || data.labels[0] is map)
+        && data.deviceCount is int && data.deviceCount >= 0 && data.deviceCount <= 80 && data.deviceCount == data.devices.size()
+        && data.linkCount is int && data.linkCount >= 0 && data.linkCount <= 160 && data.linkCount == data.links.size()
+        && data.clientUpdatedAt is string && data.clientUpdatedAt.size() >= 10 && data.clientUpdatedAt.size() <= 64
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /labDrafts/{userId} {
+      allow get: if isValidId(userId)
+        && isVerified()
+        && isOwner(userId);
+
+      allow list: if isVerified()
+        && resource.data.uid == request.auth.uid;
+
+      allow create: if isValidId(userId)
+        && isVerified()
+        && isOwner(userId)
+        && isValidLabDraft(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isVerified()
+        && isOwner(userId)
+        && isValidLabDraft(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'presetId', 'activeSavedLabId', 'title', 'canvasWidth',
+          'canvasHeight', 'showCustomLabels', 'gridSettings', 'devices',
+          'links', 'shapes', 'labels', 'deviceCount', 'linkCount',
+          'clientUpdatedAt', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(userId)
+        && isVerified()
+        && isOwner(userId);
+    }
   }
 }

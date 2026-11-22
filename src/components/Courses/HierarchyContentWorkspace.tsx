@@ -479,6 +479,579 @@ export const MarkdownProse: React.FC<MarkdownProseProps> = ({
   return <div className="flow-root space-y-2.5">{blocks}</div>;
 };
 
+export interface RichMarkdownEditorProps {
+  value: string;
+  onChange: (nextValue: string) => void;
+  placeholder?: string;
+  rows?: number;
+  defaultTab?: 'write' | 'split' | 'preview';
+  compact?: boolean;
+  resetKey?: string;
+}
+
+export const RichMarkdownEditor: React.FC<RichMarkdownEditorProps> = ({
+  value,
+  onChange,
+  placeholder = 'Write detailed content using Markdown or plain text...',
+  rows = 12,
+  defaultTab = 'write',
+  compact = false,
+  resetKey
+}) => {
+  const [editorTab, setEditorTab] = useState<'write' | 'split' | 'preview'>(defaultTab);
+  const [isImageModalOpen, setIsImageModalOpen] = useState<boolean>(false);
+  const [isTableModalOpen, setIsTableModalOpen] = useState<boolean>(false);
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState<boolean>(false);
+  const [imageInsertError, setImageInsertError] = useState<string | null>(null);
+  const [isTextareaDragOver, setIsTextareaDragOver] = useState<boolean>(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const savedSelectionRef = useRef<{ start: number; end: number } | null>(null);
+  const valueRef = useRef<string>(value);
+  valueRef.current = value;
+
+  useEffect(() => {
+    setEditorTab(defaultTab);
+    setIsImageModalOpen(false);
+    setIsTableModalOpen(false);
+    setIsVideoModalOpen(false);
+    setImageInsertError(null);
+  }, [resetKey, defaultTab]);
+
+  const applyTransform = (updater: (prev: string) => string) => {
+    const next = updater(valueRef.current);
+    valueRef.current = next;
+    onChange(next);
+  };
+
+  const insertSnippet = (before: string, after = '', placeholderText = '') => {
+    const el = textareaRef.current;
+    const currentVal = valueRef.current;
+    if (!el) {
+      applyTransform(
+        prev => `${prev}${prev && !prev.endsWith('\n') ? '\n' : ''}${before}${placeholderText}${after}`
+      );
+      return;
+    }
+    const start = el.selectionStart ?? currentVal.length;
+    const end = el.selectionEnd ?? currentVal.length;
+    const selected = currentVal.slice(start, end) || placeholderText;
+    const nextValue =
+      currentVal.slice(0, start) + before + selected + after + currentVal.slice(end);
+    valueRef.current = nextValue;
+    onChange(nextValue);
+    window.requestAnimationFrame(() => {
+      el.focus();
+      const cursorPos = start + before.length + selected.length;
+      el.setSelectionRange(cursorPos, cursorPos);
+    });
+  };
+
+  const insertImageMarkdown = (
+    src: string,
+    alt: string,
+    placement?: MarkdownImagePlacement
+  ) => {
+    const el = textareaRef.current;
+    const currentVal = valueRef.current;
+    const sel =
+      savedSelectionRef.current ??
+      (el
+        ? {
+            start: el.selectionStart ?? currentVal.length,
+            end: el.selectionEnd ?? currentVal.length
+          }
+        : null);
+    savedSelectionRef.current = null;
+
+    applyTransform(prev => applyMarkdownImageInsertion(prev, src, alt, placement, sel));
+    setImageInsertError(null);
+    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  };
+
+  const handleResizeImage = (imageIndex: number, width: number, height: number) => {
+    applyTransform(prev =>
+      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
+        ...current,
+        width,
+        height
+      }))
+    );
+  };
+
+  const handleResetImageSize = (imageIndex: number) => {
+    applyTransform(prev =>
+      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
+        alt: current.alt,
+        align: current.align
+      }))
+    );
+  };
+
+  const handleChangeImageAlign = (imageIndex: number, align: MarkdownImageAlign) => {
+    applyTransform(prev =>
+      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
+        ...current,
+        align
+      }))
+    );
+  };
+
+  const handleOpenImageModal = () => {
+    const el = textareaRef.current;
+    const len = valueRef.current.length;
+    savedSelectionRef.current = el
+      ? {
+          start: el.selectionStart ?? len,
+          end: el.selectionEnd ?? len
+        }
+      : { start: len, end: len };
+    setImageInsertError(null);
+    setIsImageModalOpen(true);
+  };
+
+  const handleOpenTableModal = () => {
+    const el = textareaRef.current;
+    const len = valueRef.current.length;
+    savedSelectionRef.current = el
+      ? {
+          start: el.selectionStart ?? len,
+          end: el.selectionEnd ?? len
+        }
+      : { start: len, end: len };
+    setIsTableModalOpen(true);
+  };
+
+  const insertTableMarkdown = (tableMarkdown: string) => {
+    const el = textareaRef.current;
+    const currentVal = valueRef.current;
+    const sel =
+      savedSelectionRef.current ??
+      (el
+        ? {
+            start: el.selectionStart ?? currentVal.length,
+            end: el.selectionEnd ?? currentVal.length
+          }
+        : null);
+    savedSelectionRef.current = null;
+    applyTransform(prev => applyMarkdownTableInsertion(prev, tableMarkdown, sel));
+    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
+  };
+
+  const handleOpenVideoModal = () => {
+    const el = textareaRef.current;
+    const len = valueRef.current.length;
+    savedSelectionRef.current = el
+      ? {
+          start: el.selectionStart ?? len,
+          end: el.selectionEnd ?? len
+        }
+      : { start: len, end: len };
+    setIsVideoModalOpen(true);
+  };
+
+  const insertVideoMarkdown = (videoMarkdown: string) => {
+    const el = textareaRef.current;
+    const currentVal = valueRef.current;
+    const sel =
+      savedSelectionRef.current ??
+      (el
+        ? {
+            start: el.selectionStart ?? currentVal.length,
+            end: el.selectionEnd ?? currentVal.length
+          }
+        : null);
+    savedSelectionRef.current = null;
+    applyTransform(prev => applyMarkdownVideoInsertion(prev, videoMarkdown, sel));
+    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  };
+
+  const handleUpdateVideo = (
+    videoIndex: number,
+    nextMeta: ParsedMarkdownVideoModifiers | null
+  ) => {
+    applyTransform(prev =>
+      updateMarkdownVideoAtIndex(prev, videoIndex, () => nextMeta)
+    );
+  };
+
+  const handleUpdateTableCell = (
+    tableIndex: number,
+    section: 'header' | 'body',
+    rowIndex: number,
+    colIndex: number,
+    cellValue: string
+  ) => {
+    applyTransform(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (section === 'header') {
+          const nextHeaders = [...table.headers];
+          nextHeaders[colIndex] = cellValue;
+          return { ...table, headers: nextHeaders };
+        }
+        const nextRows = table.rows.map((r, rIdx) =>
+          rIdx === rowIndex ? r.map((c, cIdx) => (cIdx === colIndex ? cellValue : c)) : r
+        );
+        return { ...table, rows: nextRows };
+      })
+    );
+  };
+
+  const handleAddTableRow = (tableIndex: number) => {
+    applyTransform(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => ({
+        ...table,
+        rows: [...table.rows, Array.from({ length: table.headers.length }, () => '')]
+      }))
+    );
+  };
+
+  const handleRemoveTableRow = (tableIndex: number, rowIndex: number) => {
+    applyTransform(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (table.rows.length <= 1) return table;
+        return {
+          ...table,
+          rows: table.rows.filter((_, idx) => idx !== rowIndex)
+        };
+      })
+    );
+  };
+
+  const handleAddTableColumn = (tableIndex: number) => {
+    applyTransform(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (table.headers.length >= 10) return table;
+        return {
+          headers: [...table.headers, `Column ${table.headers.length + 1}`],
+          alignments: [...table.alignments, 'left'],
+          rows: table.rows.map(r => [...r, ''])
+        };
+      })
+    );
+  };
+
+  const handleRemoveTableColumn = (tableIndex: number, colIndex: number) => {
+    applyTransform(prev =>
+      updateMarkdownTableAtIndex(prev, tableIndex, table => {
+        if (table.headers.length <= 1) return table;
+        return {
+          headers: table.headers.filter((_, idx) => idx !== colIndex),
+          alignments: table.alignments.filter((_, idx) => idx !== colIndex),
+          rows: table.rows.map(r => r.filter((_, idx) => idx !== colIndex))
+        };
+      })
+    );
+  };
+
+  const handleDirectImageFile = async (file: File) => {
+    setImageInsertError(null);
+    const el = textareaRef.current;
+    const len = valueRef.current.length;
+    if (el) {
+      savedSelectionRef.current = {
+        start: el.selectionStart ?? len,
+        end: el.selectionEnd ?? len
+      };
+    }
+    try {
+      const processed = await processImageFileToDataUrl(file);
+      insertImageMarkdown(processed.dataUrl, processed.suggestedAlt);
+    } catch (err) {
+      setImageInsertError(err instanceof Error ? err.message : 'Could not insert image.');
+    }
+  };
+
+  const renderTextarea = (extraRows: number, minHeightClass?: string) => (
+    <textarea
+      ref={textareaRef}
+      rows={extraRows}
+      value={value}
+      onChange={(e) => {
+        valueRef.current = e.target.value;
+        onChange(e.target.value);
+      }}
+      onPaste={(e) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (let idx = 0; idx < items.length; idx++) {
+          if (items[idx].type.startsWith('image/')) {
+            const file = items[idx].getAsFile();
+            if (file) {
+              e.preventDefault();
+              void handleDirectImageFile(file);
+              return;
+            }
+          }
+        }
+      }}
+      onDragOver={(e) => {
+        if (Array.from(e.dataTransfer.types || []).includes('Files')) {
+          e.preventDefault();
+          setIsTextareaDragOver(true);
+        }
+      }}
+      onDragLeave={() => setIsTextareaDragOver(false)}
+      onDrop={(e) => {
+        const file = e.dataTransfer.files?.[0];
+        if (file && file.type.startsWith('image/')) {
+          e.preventDefault();
+          setIsTextareaDragOver(false);
+          void handleDirectImageFile(file);
+        } else {
+          setIsTextareaDragOver(false);
+        }
+      }}
+      placeholder={placeholder}
+      className={`w-full ${minHeightClass || ''} p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border text-sm font-mono leading-relaxed text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
+        isTextareaDragOver
+          ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-50/40 dark:bg-blue-950/30'
+          : 'border-slate-200 dark:border-slate-700'
+      }`}
+    />
+  );
+
+  const imageCount = countMarkdownImages(value);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+          <button
+            type="button"
+            onClick={() => setEditorTab('write')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+              editorTab === 'write'
+                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+            }`}
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+            <span>Write</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditorTab('split')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+              editorTab === 'split'
+                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+            }`}
+          >
+            <Columns2 className="w-3.5 h-3.5" />
+            <span>Split</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditorTab('preview')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+              editorTab === 'preview'
+                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+            }`}
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>Preview</span>
+          </button>
+        </div>
+
+        {editorTab !== 'preview' && (
+          <div className="flex flex-wrap items-center gap-1">
+            <button
+              type="button"
+              onClick={() => insertSnippet('## ', '', 'Section Heading')}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+              title="Insert Heading"
+            >
+              <Heading2 className="w-3.5 h-3.5" />
+              <span>Heading</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => insertSnippet('**', '**', 'important term')}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+              title="Bold text"
+            >
+              <Type className="w-3.5 h-3.5" />
+              <span>Bold</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => insertSnippet('- ', '', 'Key point')}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+              title="Insert bullet list item"
+            >
+              <List className="w-3.5 h-3.5" />
+              <span>List</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => insertSnippet('\n```bash\n', '\n```\n', '# CLI or architecture snippet')}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+              title="Insert code block"
+            >
+              <Code2 className="w-3.5 h-3.5" />
+              <span>Code Block</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenTableModal}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+              title="Insert an editable table grid with custom rows and columns"
+            >
+              <Table2 className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+              <span>Table</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenImageModal}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+              title="Upload, drag/paste, or insert an image URL"
+            >
+              <ImagePlus className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+              <span>Insert Image</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenVideoModal}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+              title="Embed a YouTube, Vimeo, or MP4 educational video"
+            >
+              <Video className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+              <span>Video</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {editorTab === 'write' ? (
+        <div className="space-y-1.5">
+          {renderTextarea(rows)}
+          {imageInsertError && (
+            <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
+          )}
+          {(imageCount > 0 || /^\|.*\|/m.test(value) || /^@video\[/m.test(value)) && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300">
+              <span>
+                Switch to <strong>Split</strong> or <strong>Preview</strong> to preview embedded videos, edit table cells inline, or resize images.
+              </span>
+              <button
+                type="button"
+                onClick={() => setEditorTab('split')}
+                className="inline-flex items-center gap-1 font-semibold text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
+              >
+                <Columns2 className="w-3 h-3" />
+                <span>Open Split Visual View</span>
+              </button>
+            </div>
+          )}
+        </div>
+      ) : editorTab === 'split' ? (
+        <div className={`grid grid-cols-1 ${compact ? 'gap-3' : 'lg:grid-cols-2 gap-4'} items-stretch`}>
+          <div className="space-y-1.5 flex flex-col">
+            {renderTextarea(
+              compact ? Math.max(8, rows - 2) : Math.max(12, rows),
+              compact ? 'flex-1 min-h-[200px]' : 'flex-1 min-h-[300px]'
+            )}
+            {imageInsertError && (
+              <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
+            )}
+          </div>
+
+          <div
+            className={`${
+              compact ? 'min-h-[200px] p-3.5' : 'min-h-[300px] p-4 sm:p-5'
+            } rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-3 overflow-x-auto`}
+          >
+            {imageCount > 0 && (
+              <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                <span>Drag image corner or edge handles to adjust width &amp; height</span>
+                <span className="font-mono text-[10px] text-slate-400">Shift = lock ratio</span>
+              </div>
+            )}
+            {value.trim() ? (
+              <MarkdownProse
+                content={value}
+                editableImages
+                onResizeImage={handleResizeImage}
+                onResetImageSize={handleResetImageSize}
+                onChangeImageAlign={handleChangeImageAlign}
+                editableTables
+                onUpdateTableCell={handleUpdateTableCell}
+                onAddTableRow={handleAddTableRow}
+                onRemoveTableRow={handleRemoveTableRow}
+                onAddTableColumn={handleAddTableColumn}
+                onRemoveTableColumn={handleRemoveTableColumn}
+                editableVideos
+                onUpdateVideo={handleUpdateVideo}
+              />
+            ) : (
+              <p className="text-xs text-slate-400 italic">
+                Start typing on the {compact ? 'editor' : 'left'} or click Table / Insert Image / Video to add visuals, grids, and embeds.
+              </p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div
+          className={`${
+            compact ? 'min-h-[200px] p-4' : 'min-h-[260px] p-5'
+          } rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-3 overflow-x-auto`}
+        >
+          {imageCount > 0 && (
+            <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+              <span>Interactive preview — drag image corner or edge handles to adjust width &amp; height</span>
+              <span className="font-mono text-[10px] text-slate-400">Hold Shift on corner to lock aspect ratio</span>
+            </div>
+          )}
+          {value.trim() ? (
+            <MarkdownProse
+              content={value}
+              editableImages
+              onResizeImage={handleResizeImage}
+              onResetImageSize={handleResetImageSize}
+              onChangeImageAlign={handleChangeImageAlign}
+              editableTables
+              onUpdateTableCell={handleUpdateTableCell}
+              onAddTableRow={handleAddTableRow}
+              onRemoveTableRow={handleRemoveTableRow}
+              onAddTableColumn={handleAddTableColumn}
+              onRemoveTableColumn={handleRemoveTableColumn}
+              editableVideos
+              onUpdateVideo={handleUpdateVideo}
+            />
+          ) : (
+            <p className="text-xs text-slate-400 italic">
+              Nothing written yet. Switch back to Write to compose content.
+            </p>
+          )}
+        </div>
+      )}
+
+      <MarkdownImageModal
+        isOpen={isImageModalOpen}
+        onClose={() => setIsImageModalOpen(false)}
+        onInsert={({ src, alt, placement }) => insertImageMarkdown(src, alt, placement)}
+      />
+      <MarkdownTableModal
+        isOpen={isTableModalOpen}
+        onClose={() => setIsTableModalOpen(false)}
+        onInsert={insertTableMarkdown}
+      />
+      <MarkdownVideoModal
+        isOpen={isVideoModalOpen}
+        onClose={() => setIsVideoModalOpen(false)}
+        onInsert={insertVideoMarkdown}
+      />
+    </div>
+  );
+};
+
 export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps> = ({
   chapter,
   section,
@@ -504,17 +1077,9 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
   }, [onConsumeStartInEditMode]);
 
   const [isEditing, setIsEditing] = useState<boolean>(canEdit && startInEditMode);
-  const [editorTab, setEditorTab] = useState<'write' | 'split' | 'preview'>('write');
   const [draftTitle, setDraftTitle] = useState<string>(targetTitle);
   const [draftSummary, setDraftSummary] = useState<string>(targetSummary);
   const [draftContent, setDraftContent] = useState<string>(targetContent);
-  const [isImageModalOpen, setIsImageModalOpen] = useState<boolean>(false);
-  const [isTableModalOpen, setIsTableModalOpen] = useState<boolean>(false);
-  const [isVideoModalOpen, setIsVideoModalOpen] = useState<boolean>(false);
-  const [imageInsertError, setImageInsertError] = useState<string | null>(null);
-  const [isTextareaDragOver, setIsTextareaDragOver] = useState<boolean>(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const savedSelectionRef = useRef<{ start: number; end: number } | null>(null);
 
   // Reset editor state only when navigating to a different chapter or section
   useEffect(() => {
@@ -523,11 +1088,6 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
     setDraftTitle(targetTitle);
     setDraftSummary(targetSummary);
     setDraftContent(targetContent);
-    setEditorTab('write');
-    setIsImageModalOpen(false);
-    setIsTableModalOpen(false);
-    setIsVideoModalOpen(false);
-    setImageInsertError(null);
     setIsEditing(canEdit && startInEditMode);
   }, [targetKey, targetTitle, targetSummary, targetContent, canEdit, startInEditMode]);
 
@@ -546,11 +1106,6 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
       setDraftTitle(targetTitle);
       setDraftSummary(targetSummary);
       setDraftContent(targetContent);
-      setEditorTab('write');
-      setIsImageModalOpen(false);
-      setIsTableModalOpen(false);
-      setIsVideoModalOpen(false);
-      setImageInsertError(null);
       setIsEditing(true);
     }
     consumeStartInEditModeRef.current?.();
@@ -567,251 +1122,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
     setDraftTitle(targetTitle);
     setDraftSummary(targetSummary);
     setDraftContent(targetContent);
-    setEditorTab('write');
-    setImageInsertError(null);
     setIsEditing(true);
-  };
-
-  const insertSnippet = (before: string, after = '', placeholder = '') => {
-    const el = textareaRef.current;
-    if (!el) {
-      setDraftContent(prev => `${prev}${prev && !prev.endsWith('\n') ? '\n' : ''}${before}${placeholder}${after}`);
-      return;
-    }
-    const start = el.selectionStart ?? draftContent.length;
-    const end = el.selectionEnd ?? draftContent.length;
-    const selected = draftContent.slice(start, end) || placeholder;
-    const nextValue =
-      draftContent.slice(0, start) + before + selected + after + draftContent.slice(end);
-    setDraftContent(nextValue);
-    window.requestAnimationFrame(() => {
-      el.focus();
-      const cursorPos = start + before.length + selected.length;
-      el.setSelectionRange(cursorPos, cursorPos);
-    });
-  };
-
-  const insertImageMarkdown = (
-    src: string,
-    alt: string,
-    placement?: MarkdownImagePlacement
-  ) => {
-    const el = textareaRef.current;
-    const sel = savedSelectionRef.current ?? (el
-      ? {
-          start: el.selectionStart ?? draftContent.length,
-          end: el.selectionEnd ?? draftContent.length
-        }
-      : null);
-    savedSelectionRef.current = null;
-
-    setDraftContent(prev => applyMarkdownImageInsertion(prev, src, alt, placement, sel));
-    setImageInsertError(null);
-    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
-    window.requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-    });
-  };
-
-  const handleResizeImage = (imageIndex: number, width: number, height: number) => {
-    setDraftContent(prev =>
-      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
-        ...current,
-        width,
-        height
-      }))
-    );
-  };
-
-  const handleResetImageSize = (imageIndex: number) => {
-    setDraftContent(prev =>
-      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
-        alt: current.alt,
-        align: current.align
-      }))
-    );
-  };
-
-  const handleChangeImageAlign = (imageIndex: number, align: MarkdownImageAlign) => {
-    setDraftContent(prev =>
-      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
-        ...current,
-        align
-      }))
-    );
-  };
-
-  const handleOpenImageModal = () => {
-    const el = textareaRef.current;
-    if (el) {
-      savedSelectionRef.current = {
-        start: el.selectionStart ?? draftContent.length,
-        end: el.selectionEnd ?? draftContent.length
-      };
-    } else {
-      savedSelectionRef.current = {
-        start: draftContent.length,
-        end: draftContent.length
-      };
-    }
-    setImageInsertError(null);
-    setIsImageModalOpen(true);
-  };
-
-  const handleOpenTableModal = () => {
-    const el = textareaRef.current;
-    if (el) {
-      savedSelectionRef.current = {
-        start: el.selectionStart ?? draftContent.length,
-        end: el.selectionEnd ?? draftContent.length
-      };
-    } else {
-      savedSelectionRef.current = {
-        start: draftContent.length,
-        end: draftContent.length
-      };
-    }
-    setIsTableModalOpen(true);
-  };
-
-  const insertTableMarkdown = (tableMarkdown: string) => {
-    const el = textareaRef.current;
-    const sel = savedSelectionRef.current ?? (el
-      ? {
-          start: el.selectionStart ?? draftContent.length,
-          end: el.selectionEnd ?? draftContent.length
-        }
-      : null);
-    savedSelectionRef.current = null;
-    setDraftContent(prev => applyMarkdownTableInsertion(prev, tableMarkdown, sel));
-    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
-  };
-
-  const handleOpenVideoModal = () => {
-    const el = textareaRef.current;
-    if (el) {
-      savedSelectionRef.current = {
-        start: el.selectionStart ?? draftContent.length,
-        end: el.selectionEnd ?? draftContent.length
-      };
-    } else {
-      savedSelectionRef.current = {
-        start: draftContent.length,
-        end: draftContent.length
-      };
-    }
-    setIsVideoModalOpen(true);
-  };
-
-  const insertVideoMarkdown = (videoMarkdown: string) => {
-    const el = textareaRef.current;
-    const sel = savedSelectionRef.current ?? (el
-      ? {
-          start: el.selectionStart ?? draftContent.length,
-          end: el.selectionEnd ?? draftContent.length
-        }
-      : null);
-    savedSelectionRef.current = null;
-    setDraftContent(prev => applyMarkdownVideoInsertion(prev, videoMarkdown, sel));
-    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
-    window.requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-    });
-  };
-
-  const handleUpdateVideo = (
-    videoIndex: number,
-    nextMeta: ParsedMarkdownVideoModifiers | null
-  ) => {
-    setDraftContent(prev =>
-      updateMarkdownVideoAtIndex(prev, videoIndex, () => nextMeta)
-    );
-  };
-
-  const handleUpdateTableCell = (
-    tableIndex: number,
-    section: 'header' | 'body',
-    rowIndex: number,
-    colIndex: number,
-    value: string
-  ) => {
-    setDraftContent(prev =>
-      updateMarkdownTableAtIndex(prev, tableIndex, table => {
-        if (section === 'header') {
-          const nextHeaders = [...table.headers];
-          nextHeaders[colIndex] = value;
-          return { ...table, headers: nextHeaders };
-        }
-        const nextRows = table.rows.map((r, rIdx) =>
-          rIdx === rowIndex ? r.map((c, cIdx) => (cIdx === colIndex ? value : c)) : r
-        );
-        return { ...table, rows: nextRows };
-      })
-    );
-  };
-
-  const handleAddTableRow = (tableIndex: number) => {
-    setDraftContent(prev =>
-      updateMarkdownTableAtIndex(prev, tableIndex, table => ({
-        ...table,
-        rows: [...table.rows, Array.from({ length: table.headers.length }, () => '')]
-      }))
-    );
-  };
-
-  const handleRemoveTableRow = (tableIndex: number, rowIndex: number) => {
-    setDraftContent(prev =>
-      updateMarkdownTableAtIndex(prev, tableIndex, table => {
-        if (table.rows.length <= 1) return table;
-        return {
-          ...table,
-          rows: table.rows.filter((_, idx) => idx !== rowIndex)
-        };
-      })
-    );
-  };
-
-  const handleAddTableColumn = (tableIndex: number) => {
-    setDraftContent(prev =>
-      updateMarkdownTableAtIndex(prev, tableIndex, table => {
-        if (table.headers.length >= 10) return table;
-        return {
-          headers: [...table.headers, `Column ${table.headers.length + 1}`],
-          alignments: [...table.alignments, 'left'],
-          rows: table.rows.map(r => [...r, ''])
-        };
-      })
-    );
-  };
-
-  const handleRemoveTableColumn = (tableIndex: number, colIndex: number) => {
-    setDraftContent(prev =>
-      updateMarkdownTableAtIndex(prev, tableIndex, table => {
-        if (table.headers.length <= 1) return table;
-        return {
-          headers: table.headers.filter((_, idx) => idx !== colIndex),
-          alignments: table.alignments.filter((_, idx) => idx !== colIndex),
-          rows: table.rows.map(r => r.filter((_, idx) => idx !== colIndex))
-        };
-      })
-    );
-  };
-
-  const handleDirectImageFile = async (file: File) => {
-    setImageInsertError(null);
-    const el = textareaRef.current;
-    if (el) {
-      savedSelectionRef.current = {
-        start: el.selectionStart ?? draftContent.length,
-        end: el.selectionEnd ?? draftContent.length
-      };
-    }
-    try {
-      const processed = await processImageFileToDataUrl(file);
-      insertImageMarkdown(processed.dataUrl, processed.suggestedAlt);
-    } catch (err) {
-      setImageInsertError(err instanceof Error ? err.message : 'Could not insert image.');
-    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -929,293 +1240,12 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
               </div>
             </div>
 
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                  <button
-                    type="button"
-                    onClick={() => setEditorTab('write')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                      editorTab === 'write'
-                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                    <span>Write</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditorTab('split')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                      editorTab === 'split'
-                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    <Columns2 className="w-3.5 h-3.5" />
-                    <span>Split</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditorTab('preview')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                      editorTab === 'preview'
-                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>Preview</span>
-                  </button>
-                </div>
-
-                {editorTab !== 'preview' && (
-                  <div className="flex flex-wrap items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => insertSnippet('## ', '', 'Section Heading')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Insert Heading"
-                    >
-                      <Heading2 className="w-3.5 h-3.5" />
-                      <span>Heading</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => insertSnippet('**', '**', 'important term')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Bold text"
-                    >
-                      <Type className="w-3.5 h-3.5" />
-                      <span>Bold</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => insertSnippet('- ', '', 'Key point')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Insert bullet list item"
-                    >
-                      <List className="w-3.5 h-3.5" />
-                      <span>List</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => insertSnippet('\n```bash\n', '\n```\n', '# CLI or architecture snippet')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Insert code block"
-                    >
-                      <Code2 className="w-3.5 h-3.5" />
-                      <span>Code Block</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenTableModal}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Insert an editable table grid with custom rows and columns"
-                    >
-                      <Table2 className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-                      <span>Table</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenImageModal}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Upload, drag/paste, or insert an image URL"
-                    >
-                      <ImagePlus className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-                      <span>Insert Image</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenVideoModal}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Embed a YouTube, Vimeo, or MP4 educational video"
-                    >
-                      <Video className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-                      <span>Video</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {editorTab === 'write' ? (
-                <div className="space-y-1.5">
-                  <textarea
-                    ref={textareaRef}
-                    rows={12}
-                    value={draftContent}
-                    onChange={(e) => setDraftContent(e.target.value)}
-                    onPaste={(e) => {
-                      const items = e.clipboardData?.items;
-                      if (!items) return;
-                      for (let idx = 0; idx < items.length; idx++) {
-                        if (items[idx].type.startsWith('image/')) {
-                          const file = items[idx].getAsFile();
-                          if (file) {
-                            e.preventDefault();
-                            void handleDirectImageFile(file);
-                            return;
-                          }
-                        }
-                      }
-                    }}
-                    onDragOver={(e) => {
-                      if (Array.from(e.dataTransfer.types || []).includes('Files')) {
-                        e.preventDefault();
-                        setIsTextareaDragOver(true);
-                      }
-                    }}
-                    onDragLeave={() => setIsTextareaDragOver(false)}
-                    onDrop={(e) => {
-                      const file = e.dataTransfer.files?.[0];
-                      if (file && file.type.startsWith('image/')) {
-                        e.preventDefault();
-                        setIsTextareaDragOver(false);
-                        void handleDirectImageFile(file);
-                      } else {
-                        setIsTextareaDragOver(false);
-                      }
-                    }}
-                    placeholder={`Write detailed ${isSectionLevel ? 'section' : 'chapter'} content here using Markdown or plain text...\n\nExample:\n## Key Objectives\n- Understand architectural planes and controller roles\n![Topology Diagram](https://example.com/topology.png)`}
-                    className={`w-full p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border text-sm font-mono leading-relaxed text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
-                      isTextareaDragOver
-                        ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-50/40 dark:bg-blue-950/30'
-                        : 'border-slate-200 dark:border-slate-700'
-                    }`}
-                  />
-                  {imageInsertError && (
-                    <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
-                  )}
-                  {(countMarkdownImages(draftContent) > 0 || /^\|.*\|/m.test(draftContent) || /^@video\[/m.test(draftContent)) && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300">
-                      <span>
-                        Switch to <strong>Split</strong> or <strong>Preview</strong> to preview embedded videos, edit table cells inline, or resize images.
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setEditorTab('split')}
-                        className="inline-flex items-center gap-1 font-semibold text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
-                      >
-                        <Columns2 className="w-3 h-3" />
-                        <span>Open Split Visual View</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : editorTab === 'split' ? (
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-stretch">
-                  <div className="space-y-1.5 flex flex-col">
-                    <textarea
-                      ref={textareaRef}
-                      rows={14}
-                      value={draftContent}
-                      onChange={(e) => setDraftContent(e.target.value)}
-                      onPaste={(e) => {
-                        const items = e.clipboardData?.items;
-                        if (!items) return;
-                        for (let idx = 0; idx < items.length; idx++) {
-                          if (items[idx].type.startsWith('image/')) {
-                            const file = items[idx].getAsFile();
-                            if (file) {
-                              e.preventDefault();
-                              void handleDirectImageFile(file);
-                              return;
-                            }
-                          }
-                        }
-                      }}
-                      onDragOver={(e) => {
-                        if (Array.from(e.dataTransfer.types || []).includes('Files')) {
-                          e.preventDefault();
-                          setIsTextareaDragOver(true);
-                        }
-                      }}
-                      onDragLeave={() => setIsTextareaDragOver(false)}
-                      onDrop={(e) => {
-                        const file = e.dataTransfer.files?.[0];
-                        if (file && file.type.startsWith('image/')) {
-                          e.preventDefault();
-                          setIsTextareaDragOver(false);
-                          void handleDirectImageFile(file);
-                        } else {
-                          setIsTextareaDragOver(false);
-                        }
-                      }}
-                      placeholder={`Write detailed ${isSectionLevel ? 'section' : 'chapter'} content here...`}
-                      className={`w-full flex-1 min-h-[320px] p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border text-sm font-mono leading-relaxed text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
-                        isTextareaDragOver
-                          ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-50/40 dark:bg-blue-950/30'
-                          : 'border-slate-200 dark:border-slate-700'
-                      }`}
-                    />
-                    {imageInsertError && (
-                      <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
-                    )}
-                  </div>
-
-                  <div className="min-h-[320px] p-4 sm:p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-3">
-                    {countMarkdownImages(draftContent) > 0 && (
-                      <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                        <span>Drag image corner or edge handles to adjust width &amp; height</span>
-                        <span className="font-mono text-[10px] text-slate-400">Shift = lock ratio</span>
-                      </div>
-                    )}
-                    {draftContent.trim() ? (
-                      <MarkdownProse
-                        content={draftContent}
-                        editableImages
-                        onResizeImage={handleResizeImage}
-                        onResetImageSize={handleResetImageSize}
-                        onChangeImageAlign={handleChangeImageAlign}
-                        editableTables
-                        onUpdateTableCell={handleUpdateTableCell}
-                        onAddTableRow={handleAddTableRow}
-                        onRemoveTableRow={handleRemoveTableRow}
-                        onAddTableColumn={handleAddTableColumn}
-                        onRemoveTableColumn={handleRemoveTableColumn}
-                        editableVideos
-                        onUpdateVideo={handleUpdateVideo}
-                      />
-                    ) : (
-                      <p className="text-xs text-slate-400 italic">
-                        Start typing on the left or click Table / Insert Image / Video to add visuals, grids, and embeds.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="min-h-[260px] p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-3">
-                  {countMarkdownImages(draftContent) > 0 && (
-                    <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                      <span>Interactive preview — drag image corner or edge handles to adjust width &amp; height</span>
-                      <span className="font-mono text-[10px] text-slate-400">Hold Shift on corner to lock aspect ratio</span>
-                    </div>
-                  )}
-                  {draftContent.trim() ? (
-                    <MarkdownProse
-                      content={draftContent}
-                      editableImages
-                      onResizeImage={handleResizeImage}
-                      onResetImageSize={handleResetImageSize}
-                      onChangeImageAlign={handleChangeImageAlign}
-                      editableTables
-                      onUpdateTableCell={handleUpdateTableCell}
-                      onAddTableRow={handleAddTableRow}
-                      onRemoveTableRow={handleRemoveTableRow}
-                      onAddTableColumn={handleAddTableColumn}
-                      onRemoveTableColumn={handleRemoveTableColumn}
-                      editableVideos
-                      onUpdateVideo={handleUpdateVideo}
-                    />
-                  ) : (
-                    <p className="text-xs text-slate-400 italic">
-                      Nothing written yet. Switch back to Write to compose content.
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
+            <RichMarkdownEditor
+              value={draftContent}
+              onChange={setDraftContent}
+              resetKey={targetKey}
+              placeholder={`Write detailed ${isSectionLevel ? 'section' : 'chapter'} content here using Markdown or plain text...\n\nExample:\n## Key Objectives\n- Understand architectural planes and controller roles\n![Topology Diagram](https://example.com/topology.png)`}
+            />
 
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
@@ -1241,22 +1271,6 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
               </div>
             </div>
           </form>
-
-          <MarkdownImageModal
-            isOpen={isImageModalOpen}
-            onClose={() => setIsImageModalOpen(false)}
-            onInsert={({ src, alt, placement }) => insertImageMarkdown(src, alt, placement)}
-          />
-          <MarkdownTableModal
-            isOpen={isTableModalOpen}
-            onClose={() => setIsTableModalOpen(false)}
-            onInsert={insertTableMarkdown}
-          />
-          <MarkdownVideoModal
-            isOpen={isVideoModalOpen}
-            onClose={() => setIsVideoModalOpen(false)}
-            onInsert={insertVideoMarkdown}
-          />
           </>
         ) : targetContent.trim() ? (
           <div className="pt-1">
@@ -1351,13 +1365,6 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
   const [draftVideoUrl, setDraftVideoUrl] = useState<string>(module.videoUrl || '');
   const [draftVideoDuration, setDraftVideoDuration] = useState<string>(module.videoDuration || '');
   const [draftContent, setDraftContent] = useState<string>(targetContent);
-  const [isImageModalOpen, setIsImageModalOpen] = useState<boolean>(false);
-  const [isTableModalOpen, setIsTableModalOpen] = useState<boolean>(false);
-  const [isVideoModalOpen, setIsVideoModalOpen] = useState<boolean>(false);
-  const [imageInsertError, setImageInsertError] = useState<string | null>(null);
-  const [isTextareaDragOver, setIsTextareaDragOver] = useState<boolean>(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const savedSelectionRef = useRef<{ start: number; end: number } | null>(null);
 
   // Reset editor state only when switching to a different lesson module
   useEffect(() => {
@@ -1369,11 +1376,6 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     setDraftVideoUrl(module.videoUrl || '');
     setDraftVideoDuration(module.videoDuration || '');
     setDraftContent(targetContent);
-    setEditorTab('write');
-    setIsImageModalOpen(false);
-    setIsTableModalOpen(false);
-    setIsVideoModalOpen(false);
-    setImageInsertError(null);
     setIsEditing(canEdit && startInEditMode);
   }, [
     module.id,
@@ -1416,11 +1418,6 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
       setDraftVideoUrl(module.videoUrl || '');
       setDraftVideoDuration(module.videoDuration || '');
       setDraftContent(targetContent);
-      setEditorTab('write');
-      setIsImageModalOpen(false);
-      setIsTableModalOpen(false);
-      setIsVideoModalOpen(false);
-      setImageInsertError(null);
       setIsEditing(true);
     }
     consumeStartInEditModeRef.current?.();
@@ -1449,253 +1446,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     setDraftVideoUrl(module.videoUrl || '');
     setDraftVideoDuration(module.videoDuration || '');
     setDraftContent(targetContent);
-    setEditorTab('write');
-    setImageInsertError(null);
     setIsEditing(true);
-  };
-
-  const insertSnippet = (before: string, after = '', placeholder = '') => {
-    const el = textareaRef.current;
-    if (!el) {
-      setDraftContent(
-        prev => `${prev}${prev && !prev.endsWith('\n') ? '\n' : ''}${before}${placeholder}${after}`
-      );
-      return;
-    }
-    const start = el.selectionStart ?? draftContent.length;
-    const end = el.selectionEnd ?? draftContent.length;
-    const selected = draftContent.slice(start, end) || placeholder;
-    const nextValue =
-      draftContent.slice(0, start) + before + selected + after + draftContent.slice(end);
-    setDraftContent(nextValue);
-    window.requestAnimationFrame(() => {
-      el.focus();
-      const cursorPos = start + before.length + selected.length;
-      el.setSelectionRange(cursorPos, cursorPos);
-    });
-  };
-
-  const insertImageMarkdown = (
-    src: string,
-    alt: string,
-    placement?: MarkdownImagePlacement
-  ) => {
-    const el = textareaRef.current;
-    const sel = savedSelectionRef.current ?? (el
-      ? {
-          start: el.selectionStart ?? draftContent.length,
-          end: el.selectionEnd ?? draftContent.length
-        }
-      : null);
-    savedSelectionRef.current = null;
-
-    setDraftContent(prev => applyMarkdownImageInsertion(prev, src, alt, placement, sel));
-    setImageInsertError(null);
-    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
-    window.requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-    });
-  };
-
-  const handleResizeImage = (imageIndex: number, width: number, height: number) => {
-    setDraftContent(prev =>
-      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
-        ...current,
-        width,
-        height
-      }))
-    );
-  };
-
-  const handleResetImageSize = (imageIndex: number) => {
-    setDraftContent(prev =>
-      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
-        alt: current.alt,
-        align: current.align
-      }))
-    );
-  };
-
-  const handleChangeImageAlign = (imageIndex: number, align: MarkdownImageAlign) => {
-    setDraftContent(prev =>
-      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
-        ...current,
-        align
-      }))
-    );
-  };
-
-  const handleOpenImageModal = () => {
-    const el = textareaRef.current;
-    if (el) {
-      savedSelectionRef.current = {
-        start: el.selectionStart ?? draftContent.length,
-        end: el.selectionEnd ?? draftContent.length
-      };
-    } else {
-      savedSelectionRef.current = {
-        start: draftContent.length,
-        end: draftContent.length
-      };
-    }
-    setImageInsertError(null);
-    setIsImageModalOpen(true);
-  };
-
-  const handleOpenTableModal = () => {
-    const el = textareaRef.current;
-    if (el) {
-      savedSelectionRef.current = {
-        start: el.selectionStart ?? draftContent.length,
-        end: el.selectionEnd ?? draftContent.length
-      };
-    } else {
-      savedSelectionRef.current = {
-        start: draftContent.length,
-        end: draftContent.length
-      };
-    }
-    setIsTableModalOpen(true);
-  };
-
-  const insertTableMarkdown = (tableMarkdown: string) => {
-    const el = textareaRef.current;
-    const sel = savedSelectionRef.current ?? (el
-      ? {
-          start: el.selectionStart ?? draftContent.length,
-          end: el.selectionEnd ?? draftContent.length
-        }
-      : null);
-    savedSelectionRef.current = null;
-    setDraftContent(prev => applyMarkdownTableInsertion(prev, tableMarkdown, sel));
-    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
-  };
-
-  const handleOpenVideoModal = () => {
-    const el = textareaRef.current;
-    if (el) {
-      savedSelectionRef.current = {
-        start: el.selectionStart ?? draftContent.length,
-        end: el.selectionEnd ?? draftContent.length
-      };
-    } else {
-      savedSelectionRef.current = {
-        start: draftContent.length,
-        end: draftContent.length
-      };
-    }
-    setIsVideoModalOpen(true);
-  };
-
-  const insertVideoMarkdown = (videoMarkdown: string) => {
-    const el = textareaRef.current;
-    const sel = savedSelectionRef.current ?? (el
-      ? {
-          start: el.selectionStart ?? draftContent.length,
-          end: el.selectionEnd ?? draftContent.length
-        }
-      : null);
-    savedSelectionRef.current = null;
-    setDraftContent(prev => applyMarkdownVideoInsertion(prev, videoMarkdown, sel));
-    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
-    window.requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-    });
-  };
-
-  const handleUpdateVideo = (
-    videoIndex: number,
-    nextMeta: ParsedMarkdownVideoModifiers | null
-  ) => {
-    setDraftContent(prev =>
-      updateMarkdownVideoAtIndex(prev, videoIndex, () => nextMeta)
-    );
-  };
-
-  const handleUpdateTableCell = (
-    tableIndex: number,
-    section: 'header' | 'body',
-    rowIndex: number,
-    colIndex: number,
-    value: string
-  ) => {
-    setDraftContent(prev =>
-      updateMarkdownTableAtIndex(prev, tableIndex, table => {
-        if (section === 'header') {
-          const nextHeaders = [...table.headers];
-          nextHeaders[colIndex] = value;
-          return { ...table, headers: nextHeaders };
-        }
-        const nextRows = table.rows.map((r, rIdx) =>
-          rIdx === rowIndex ? r.map((c, cIdx) => (cIdx === colIndex ? value : c)) : r
-        );
-        return { ...table, rows: nextRows };
-      })
-    );
-  };
-
-  const handleAddTableRow = (tableIndex: number) => {
-    setDraftContent(prev =>
-      updateMarkdownTableAtIndex(prev, tableIndex, table => ({
-        ...table,
-        rows: [...table.rows, Array.from({ length: table.headers.length }, () => '')]
-      }))
-    );
-  };
-
-  const handleRemoveTableRow = (tableIndex: number, rowIndex: number) => {
-    setDraftContent(prev =>
-      updateMarkdownTableAtIndex(prev, tableIndex, table => {
-        if (table.rows.length <= 1) return table;
-        return {
-          ...table,
-          rows: table.rows.filter((_, idx) => idx !== rowIndex)
-        };
-      })
-    );
-  };
-
-  const handleAddTableColumn = (tableIndex: number) => {
-    setDraftContent(prev =>
-      updateMarkdownTableAtIndex(prev, tableIndex, table => {
-        if (table.headers.length >= 10) return table;
-        return {
-          headers: [...table.headers, `Column ${table.headers.length + 1}`],
-          alignments: [...table.alignments, 'left'],
-          rows: table.rows.map(r => [...r, ''])
-        };
-      })
-    );
-  };
-
-  const handleRemoveTableColumn = (tableIndex: number, colIndex: number) => {
-    setDraftContent(prev =>
-      updateMarkdownTableAtIndex(prev, tableIndex, table => {
-        if (table.headers.length <= 1) return table;
-        return {
-          headers: table.headers.filter((_, idx) => idx !== colIndex),
-          alignments: table.alignments.filter((_, idx) => idx !== colIndex),
-          rows: table.rows.map(r => r.filter((_, idx) => idx !== colIndex))
-        };
-      })
-    );
-  };
-
-  const handleDirectImageFile = async (file: File) => {
-    setImageInsertError(null);
-    const el = textareaRef.current;
-    if (el) {
-      savedSelectionRef.current = {
-        start: el.selectionStart ?? draftContent.length,
-        end: el.selectionEnd ?? draftContent.length
-      };
-    }
-    try {
-      const processed = await processImageFileToDataUrl(file);
-      insertImageMarkdown(processed.dataUrl, processed.suggestedAlt);
-    } catch (err) {
-      setImageInsertError(err instanceof Error ? err.message : 'Could not insert image.');
-    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1855,293 +1606,12 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
               )}
             </div>
 
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                  <button
-                    type="button"
-                    onClick={() => setEditorTab('write')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                      editorTab === 'write'
-                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                    <span>Write</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditorTab('split')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                      editorTab === 'split'
-                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    <Columns2 className="w-3.5 h-3.5" />
-                    <span>Split</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditorTab('preview')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                      editorTab === 'preview'
-                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>Preview</span>
-                  </button>
-                </div>
-
-                {editorTab !== 'preview' && (
-                  <div className="flex flex-wrap items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => insertSnippet('## ', '', 'Section Heading')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Insert Heading"
-                    >
-                      <Heading2 className="w-3.5 h-3.5" />
-                      <span>Heading</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => insertSnippet('**', '**', 'important term')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Bold text"
-                    >
-                      <Type className="w-3.5 h-3.5" />
-                      <span>Bold</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => insertSnippet('- ', '', 'Key point')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Insert bullet list item"
-                    >
-                      <List className="w-3.5 h-3.5" />
-                      <span>List</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => insertSnippet('\n```bash\n', '\n```\n', '# CLI or architecture snippet')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Insert code block"
-                    >
-                      <Code2 className="w-3.5 h-3.5" />
-                      <span>Code Block</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenTableModal}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Insert an editable table grid with custom rows and columns"
-                    >
-                      <Table2 className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-                      <span>Table</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenImageModal}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Upload, drag/paste, or insert an image URL"
-                    >
-                      <ImagePlus className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-                      <span>Insert Image</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenVideoModal}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
-                      title="Embed a YouTube, Vimeo, or MP4 educational video"
-                    >
-                      <Video className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
-                      <span>Video</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {editorTab === 'write' ? (
-                <div className="space-y-1.5">
-                  <textarea
-                    ref={textareaRef}
-                    rows={12}
-                    value={draftContent}
-                    onChange={(e) => setDraftContent(e.target.value)}
-                    onPaste={(e) => {
-                      const items = e.clipboardData?.items;
-                      if (!items) return;
-                      for (let idx = 0; idx < items.length; idx++) {
-                        if (items[idx].type.startsWith('image/')) {
-                          const file = items[idx].getAsFile();
-                          if (file) {
-                            e.preventDefault();
-                            void handleDirectImageFile(file);
-                            return;
-                          }
-                        }
-                      }
-                    }}
-                    onDragOver={(e) => {
-                      if (Array.from(e.dataTransfer.types || []).includes('Files')) {
-                        e.preventDefault();
-                        setIsTextareaDragOver(true);
-                      }
-                    }}
-                    onDragLeave={() => setIsTextareaDragOver(false)}
-                    onDrop={(e) => {
-                      const file = e.dataTransfer.files?.[0];
-                      if (file && file.type.startsWith('image/')) {
-                        e.preventDefault();
-                        setIsTextareaDragOver(false);
-                        void handleDirectImageFile(file);
-                      } else {
-                        setIsTextareaDragOver(false);
-                      }
-                    }}
-                    placeholder={`Write detailed lesson content or companion notes here using Markdown or plain text...\n\nExample:\n## Key Objectives\n- Understand architectural concepts and command syntax\n![Topology Diagram](https://example.com/topology.png)`}
-                    className={`w-full p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border text-sm font-mono leading-relaxed text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
-                      isTextareaDragOver
-                        ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-50/40 dark:bg-blue-950/30'
-                        : 'border-slate-200 dark:border-slate-700'
-                    }`}
-                  />
-                  {imageInsertError && (
-                    <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
-                  )}
-                  {(countMarkdownImages(draftContent) > 0 || /^\|.*\|/m.test(draftContent) || /^@video\[/m.test(draftContent)) && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300">
-                      <span>
-                        Switch to <strong>Split</strong> or <strong>Preview</strong> to preview embedded videos, edit table cells inline, or resize images.
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setEditorTab('split')}
-                        className="inline-flex items-center gap-1 font-semibold text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
-                      >
-                        <Columns2 className="w-3 h-3" />
-                        <span>Open Split Visual View</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : editorTab === 'split' ? (
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-stretch">
-                  <div className="space-y-1.5 flex flex-col">
-                    <textarea
-                      ref={textareaRef}
-                      rows={14}
-                      value={draftContent}
-                      onChange={(e) => setDraftContent(e.target.value)}
-                      onPaste={(e) => {
-                        const items = e.clipboardData?.items;
-                        if (!items) return;
-                        for (let idx = 0; idx < items.length; idx++) {
-                          if (items[idx].type.startsWith('image/')) {
-                            const file = items[idx].getAsFile();
-                            if (file) {
-                              e.preventDefault();
-                              void handleDirectImageFile(file);
-                              return;
-                            }
-                          }
-                        }
-                      }}
-                      onDragOver={(e) => {
-                        if (Array.from(e.dataTransfer.types || []).includes('Files')) {
-                          e.preventDefault();
-                          setIsTextareaDragOver(true);
-                        }
-                      }}
-                      onDragLeave={() => setIsTextareaDragOver(false)}
-                      onDrop={(e) => {
-                        const file = e.dataTransfer.files?.[0];
-                        if (file && file.type.startsWith('image/')) {
-                          e.preventDefault();
-                          setIsTextareaDragOver(false);
-                          void handleDirectImageFile(file);
-                        } else {
-                          setIsTextareaDragOver(false);
-                        }
-                      }}
-                      placeholder={`Write detailed lesson content or companion notes here...`}
-                      className={`w-full flex-1 min-h-[320px] p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border text-sm font-mono leading-relaxed text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
-                        isTextareaDragOver
-                          ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-50/40 dark:bg-blue-950/30'
-                          : 'border-slate-200 dark:border-slate-700'
-                      }`}
-                    />
-                    {imageInsertError && (
-                      <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
-                    )}
-                  </div>
-
-                  <div className="min-h-[320px] p-4 sm:p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-3">
-                    {countMarkdownImages(draftContent) > 0 && (
-                      <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                        <span>Drag image corner or edge handles to adjust width &amp; height</span>
-                        <span className="font-mono text-[10px] text-slate-400">Shift = lock ratio</span>
-                      </div>
-                    )}
-                    {draftContent.trim() ? (
-                      <MarkdownProse
-                        content={draftContent}
-                        editableImages
-                        onResizeImage={handleResizeImage}
-                        onResetImageSize={handleResetImageSize}
-                        onChangeImageAlign={handleChangeImageAlign}
-                        editableTables
-                        onUpdateTableCell={handleUpdateTableCell}
-                        onAddTableRow={handleAddTableRow}
-                        onRemoveTableRow={handleRemoveTableRow}
-                        onAddTableColumn={handleAddTableColumn}
-                        onRemoveTableColumn={handleRemoveTableColumn}
-                        editableVideos
-                        onUpdateVideo={handleUpdateVideo}
-                      />
-                    ) : (
-                      <p className="text-xs text-slate-400 italic">
-                        Start typing on the left or click Table / Insert Image / Video to add visuals, grids, and embeds.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="min-h-[260px] p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-3">
-                  {countMarkdownImages(draftContent) > 0 && (
-                    <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                      <span>Interactive preview — drag image corner or edge handles to adjust width &amp; height</span>
-                      <span className="font-mono text-[10px] text-slate-400">Hold Shift on corner to lock aspect ratio</span>
-                    </div>
-                  )}
-                  {draftContent.trim() ? (
-                    <MarkdownProse
-                      content={draftContent}
-                      editableImages
-                      onResizeImage={handleResizeImage}
-                      onResetImageSize={handleResetImageSize}
-                      onChangeImageAlign={handleChangeImageAlign}
-                      editableTables
-                      onUpdateTableCell={handleUpdateTableCell}
-                      onAddTableRow={handleAddTableRow}
-                      onRemoveTableRow={handleRemoveTableRow}
-                      onAddTableColumn={handleAddTableColumn}
-                      onRemoveTableColumn={handleRemoveTableColumn}
-                      editableVideos
-                      onUpdateVideo={handleUpdateVideo}
-                    />
-                  ) : (
-                    <p className="text-xs text-slate-400 italic">
-                      Nothing written yet. Switch back to Write to compose content.
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
+            <RichMarkdownEditor
+              value={draftContent}
+              onChange={setDraftContent}
+              resetKey={module.id}
+              placeholder={`Write detailed lesson content or companion notes here using Markdown or plain text...\n\nExample:\n## Key Objectives\n- Understand architectural concepts and command syntax\n![Topology Diagram](https://example.com/topology.png)`}
+            />
 
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
@@ -2167,22 +1637,6 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
               </div>
             </div>
           </form>
-
-          <MarkdownImageModal
-            isOpen={isImageModalOpen}
-            onClose={() => setIsImageModalOpen(false)}
-            onInsert={({ src, alt, placement }) => insertImageMarkdown(src, alt, placement)}
-          />
-          <MarkdownTableModal
-            isOpen={isTableModalOpen}
-            onClose={() => setIsTableModalOpen(false)}
-            onInsert={insertTableMarkdown}
-          />
-          <MarkdownVideoModal
-            isOpen={isVideoModalOpen}
-            onClose={() => setIsVideoModalOpen(false)}
-            onInsert={insertVideoMarkdown}
-          />
           </>
         ) : module.type === 'theory' ? (
           targetContent.trim() ? (

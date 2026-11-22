@@ -38,6 +38,7 @@ import {
   createStarterModule,
   toChapterConfigFromHierarchy
 } from '../../utils/courseHierarchy';
+import { RichMarkdownEditor } from '../Courses/HierarchyContentWorkspace';
 import {
   Course,
   CourseChapterSection,
@@ -51,6 +52,7 @@ interface CourseModuleBuilderProps {
   course: Course;
   onClose: () => void;
   onEditFullModule: (courseId: string, mod: CourseModule) => void;
+  onOpenHierarchyContentModal?: (courseId: string, chapterId: string, sectionId?: string) => void;
   onToast: (message: string) => void;
 }
 
@@ -143,6 +145,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
   course,
   onClose,
   onEditFullModule,
+  onOpenHierarchyContentModal,
   onToast
 }) => {
   const {
@@ -234,12 +237,11 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     onToast(`Added ${baseChapters.length}.0 ${clean}`);
   };
 
-  const handleAddSubSectionToChapter = (
-    e: React.FormEvent,
+  const addSubSectionToChapter = (
     chapterId: string,
-    chapterTitle: string
+    chapterTitle: string,
+    openEditorAfter = false
   ) => {
-    e.preventDefault();
     const clean = inlineSubTitle.trim();
     if (!clean) return;
     const baseChapters = toChapterConfig();
@@ -249,12 +251,30 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
       onToast(`Section "${clean}" already exists.`);
       return;
     }
-    chap.mainContents.push({ id: `sec-${Date.now()}`, title: clean });
+    const newSecId = `sec-${Date.now()}`;
+    chap.mainContents.push({ id: newSecId, title: clean });
     updateCourse(course.id, { chapters: baseChapters });
     setInlineSubTitle('');
     setAddingSubToChapterId(null);
     setSelectedSection({ chapterTitle: chap.title, mainContentTitle: clean });
     onToast(`Added section "${clean}" under ${chap.title}`);
+    if (openEditorAfter) {
+      setInspectorTarget({
+        kind: 'section-content',
+        chapterId: chap.id,
+        sectionId: newSecId
+      });
+      onOpenHierarchyContentModal?.(course.id, chap.id, newSecId);
+    }
+  };
+
+  const handleAddSubSectionToChapter = (
+    e: React.FormEvent,
+    chapterId: string,
+    chapterTitle: string
+  ) => {
+    e.preventDefault();
+    addSubSectionToChapter(chapterId, chapterTitle, false);
   };
 
   const handleRenameChapter = (oldTitle: string) => {
@@ -356,12 +376,11 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     onToast(`Removed section "${mainTitle}"`);
   };
 
-  const handleQuickAddItemInSection = (
-    e: React.FormEvent,
+  const createItemInSection = (
     chapterTitle: string,
-    mainContentTitle: string
+    mainContentTitle: string,
+    openEditorAfter = false
   ) => {
-    e.preventDefault();
     const starter = createStarterModule(inlineItemType, course, gradingForm.quizPassingScore);
     const cleanTitle = inlineItemTitle.trim();
     const newMod: CourseModule = {
@@ -378,6 +397,18 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
       setInspectorTarget({ kind: 'quiz-module', moduleId: newMod.id });
     }
     onToast(`Added "${newMod.title}" to ${mainContentTitle}`);
+    if (openEditorAfter) {
+      onEditFullModule(course.id, newMod);
+    }
+  };
+
+  const handleQuickAddItemInSection = (
+    e: React.FormEvent,
+    chapterTitle: string,
+    mainContentTitle: string
+  ) => {
+    e.preventDefault();
+    createItemInSection(chapterTitle, mainContentTitle, false);
   };
 
   const handleAssignModuleSection = (
@@ -1348,6 +1379,14 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                               </button>
                               <button
                                 type="button"
+                                onClick={() => addSubSectionToChapter(ch.id, ch.title, true)}
+                                className="px-2.5 py-1.5 rounded-lg border border-blue-200 dark:border-cyan-800 text-blue-600 dark:text-cyan-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-[11px] font-semibold whitespace-nowrap"
+                                title="Create section and immediately open content editor"
+                              >
+                                Add &amp; Edit
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => setAddingSubToChapterId(null)}
                                 className="p-1 text-slate-400 hover:text-slate-700"
                               >
@@ -1558,6 +1597,16 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                       className="px-2.5 py-1 rounded-md bg-blue-600 text-white text-[11px] font-semibold whitespace-nowrap"
                                     >
                                       Add
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        createItemInSection(ch.title, mc.title, true)
+                                      }
+                                      className="px-2.5 py-1 rounded-md border border-blue-200 dark:border-cyan-800 text-blue-600 dark:text-cyan-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-[11px] font-semibold whitespace-nowrap"
+                                      title="Create module immediately and open the full rich content editor"
+                                    >
+                                      Add &amp; Edit
                                     </button>
                                   </form>
                                 )}
@@ -2350,17 +2399,38 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
           ) : (inspectorTarget.kind === 'chapter-content' || inspectorTarget.kind === 'section-content') && selectedHierarchyChapter ? (
             /* Level 1 Chapter & Level 2 Section Content Editor */
             <form onSubmit={handleSaveHierarchyContentDraft} className="space-y-3.5 text-xs">
-              <div className="space-y-1">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-blue-600 dark:text-cyan-400 font-bold">
-                  {inspectorTarget.kind === 'section-content'
-                    ? `Second-Level Section · ${selectedHierarchySection?.sectionNumber || ''}`
-                    : `First-Level Chapter · ${selectedHierarchyChapter.chapterNumber}`}
-                </span>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  {inspectorTarget.kind === 'section-content' && selectedHierarchySection
-                    ? `Writing content inside "${selectedHierarchyChapter.chapterNumber} ${selectedHierarchyChapter.title} › ${selectedHierarchySection.sectionNumber} ${selectedHierarchySection.title}"`
-                    : `Writing chapter-level overview content for "${selectedHierarchyChapter.chapterNumber} ${selectedHierarchyChapter.title}"`}
-                </p>
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-1 min-w-0">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-blue-600 dark:text-cyan-400 font-bold">
+                    {inspectorTarget.kind === 'section-content'
+                      ? `Second-Level Section · ${selectedHierarchySection?.sectionNumber || ''}`
+                      : `First-Level Chapter · ${selectedHierarchyChapter.chapterNumber}`}
+                  </span>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {inspectorTarget.kind === 'section-content' && selectedHierarchySection
+                      ? `Writing content inside "${selectedHierarchyChapter.chapterNumber} ${selectedHierarchyChapter.title} › ${selectedHierarchySection.sectionNumber} ${selectedHierarchySection.title}"`
+                      : `Writing chapter-level overview content for "${selectedHierarchyChapter.chapterNumber} ${selectedHierarchyChapter.title}"`}
+                  </p>
+                </div>
+                {onOpenHierarchyContentModal && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOpenHierarchyContentModal(
+                        course.id,
+                        selectedHierarchyChapter.id,
+                        inspectorTarget.kind === 'section-content'
+                          ? selectedHierarchySection?.id
+                          : undefined
+                      )
+                    }
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-blue-200 dark:border-cyan-800 bg-blue-50/70 dark:bg-blue-950/30 text-blue-600 dark:text-cyan-400 text-[11px] font-semibold whitespace-nowrap shrink-0 hover:bg-blue-100 dark:hover:bg-blue-950/50 transition-colors"
+                    title="Open full side-by-side rich content workspace"
+                  >
+                    <Edit3 className="w-3 h-3" />
+                    <span>Full Editor</span>
+                  </button>
+                )}
               </div>
 
               <div>
@@ -2394,20 +2464,21 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Content (Markdown Supported)
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Content (Markdown, Tables, Images &amp; Videos)
                 </label>
-                <textarea
+                <RichMarkdownEditor
+                  compact
                   rows={10}
+                  resetKey={`${inspectorTarget.kind}-${selectedHierarchyChapter.id}-${selectedHierarchySection?.id || 'ch'}`}
                   value={hierarchyContentDraft.contentMarkdown}
-                  onChange={(e) =>
+                  onChange={(nextContent) =>
                     setHierarchyContentDraft(prev => ({
                       ...prev,
-                      contentMarkdown: e.target.value
+                      contentMarkdown: nextContent
                     }))
                   }
-                  placeholder="Write chapter or section notes, architectural details, and key takeaways..."
-                  className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-700 font-mono text-xs leading-relaxed text-slate-900 dark:text-white"
+                  placeholder="Write chapter or section notes, tables, diagrams, and videos..."
                 />
               </div>
 

@@ -50,11 +50,15 @@ import {
 import { useAcademy } from '../../context/AcademyContext';
 import {
   auth,
+  clearLabDraftFromFirestore,
   deleteLabTopologyFromFirestore,
+  fetchLabDraftFromFirestore,
   fetchLabTopologiesFromFirestore,
+  saveLabDraftToFirestore,
   saveLabTopologyToFirestore
 } from '../../firebase';
 import {
+  ActiveLabDraft,
   DEFAULT_LAB_CANVAS_HEIGHT,
   DEFAULT_LAB_CANVAS_WIDTH,
   LabGridSettings,
@@ -670,8 +674,14 @@ export const NetworkTopologySimulator: React.FC = () => {
   const [isSavingLab, setIsSavingLab] = useState<boolean>(false);
   const [isExportingImage, setIsExportingImage] = useState<boolean>(false);
   const [lastAutoSavedAt, setLastAutoSavedAt] = useState<string | null>(null);
+  const [cloudAutoSaveStatus, setCloudAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [lastCloudAutoSavedAt, setLastCloudAutoSavedAt] = useState<string | null>(null);
   const draftHydratedForUserRef = useRef<string | null>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const cloudDebounceTimerRef = useRef<number | null>(null);
+  const cloudDirtyRef = useRef<boolean>(false);
+  const cloudSaveInFlightRef = useRef<boolean>(false);
+  const lastCloudSignatureRef = useRef<string | null>(null);
 
   const [tool, setTool] = useState<CanvasTool>('select');
   const [autoLayoutMode, setAutoLayoutMode] = useState<AutoLayoutMode>('grid');
@@ -1108,19 +1118,184 @@ export const NetworkTopologySimulator: React.FC = () => {
   const ownerScopeId = firebaseUid && !isOffline ? firebaseUid : currentUser.id;
   const isCloudAuthReady = Boolean(auth.currentUser && auth.currentUser.emailVerified && !isOffline);
 
-  // Load IndexedDB active draft + merge saved labs strictly for the current individual student
+  const ownerScopeIdRef = useRef<string>(ownerScopeId);
+  ownerScopeIdRef.current = ownerScopeId;
+  const isCloudAuthReadyRef = useRef<boolean>(isCloudAuthReady);
+  isCloudAuthReadyRef.current = isCloudAuthReady;
+  const workspaceViewRef = useRef<'editor' | 'projects'>(workspaceView);
+  workspaceViewRef.current = workspaceView;
+  const activePresetIdRef = useRef<string>(activePresetId);
+  activePresetIdRef.current = activePresetId;
+  const activeSavedLabIdRef = useRef<string | null>(activeSavedLabId);
+  activeSavedLabIdRef.current = activeSavedLabId;
+  const saveTitleInputRef = useRef<string>(saveTitleInput);
+  saveTitleInputRef.current = saveTitleInput;
+  const showCustomLabelsRef = useRef<boolean>(showCustomLabels);
+  showCustomLabelsRef.current = showCustomLabels;
+  const showGridRef = useRef<boolean>(showGrid);
+  showGridRef.current = showGrid;
+  const gridStyleRef = useRef<GridStyle>(gridStyle);
+  gridStyleRef.current = gridStyle;
+  const diagramLabelsRef = useRef<SimDiagramLabel[]>(diagramLabels);
+  diagramLabelsRef.current = diagramLabels;
+
+  const computeCloudDraftSignature = useCallback(
+    (payload: {
+      presetId: string;
+      activeSavedLabId?: string | null;
+      canvasWidth: number;
+      canvasHeight: number;
+      showCustomLabels: boolean;
+      gridSettings: LabGridSettings;
+      devices: SimDevice[];
+      links: SimLink[];
+      shapes: SimTopologyShape[];
+      labels: SimDiagramLabel[];
+    }): string =>
+      JSON.stringify({
+        presetId: payload.presetId,
+        activeSavedLabId: payload.activeSavedLabId || '',
+        canvasWidth: payload.canvasWidth,
+        canvasHeight: payload.canvasHeight,
+        showCustomLabels: payload.showCustomLabels !== false,
+        gridSettings: payload.gridSettings,
+        devices: payload.devices,
+        links: payload.links,
+        shapes: payload.shapes,
+        labels: payload.labels
+      }),
+    []
+  );
+
+  const flushCloudAutoSave = useCallback(async () => {
+    if (!isCloudAuthReadyRef.current) return;
+    if (workspaceViewRef.current !== 'editor') return;
+    const scopeId = ownerScopeIdRef.current;
+    if (draftHydratedForUserRef.current !== scopeId) return;
+    if (cloudSaveInFlightRef.current || !cloudDirtyRef.current) return;
+
+    const currentDevices = devicesRef.current;
+    const currentLinks = linksRef.current;
+    const currentShapes = shapesRef.current;
+    const currentLabels = diagramLabelsRef.current;
+    const currentCanvas = canvasSizeRef.current;
+    const currentPresetId = activePresetIdRef.current;
+    const currentSavedLabId = activeSavedLabIdRef.current;
+
+    const hasWorkspaceContent =
+      currentDevices.length > 0 ||
+      currentLinks.length > 0 ||
+      currentShapes.length > 0 ||
+      currentLabels.length > 0 ||
+      currentSavedLabId !== null ||
+      currentPresetId !== 'blank-sandbox' ||
+      currentCanvas.width > DEFAULT_LAB_CANVAS_WIDTH ||
+      currentCanvas.height > DEFAULT_LAB_CANVAS_HEIGHT;
+
+    if (!hasWorkspaceContent) {
+      cloudDirtyRef.current = false;
+      return;
+    }
+
+    const currentGridSettings: LabGridSettings = {
+      showGrid: showGridRef.current,
+      snapToGrid: snapToGridRef.current,
+      gridSize: gridSizeRef.current,
+      gridStyle: gridStyleRef.current
+    };
+
+    const sig = computeCloudDraftSignature({
+      presetId: currentPresetId,
+      activeSavedLabId: currentSavedLabId,
+      canvasWidth: currentCanvas.width,
+      canvasHeight: currentCanvas.height,
+      showCustomLabels: showCustomLabelsRef.current,
+      gridSettings: currentGridSettings,
+      devices: currentDevices,
+      links: currentLinks,
+      shapes: currentShapes,
+      labels: currentLabels
+    });
+
+    if (sig === lastCloudSignatureRef.current) {
+      cloudDirtyRef.current = false;
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const draftPayload: ActiveLabDraft = {
+      draftKey: scopeId,
+      userId: scopeId,
+      activeSavedLabId: currentSavedLabId || undefined,
+      title: saveTitleInputRef.current.trim().slice(0, 120) || undefined,
+      presetId: currentPresetId,
+      canvasWidth: currentCanvas.width,
+      canvasHeight: currentCanvas.height,
+      showCustomLabels: showCustomLabelsRef.current,
+      gridSettings: currentGridSettings,
+      devices: currentDevices,
+      links: currentLinks,
+      shapes: currentShapes,
+      labels: currentLabels,
+      updatedAt: nowIso
+    };
+
+    cloudSaveInFlightRef.current = true;
+    setCloudAutoSaveStatus('saving');
+    try {
+      const ok = await saveLabDraftToFirestore(draftPayload);
+      if (ok) {
+        lastCloudSignatureRef.current = sig;
+        cloudDirtyRef.current = false;
+        setLastCloudAutoSavedAt(nowIso);
+        setLastAutoSavedAt(nowIso);
+        setCloudAutoSaveStatus('saved');
+      } else {
+        setCloudAutoSaveStatus('error');
+      }
+    } catch {
+      setCloudAutoSaveStatus('error');
+    } finally {
+      cloudSaveInFlightRef.current = false;
+    }
+  }, [computeCloudDraftSignature]);
+
+  // Load IndexedDB + Firestore active draft (pick newest) & merge saved labs strictly for current user
   useEffect(() => {
     let cancelled = false;
     draftHydratedForUserRef.current = null;
+    cloudDirtyRef.current = false;
+    lastCloudSignatureRef.current = null;
+    setCloudAutoSaveStatus('idle');
+    setLastCloudAutoSavedAt(null);
     setSavedLabs([]);
     setRecentlySavedProjectId(null);
     setIsSavePromptOpen(false);
 
     const hydratePersistence = async () => {
-      const [draft, localSaved] = await Promise.all([
+      const canUseCloud = Boolean(auth.currentUser && auth.currentUser.emailVerified && !isOffline);
+      const [idbDraft, localSaved, cloudDraft] = await Promise.all([
         loadActiveLabDraftFromIdb(ownerScopeId),
-        listSavedLabsFromIdb(ownerScopeId)
+        listSavedLabsFromIdb(ownerScopeId),
+        canUseCloud
+          ? fetchLabDraftFromFirestore().catch(() => null)
+          : Promise.resolve(null)
       ]);
+
+      if (cancelled) return;
+
+      const idbTime = idbDraft ? Date.parse(idbDraft.updatedAt || '') || 0 : 0;
+      const cloudTime = cloudDraft ? Date.parse(cloudDraft.updatedAt || '') || 0 : 0;
+      const chosenFromCloud = Boolean(cloudDraft && (!idbDraft || cloudTime >= idbTime));
+      const draft = chosenFromCloud ? cloudDraft : idbDraft;
+
+      if (chosenFromCloud && cloudDraft) {
+        await saveActiveLabDraftToIdb({
+          ...cloudDraft,
+          draftKey: ownerScopeId,
+          userId: ownerScopeId
+        });
+      }
 
       if (cancelled) return;
 
@@ -1154,20 +1329,28 @@ export const NetworkTopologySimulator: React.FC = () => {
           draft.canvasHeight
         );
         const dg = draft.gridSettings;
+        const resolvedShowGrid = typeof dg?.showGrid === 'boolean' ? dg.showGrid : prefShowGrid;
+        const resolvedSnapToGrid = typeof dg?.snapToGrid === 'boolean' ? dg.snapToGrid : prefSnapToGrid;
+        const resolvedGridSize =
+          dg?.gridSize !== undefined ? normalizeGridStep(dg.gridSize) : prefGridSize;
+        const resolvedGridStyle =
+          dg?.gridStyle === 'lines' || dg?.gridStyle === 'dots' ? dg.gridStyle : prefGridStyle;
+
         setActivePresetId(draft.presetId);
         setCanvasSize(restoredSize);
         setShowCustomLabels(draft.showCustomLabels !== false);
-        setShowGrid(typeof dg?.showGrid === 'boolean' ? dg.showGrid : prefShowGrid);
-        setSnapToGrid(typeof dg?.snapToGrid === 'boolean' ? dg.snapToGrid : prefSnapToGrid);
-        setGridSize(dg?.gridSize !== undefined ? normalizeGridStep(dg.gridSize) : prefGridSize);
-        setGridStyle(
-          dg?.gridStyle === 'lines' || dg?.gridStyle === 'dots' ? dg.gridStyle : prefGridStyle
-        );
+        setShowGrid(resolvedShowGrid);
+        setSnapToGrid(resolvedSnapToGrid);
+        setGridSize(resolvedGridSize);
+        setGridStyle(resolvedGridStyle);
         setDevices(draft.devices);
         setLinks(draft.links);
         setShapes(draftShapes);
         setDiagramLabels(draftLabels);
         setActiveSavedLabId(draft.activeSavedLabId || null);
+        if (draft.title) {
+          setSaveTitleInput(draft.title);
+        }
         const firstId = draft.devices[0]?.id || null;
         setSelectedDeviceId(firstId);
         setSelectedDeviceIds(firstId ? [firstId] : []);
@@ -1178,6 +1361,35 @@ export const NetworkTopologySimulator: React.FC = () => {
         setSelectedDiagramLabelId(null);
         setLastPingResult(null);
         setLastAutoSavedAt(draft.updatedAt);
+
+        if (chosenFromCloud && cloudDraft) {
+          lastCloudSignatureRef.current = computeCloudDraftSignature({
+            presetId: draft.presetId,
+            activeSavedLabId: draft.activeSavedLabId || null,
+            canvasWidth: restoredSize.width,
+            canvasHeight: restoredSize.height,
+            showCustomLabels: draft.showCustomLabels !== false,
+            gridSettings: {
+              showGrid: resolvedShowGrid,
+              snapToGrid: resolvedSnapToGrid,
+              gridSize: resolvedGridSize,
+              gridStyle: resolvedGridStyle
+            },
+            devices: draft.devices,
+            links: draft.links,
+            shapes: draftShapes,
+            labels: draftLabels
+          });
+          cloudDirtyRef.current = false;
+          setLastCloudAutoSavedAt(cloudDraft.updatedAt);
+          setCloudAutoSaveStatus('saved');
+        } else {
+          lastCloudSignatureRef.current = null;
+          cloudDirtyRef.current = Boolean(canUseCloud);
+          if (cloudDraft) {
+            setLastCloudAutoSavedAt(cloudDraft.updatedAt);
+          }
+        }
       } else {
         setActivePresetId('blank-sandbox');
         setCanvasSize({ width: DEFAULT_LAB_CANVAS_WIDTH, height: DEFAULT_LAB_CANVAS_HEIGHT });
@@ -1200,6 +1412,8 @@ export const NetworkTopologySimulator: React.FC = () => {
         setSelectedDiagramLabelId(null);
         setLastPingResult(null);
         setLastAutoSavedAt(null);
+        cloudDirtyRef.current = false;
+        lastCloudSignatureRef.current = null;
       }
 
       let mergedSaved = localSaved.filter(item => item.userId === ownerScopeId);
@@ -1255,7 +1469,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [ownerScopeId, isOffline]);
+  }, [ownerScopeId, isOffline, computeCloudDraftSignature]);
 
   // Persist user's grid & snap preferences in localStorage
   useEffect(() => {
@@ -1270,7 +1484,7 @@ export const NetworkTopologySimulator: React.FC = () => {
     }
   }, [gridSize, gridStyle, ownerScopeId, showGrid, snapToGrid]);
 
-  // Debounced auto-save active workspace draft into IndexedDB
+  // Debounced auto-save active workspace draft into IndexedDB & mark cloud dirty + debounce Firestore sync
   useEffect(() => {
     if (draftHydratedForUserRef.current !== ownerScopeId) return;
     if (workspaceView !== 'editor') return;
@@ -1285,11 +1499,20 @@ export const NetworkTopologySimulator: React.FC = () => {
       canvasSize.width > DEFAULT_LAB_CANVAS_WIDTH ||
       canvasSize.height > DEFAULT_LAB_CANVAS_HEIGHT;
 
-    if (!hasWorkspaceContent) return;
+    if (!hasWorkspaceContent) {
+      cloudDirtyRef.current = false;
+      if (cloudDebounceTimerRef.current !== null) {
+        window.clearTimeout(cloudDebounceTimerRef.current);
+        cloudDebounceTimerRef.current = null;
+      }
+      return;
+    }
 
     if (saveTimerRef.current !== null) {
       window.clearTimeout(saveTimerRef.current);
     }
+
+    const currentGridSettings: LabGridSettings = { showGrid, snapToGrid, gridSize, gridStyle };
 
     saveTimerRef.current = window.setTimeout(() => {
       const nowIso = new Date().toISOString();
@@ -1297,11 +1520,12 @@ export const NetworkTopologySimulator: React.FC = () => {
         draftKey: ownerScopeId,
         userId: ownerScopeId,
         activeSavedLabId: activeSavedLabId || undefined,
+        title: saveTitleInput.trim().slice(0, 120) || undefined,
         presetId: activePresetId,
         canvasWidth: canvasSize.width,
         canvasHeight: canvasSize.height,
         showCustomLabels,
-        gridSettings: { showGrid, snapToGrid, gridSize, gridStyle },
+        gridSettings: currentGridSettings,
         devices,
         links,
         shapes,
@@ -1312,27 +1536,93 @@ export const NetworkTopologySimulator: React.FC = () => {
       });
     }, 250);
 
+    const sig = computeCloudDraftSignature({
+      presetId: activePresetId,
+      activeSavedLabId,
+      canvasWidth: canvasSize.width,
+      canvasHeight: canvasSize.height,
+      showCustomLabels,
+      gridSettings: currentGridSettings,
+      devices,
+      links,
+      shapes,
+      labels: diagramLabels
+    });
+
+    if (sig !== lastCloudSignatureRef.current) {
+      cloudDirtyRef.current = true;
+      if (isCloudAuthReady) {
+        if (cloudDebounceTimerRef.current !== null) {
+          window.clearTimeout(cloudDebounceTimerRef.current);
+        }
+        cloudDebounceTimerRef.current = window.setTimeout(() => {
+          void flushCloudAutoSave();
+        }, 4000);
+      }
+    }
+
     return () => {
       if (saveTimerRef.current !== null) {
         window.clearTimeout(saveTimerRef.current);
+      }
+      if (cloudDebounceTimerRef.current !== null) {
+        window.clearTimeout(cloudDebounceTimerRef.current);
       }
     };
   }, [
     activePresetId,
     activeSavedLabId,
     canvasSize,
+    computeCloudDraftSignature,
     diagramLabels,
     devices,
+    flushCloudAutoSave,
     gridSize,
     gridStyle,
+    isCloudAuthReady,
     links,
     ownerScopeId,
+    saveTitleInput,
     shapes,
     showCustomLabels,
     showGrid,
     snapToGrid,
     workspaceView
   ]);
+
+  // Periodic 15-second Firestore auto-save + session interruption flush (visibilitychange / pagehide / unmount)
+  useEffect(() => {
+    if (!isCloudAuthReady || workspaceView !== 'editor') return;
+
+    const intervalId = window.setInterval(() => {
+      if (cloudDirtyRef.current) {
+        void flushCloudAutoSave();
+      }
+    }, 15000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && cloudDirtyRef.current) {
+        void flushCloudAutoSave();
+      }
+    };
+    const handlePageHide = () => {
+      if (cloudDirtyRef.current) {
+        void flushCloudAutoSave();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+      if (cloudDirtyRef.current) {
+        void flushCloudAutoSave();
+      }
+    };
+  }, [flushCloudAutoSave, isCloudAuthReady, workspaceView]);
 
   // Keep pingSourceId valid
   useEffect(() => {
@@ -2551,6 +2841,21 @@ export const NetworkTopologySimulator: React.FC = () => {
     setReplayRecordingSteps([]);
     setReplayRecordingElapsedMs(0);
     replayInitialSnapshotRef.current = null;
+    if (preset.id === 'blank-sandbox') {
+      if (cloudDebounceTimerRef.current !== null) {
+        window.clearTimeout(cloudDebounceTimerRef.current);
+        cloudDebounceTimerRef.current = null;
+      }
+      cloudDirtyRef.current = false;
+      lastCloudSignatureRef.current = null;
+      setLastAutoSavedAt(null);
+      setLastCloudAutoSavedAt(null);
+      setCloudAutoSaveStatus('idle');
+      void clearActiveLabDraftFromIdb(ownerScopeId);
+      if (isCloudAuthReady) {
+        void clearLabDraftFromFirestore().catch(() => {});
+      }
+    }
     handleResetZoomPan();
     flashBanner(`Loaded "${preset.title}"`);
   };
@@ -4034,6 +4339,19 @@ export const NetworkTopologySimulator: React.FC = () => {
     setLastPingResult(null);
     setRecentlySavedProjectId(null);
     setIsSavePromptOpen(false);
+    if (cloudDebounceTimerRef.current !== null) {
+      window.clearTimeout(cloudDebounceTimerRef.current);
+      cloudDebounceTimerRef.current = null;
+    }
+    cloudDirtyRef.current = false;
+    lastCloudSignatureRef.current = null;
+    setLastAutoSavedAt(null);
+    setLastCloudAutoSavedAt(null);
+    setCloudAutoSaveStatus('idle');
+    void clearActiveLabDraftFromIdb(ownerScopeId);
+    if (isCloudAuthReady) {
+      void clearLabDraftFromFirestore().catch(() => {});
+    }
     handleResetZoomPan();
     setWorkspaceView('editor');
     flashBanner('Started a new Blank Lab Project');
@@ -4413,7 +4731,22 @@ export const NetworkTopologySimulator: React.FC = () => {
           window.clearTimeout(saveTimerRef.current);
           saveTimerRef.current = null;
         }
+        if (cloudDebounceTimerRef.current !== null) {
+          window.clearTimeout(cloudDebounceTimerRef.current);
+          cloudDebounceTimerRef.current = null;
+        }
+        cloudDirtyRef.current = false;
+        lastCloudSignatureRef.current = null;
+        setLastCloudAutoSavedAt(null);
+        setCloudAutoSaveStatus('idle');
         await clearActiveLabDraftFromIdb(ownerScopeId);
+        if (isCloudAuthReady) {
+          try {
+            await clearLabDraftFromFirestore();
+          } catch {
+            // Ignore remote draft cleanup errors; project snapshot is already saved
+          }
+        }
         setActivePresetId('blank-sandbox');
         setCanvasSize({ width: DEFAULT_LAB_CANVAS_WIDTH, height: DEFAULT_LAB_CANVAS_HEIGHT });
         setDevices([]);
@@ -4700,13 +5033,35 @@ export const NetworkTopologySimulator: React.FC = () => {
             <span aria-hidden="true">·</span>
             <span className="inline-flex items-center gap-1 font-mono text-[11px] text-slate-500 dark:text-slate-400">
               {isCloudAuthReady ? (
-                <Cloud className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                cloudAutoSaveStatus === 'saving' ? (
+                  <Cloud className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400 animate-pulse" />
+                ) : cloudAutoSaveStatus === 'error' ? (
+                  <Cloud className="w-3.5 h-3.5 text-amber-500" />
+                ) : lastCloudAutoSavedAt ? (
+                  <Cloud className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                ) : (
+                  <Cloud className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                )
               ) : (
                 <HardDrive className="w-3.5 h-3.5 text-slate-400" />
               )}
-              <span>
-                {lastAutoSavedAt
-                  ? `Draft auto-saved (${isCloudAuthReady ? 'IndexedDB + Cloud Save' : 'IndexedDB'})`
+              <span className="tabular-nums">
+                {isCloudAuthReady
+                  ? cloudAutoSaveStatus === 'saving'
+                    ? 'Syncing diagram to Firestore...'
+                    : cloudAutoSaveStatus === 'error'
+                    ? 'Cloud auto-save paused · Saved in IndexedDB'
+                    : lastCloudAutoSavedAt
+                    ? `Cloud auto-saved ${new Date(lastCloudAutoSavedAt).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                      })}`
+                    : lastAutoSavedAt
+                    ? 'Draft auto-saved (IndexedDB · Cloud sync queued)'
+                    : 'Cloud auto-save active'
+                  : lastAutoSavedAt
+                  ? 'Draft auto-saved (Offline · IndexedDB)'
                   : 'IndexedDB Ready'}
               </span>
             </span>

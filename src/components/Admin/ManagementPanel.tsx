@@ -47,6 +47,10 @@ import {
 import { CourseModuleBuilder } from './CourseModuleBuilder';
 import { CourseThumbnail } from '../Courses/CourseThumbnail';
 import {
+  HierarchyContentWorkspace,
+  RichMarkdownEditor
+} from '../Courses/HierarchyContentWorkspace';
+import {
   resolveCourseHierarchy,
   getModuleSectionBreadcrumb,
   createStarterModule,
@@ -491,6 +495,12 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
   // Add / Edit Module Modal
   const [moduleModalCourseId, setModuleModalCourseId] = useState<string | null>(null);
   const [editingModuleId, setEditingModuleId] = useState<string | null>(null);
+  // Level 1 Chapter / Level 2 Section Rich Content Editor Modal
+  const [hierarchyEditorModal, setHierarchyEditorModal] = useState<{
+    courseId: string;
+    chapterId: string;
+    sectionId?: string;
+  } | null>(null);
 
   const [moduleForm, setModuleForm] = useState<{
     title: string;
@@ -669,7 +679,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     courseId: string,
     initialType: ModuleType = 'theory',
     presetChapterTitle?: string,
-    presetMainContentTitle?: string
+    presetMainContentTitle?: string,
+    presetTitle?: string
   ) => {
     const targetCourse = courses.find(c => c.id === courseId);
     const hierarchy = targetCourse ? resolveCourseHierarchy(targetCourse) : [];
@@ -679,8 +690,11 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     setModuleModalCourseId(courseId);
     setEditingModuleId(null);
     const isQuiz = initialType === 'quiz';
+    const trimmedPresetTitle = presetTitle?.trim();
     setModuleForm({
-      title: isQuiz
+      title: trimmedPresetTitle
+        ? trimmedPresetTitle
+        : isQuiz
         ? 'Quiz: Knowledge Assessment & Verification'
         : 'Module: VXLAN Network Identifier (VNI) Mapping',
       chapterTitle: presetChapterTitle || lastChapter?.title || 'Core Foundations & Architecture',
@@ -908,14 +922,13 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     showToast(`Added ${baseChapters.length}.0 ${clean}`);
   };
 
-  const handleCardAddSubSection = (
-    e: React.FormEvent,
+  const addCardSubSection = (
     course: Course,
     cardHierarchy: ResolvedChapterSection[],
     chapterId: string,
-    chapterTitle: string
+    chapterTitle: string,
+    openEditorAfter = false
   ) => {
-    e.preventDefault();
     const clean = cardInlineSubTitle.trim();
     if (!clean) return;
     const baseChapters = toChapterConfigFromHierarchy(cardHierarchy);
@@ -934,6 +947,24 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     setCardAddingSubToChapterKey(null);
     setExpandedCardChapters(prev => ({ ...prev, [`${course.id}::${chapterId}`]: true }));
     showToast(`Added section "${clean}" under ${chap.title}`);
+    if (openEditorAfter) {
+      setHierarchyEditorModal({
+        courseId: course.id,
+        chapterId: chap.id,
+        sectionId: newSecId
+      });
+    }
+  };
+
+  const handleCardAddSubSection = (
+    e: React.FormEvent,
+    course: Course,
+    cardHierarchy: ResolvedChapterSection[],
+    chapterId: string,
+    chapterTitle: string
+  ) => {
+    e.preventDefault();
+    addCardSubSection(course, cardHierarchy, chapterId, chapterTitle, false);
   };
 
   const handleCardRenameChapter = (
@@ -1042,13 +1073,12 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     showToast(`Removed section "${mainTitle}"`);
   };
 
-  const handleCardQuickAddItemInSection = (
-    e: React.FormEvent,
+  const createCardItemInSection = (
     course: Course,
     chapterTitle: string,
-    mainContentTitle: string
+    mainContentTitle: string,
+    openEditorAfter = false
   ) => {
-    e.preventDefault();
     const starter = createStarterModule(cardInlineItemType, course);
     const cleanTitle = cardInlineItemTitle.trim();
     const newMod: CourseModule = {
@@ -1061,6 +1091,103 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     setCardInlineItemTitle('');
     setCardAddingItemToSectionKey(null);
     showToast(`Added "${newMod.title}" to ${mainContentTitle}`);
+    if (openEditorAfter) {
+      openEditModuleModal(course.id, newMod);
+    }
+  };
+
+  const handleCardQuickAddItemInSection = (
+    e: React.FormEvent,
+    course: Course,
+    chapterTitle: string,
+    mainContentTitle: string
+  ) => {
+    e.preventDefault();
+    createCardItemInSection(course, chapterTitle, mainContentTitle, false);
+  };
+
+  const handleSaveCardHierarchyContent = (
+    course: Course,
+    hierarchyTree: ResolvedChapterSection[],
+    payload: {
+      level: 'chapter' | 'section';
+      chapterId: string;
+      sectionId?: string;
+      title: string;
+      summary: string;
+      contentMarkdown: string;
+    }
+  ) => {
+    const baseChapters = toChapterConfigFromHierarchy(hierarchyTree);
+    let updatedModules = course.modules;
+    let savedLabel = payload.title;
+
+    if (payload.level === 'chapter') {
+      const targetCh = baseChapters.find(ch => ch.id === payload.chapterId);
+      const oldTitle = targetCh?.title;
+      const nextChapters = baseChapters.map(ch =>
+        ch.id === payload.chapterId
+          ? {
+              ...ch,
+              title: payload.title,
+              summary: payload.summary || undefined,
+              contentMarkdown: payload.contentMarkdown
+            }
+          : ch
+      );
+      if (oldTitle && oldTitle.trim().toLowerCase() !== payload.title.trim().toLowerCase()) {
+        updatedModules = course.modules.map(m =>
+          (m.chapterTitle || '').trim().toLowerCase() === oldTitle.trim().toLowerCase()
+            ? { ...m, chapterTitle: payload.title }
+            : m
+        );
+      }
+      updateCourse(course.id, { chapters: nextChapters, modules: updatedModules });
+      const chNum =
+        hierarchyTree.find(c => c.id === payload.chapterId)?.chapterNumber || '';
+      savedLabel = `${chNum ? `${chNum} ` : ''}${payload.title}`;
+    } else if (payload.level === 'section' && payload.sectionId) {
+      const targetCh = baseChapters.find(ch => ch.id === payload.chapterId);
+      const targetSec = targetCh?.mainContents.find(mc => mc.id === payload.sectionId);
+      const oldSecTitle = targetSec?.title;
+      const nextChapters = baseChapters.map(ch =>
+        ch.id === payload.chapterId
+          ? {
+              ...ch,
+              mainContents: ch.mainContents.map(mc =>
+                mc.id === payload.sectionId
+                  ? {
+                      ...mc,
+                      title: payload.title,
+                      summary: payload.summary || undefined,
+                      contentMarkdown: payload.contentMarkdown
+                    }
+                  : mc
+              )
+            }
+          : ch
+      );
+      if (
+        targetCh &&
+        oldSecTitle &&
+        oldSecTitle.trim().toLowerCase() !== payload.title.trim().toLowerCase()
+      ) {
+        updatedModules = course.modules.map(m =>
+          (m.chapterTitle || '').trim().toLowerCase() === targetCh.title.trim().toLowerCase() &&
+          (m.mainContentTitle || '').trim().toLowerCase() === oldSecTitle.trim().toLowerCase()
+            ? { ...m, mainContentTitle: payload.title }
+            : m
+        );
+      }
+      updateCourse(course.id, { chapters: nextChapters, modules: updatedModules });
+      const secNum =
+        hierarchyTree
+          .find(c => c.id === payload.chapterId)
+          ?.mainContents.find(s => s.id === payload.sectionId)?.sectionNumber || '';
+      savedLabel = `${secNum ? `${secNum} ` : ''}${payload.title}`;
+    }
+
+    showToast(`Saved content for ${savedLabel}`);
   };
 
   const handleSaveModule = (e: React.FormEvent) => {
@@ -1198,7 +1325,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     <div className="w-full space-y-6">
       {/* Save Toast */}
       {saveToast && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold shadow-xl">
+        <div className="fixed bottom-5 right-5 z-[80] flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold shadow-xl">
           <CheckCircle className="w-4 h-4" />
           <span>{saveToast}</span>
         </div>
@@ -2536,6 +2663,9 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
               course={courses.find(c => c.id === builderCourseId)!}
               onClose={() => setBuilderCourseId(null)}
               onEditFullModule={openEditModuleModal}
+              onOpenHierarchyContentModal={(cId, chId, secId) =>
+                setHierarchyEditorModal({ courseId: cId, chapterId: chId, sectionId: secId })
+              }
               onToast={showToast}
             />
           ) : (
@@ -2807,6 +2937,23 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                         </button>
                                         <button
                                           type="button"
+                                          onClick={() =>
+                                            setHierarchyEditorModal({
+                                              courseId: course.id,
+                                              chapterId: ch.id
+                                            })
+                                          }
+                                          className={`p-1 rounded-md transition-colors ${
+                                            ch.contentMarkdown?.trim()
+                                              ? 'text-blue-600 dark:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                                              : 'text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 opacity-70 group-hover:opacity-100'
+                                          }`}
+                                          title="Edit chapter content"
+                                        >
+                                          <FileText className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
                                           onClick={() => {
                                             setCardEditingChapterKey(chKey);
                                             setCardEditingChapterDraft(ch.title);
@@ -2885,6 +3032,22 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                             className="px-2.5 py-1 rounded-lg bg-blue-600 text-white text-[11px] font-semibold whitespace-nowrap"
                                           >
                                             Add
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              addCardSubSection(
+                                                course,
+                                                cardHierarchy,
+                                                ch.id,
+                                                ch.title,
+                                                true
+                                              )
+                                            }
+                                            className="px-2.5 py-1 rounded-lg border border-blue-200 dark:border-cyan-800 text-blue-600 dark:text-cyan-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-[11px] font-semibold whitespace-nowrap"
+                                            title="Create section and immediately open content editor"
+                                          >
+                                            Add &amp; Edit
                                           </button>
                                           <button
                                             type="button"
@@ -3013,6 +3176,24 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                                   </button>
                                                   <button
                                                     type="button"
+                                                    onClick={() =>
+                                                      setHierarchyEditorModal({
+                                                        courseId: course.id,
+                                                        chapterId: ch.id,
+                                                        sectionId: mc.id
+                                                      })
+                                                    }
+                                                    className={`p-1 rounded transition-colors ${
+                                                      mc.contentMarkdown?.trim()
+                                                        ? 'text-blue-600 dark:text-cyan-400 hover:bg-white dark:hover:bg-slate-900'
+                                                        : 'text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 opacity-60 group-hover/sec:opacity-100'
+                                                    }`}
+                                                    title="Edit section content"
+                                                  >
+                                                    <FileText className="w-3 h-3" />
+                                                  </button>
+                                                  <button
+                                                    type="button"
                                                     onClick={() => {
                                                       setCardEditingMainKey(secKey);
                                                       setCardEditingMainDraft(mc.title);
@@ -3104,17 +3285,34 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                                 </button>
                                                 <button
                                                   type="button"
+                                                  onClick={() =>
+                                                    createCardItemInSection(
+                                                      course,
+                                                      ch.title,
+                                                      mc.title,
+                                                      true
+                                                    )
+                                                  }
+                                                  className="px-2.5 py-1 rounded-md border border-blue-200 dark:border-cyan-800 text-blue-600 dark:text-cyan-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-[11px] font-semibold whitespace-nowrap"
+                                                  title="Create module immediately and open the full rich content editor"
+                                                >
+                                                  Add &amp; Edit
+                                                </button>
+                                                <button
+                                                  type="button"
                                                   onClick={() => {
+                                                    const draftTitle = cardInlineItemTitle;
                                                     setCardAddingItemToSectionKey(null);
                                                     openAddModuleModal(
                                                       course.id,
                                                       cardInlineItemType,
                                                       ch.title,
-                                                      mc.title
+                                                      mc.title,
+                                                      draftTitle
                                                     );
                                                   }}
                                                   className="px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 hover:border-blue-400 whitespace-nowrap"
-                                                  title="Open detailed module editor"
+                                                  title="Open detailed module form before saving"
                                                 >
                                                   Full Form
                                                 </button>
@@ -3590,7 +3788,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       {/* Add / Edit Module & Content Modal */}
       {moduleModalCourseId && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+          <div className="w-full max-w-5xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
               <h3 className="text-base font-bold text-slate-900 dark:text-white">
                 {editingModuleId ? 'Edit Module & Course Content' : 'Add Curriculum Module'}
@@ -3726,16 +3924,19 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                 </label>
               )}
 
-              {/* Markdown Lesson Content */}
+              {/* Rich Markdown Lesson Content (Same editor as Course Content Editor) */}
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Lesson Content (Markdown / Notes)
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Lesson Content (Markdown, Tables, Images &amp; Videos)
                 </label>
-                <textarea
-                  rows={6}
+                <RichMarkdownEditor
                   value={moduleForm.contentMarkdown}
-                  onChange={(e) => setModuleForm({ ...moduleForm, contentMarkdown: e.target.value })}
-                  className="w-full p-2.5 rounded-xl font-mono text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  onChange={(nextMarkdown) =>
+                    setModuleForm(prev => ({ ...prev, contentMarkdown: nextMarkdown }))
+                  }
+                  resetKey={editingModuleId || `new-${moduleModalCourseId}`}
+                  rows={10}
+                  placeholder="Write module content using Markdown headings (##), lists, tables, code blocks, images, or video embeds..."
                 />
               </div>
 
@@ -3934,6 +4135,67 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
           </div>
         </div>
       )}
+
+      {/* Level 1 Chapter / Level 2 Section Full Rich Content Editor Modal (Parity with Course Content Editor) */}
+      {hierarchyEditorModal && (() => {
+        const modalCourse = courses.find(c => c.id === hierarchyEditorModal.courseId);
+        if (!modalCourse) return null;
+        const modalHierarchy = resolveCourseHierarchy(modalCourse);
+        const targetChapter =
+          modalHierarchy.find(ch => ch.id === hierarchyEditorModal.chapterId) || modalHierarchy[0];
+        if (!targetChapter) return null;
+        const targetSection = hierarchyEditorModal.sectionId
+          ? targetChapter.mainContents.find(mc => mc.id === hierarchyEditorModal.sectionId) || null
+          : null;
+
+        return (
+          <div className="fixed inset-0 z-[60] bg-black/65 backdrop-blur-sm flex items-start justify-center p-3 sm:p-6 overflow-y-auto">
+            <div className="w-full max-w-6xl bg-slate-50 dark:bg-slate-950 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden my-auto">
+              <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-3.5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-cyan-300 font-mono text-[10px] font-bold shrink-0">
+                    {modalCourse.code}
+                  </span>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                    {targetSection
+                      ? `Section Content Editor · ${targetSection.sectionNumber} ${targetSection.title}`
+                      : `Chapter Content Editor · ${targetChapter.chapterNumber} ${targetChapter.title}`}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHierarchyEditorModal(null)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Close</span>
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-6 max-h-[82vh] overflow-y-auto">
+                <HierarchyContentWorkspace
+                  courseCode={modalCourse.code}
+                  chapter={targetChapter}
+                  section={targetSection}
+                  canEdit={true}
+                  startInEditMode={true}
+                  onSelectSection={(chId, secId) =>
+                    setHierarchyEditorModal({
+                      courseId: modalCourse.id,
+                      chapterId: chId,
+                      sectionId: secId
+                    })
+                  }
+                  onSaveContent={(payload) =>
+                    handleSaveCardHierarchyContent(modalCourse, modalHierarchy, payload)
+                  }
+                  onBackToActiveModule={() => setHierarchyEditorModal(null)}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Between-Module Interactive Retention Check Editor Modal */}
       {checkpointModal && (

@@ -24,10 +24,14 @@ import {
   SubscriptionTier
 } from './types';
 import {
+  ActiveLabDraft,
   SavedLabRecord,
+  normalizeCanvasDimensions,
   sanitizeDevicesForStorage,
   sanitizeLabId,
-  sanitizeLinksForStorage
+  sanitizeLabelsForStorage,
+  sanitizeLinksForStorage,
+  sanitizeShapesForStorage
 } from './utils/labPersistence';
 import {
   LearningStreakData,
@@ -624,6 +628,178 @@ export async function deleteLabTopologyFromFirestore(
   } catch (error) {
     if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
       handleFirestoreError(error, OperationType.DELETE, labPath);
+    }
+    return false;
+  }
+}
+
+export async function fetchLabDraftFromFirestore(): Promise<ActiveLabDraft | null> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return null;
+  const uid = auth.currentUser.uid;
+  const draftPath = `labDrafts/${uid}`;
+  try {
+    const snap = await getDoc(doc(db, 'labDrafts', uid));
+    if (!snap.exists()) return null;
+    const data = snap.data() as Record<string, any>;
+    const updatedAtIso =
+      typeof data.clientUpdatedAt === 'string' && data.clientUpdatedAt
+        ? data.clientUpdatedAt
+        : data.updatedAt && typeof data.updatedAt.toDate === 'function'
+        ? data.updatedAt.toDate().toISOString()
+        : new Date().toISOString();
+
+    const { width, height } = normalizeCanvasDimensions(data.canvasWidth, data.canvasHeight);
+    const rawGrid = (data.gridSettings && typeof data.gridSettings === 'object'
+      ? data.gridSettings
+      : {}) as Record<string, any>;
+
+    const devices = Array.isArray(data.devices) ? data.devices : [];
+    const links = Array.isArray(data.links) ? data.links : [];
+    const shapes = Array.isArray(data.shapes) ? data.shapes : [];
+    const labels = Array.isArray(data.labels) ? data.labels : [];
+
+    return {
+      draftKey: uid,
+      userId: uid,
+      activeSavedLabId:
+        typeof data.activeSavedLabId === 'string' && data.activeSavedLabId
+          ? data.activeSavedLabId
+          : undefined,
+      title: typeof data.title === 'string' && data.title ? data.title : undefined,
+      presetId: String(data.presetId || 'blank-sandbox'),
+      canvasWidth: width,
+      canvasHeight: height,
+      showCustomLabels: data.showCustomLabels !== false,
+      gridSettings: {
+        showGrid: typeof rawGrid.showGrid === 'boolean' ? rawGrid.showGrid : true,
+        snapToGrid: typeof rawGrid.snapToGrid === 'boolean' ? rawGrid.snapToGrid : true,
+        gridSize:
+          typeof rawGrid.gridSize === 'number' && Number.isFinite(rawGrid.gridSize)
+            ? rawGrid.gridSize
+            : 20,
+        gridStyle: rawGrid.gridStyle === 'dots' ? 'dots' : 'lines'
+      },
+      devices,
+      links,
+      shapes,
+      labels,
+      updatedAt: updatedAtIso
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.GET, draftPath);
+    }
+    return null;
+  }
+}
+
+export async function saveLabDraftToFirestore(
+  draft: ActiveLabDraft
+): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const uid = auth.currentUser.uid;
+  const draftPath = `labDrafts/${uid}`;
+  const ref = doc(db, 'labDrafts', uid);
+
+  const safePresetId = sanitizeLabId(draft.presetId || 'blank-sandbox');
+  const safeSavedLabId = draft.activeSavedLabId ? sanitizeLabId(draft.activeSavedLabId) : '';
+  const safeTitle = draft.title?.trim().slice(0, 120) || '';
+  const { width: safeWidth, height: safeHeight } = normalizeCanvasDimensions(
+    draft.canvasWidth,
+    draft.canvasHeight
+  );
+
+  let safeDevices = sanitizeDevicesForStorage(draft.devices);
+  const safeLinks = sanitizeLinksForStorage(draft.links);
+  const safeShapes = sanitizeShapesForStorage(draft.shapes, safeWidth, safeHeight);
+  const safeLabels = sanitizeLabelsForStorage(draft.labels, safeWidth, safeHeight);
+
+  // Guard against Firestore 1 MiB document size limit if CLI history grows large
+  const approxBytes = JSON.stringify({
+    devices: safeDevices,
+    links: safeLinks,
+    shapes: safeShapes,
+    labels: safeLabels
+  }).length;
+  if (approxBytes > 800_000) {
+    safeDevices = safeDevices.map(dev => ({
+      ...dev,
+      cliHistory: Array.isArray(dev.cliHistory) ? dev.cliHistory.slice(-10) : []
+    }));
+  }
+
+  const rawGridSize = Number(draft.gridSettings?.gridSize);
+  const clampedGridSize = Number.isFinite(rawGridSize)
+    ? Math.round(Math.min(100, Math.max(5, rawGridSize)))
+    : 20;
+  const safeGridSettings = {
+    showGrid: draft.gridSettings?.showGrid !== false,
+    snapToGrid: draft.gridSettings?.snapToGrid !== false,
+    gridSize: clampedGridSize,
+    gridStyle: draft.gridSettings?.gridStyle === 'dots' ? ('dots' as const) : ('lines' as const)
+  };
+  const clientUpdatedAt = (draft.updatedAt || new Date().toISOString()).slice(0, 64);
+
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, {
+        presetId: safePresetId,
+        activeSavedLabId: safeSavedLabId || deleteField(),
+        title: safeTitle || deleteField(),
+        canvasWidth: safeWidth,
+        canvasHeight: safeHeight,
+        showCustomLabels: draft.showCustomLabels !== false,
+        gridSettings: safeGridSettings,
+        devices: safeDevices,
+        links: safeLinks,
+        shapes: safeShapes,
+        labels: safeLabels,
+        deviceCount: safeDevices.length,
+        linkCount: safeLinks.length,
+        clientUpdatedAt,
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      await setDoc(ref, {
+        uid,
+        presetId: safePresetId,
+        ...(safeSavedLabId ? { activeSavedLabId: safeSavedLabId } : {}),
+        ...(safeTitle ? { title: safeTitle } : {}),
+        canvasWidth: safeWidth,
+        canvasHeight: safeHeight,
+        showCustomLabels: draft.showCustomLabels !== false,
+        gridSettings: safeGridSettings,
+        devices: safeDevices,
+        links: safeLinks,
+        shapes: safeShapes,
+        labels: safeLabels,
+        deviceCount: safeDevices.length,
+        linkCount: safeLinks.length,
+        clientUpdatedAt,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.WRITE, draftPath);
+    }
+    return false;
+  }
+}
+
+export async function clearLabDraftFromFirestore(): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const uid = auth.currentUser.uid;
+  const draftPath = `labDrafts/${uid}`;
+  try {
+    await deleteDoc(doc(db, 'labDrafts', uid));
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.DELETE, draftPath);
     }
     return false;
   }
