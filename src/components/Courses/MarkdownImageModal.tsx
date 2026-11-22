@@ -15,23 +15,130 @@ import {
 } from 'lucide-react';
 
 export type MarkdownImagePlacement = 'top' | 'bottom' | 'left' | 'right';
+export type MarkdownImageAlign = 'block' | 'left' | 'right';
+
+export interface ParsedMarkdownImageModifiers {
+  alt: string;
+  align: MarkdownImageAlign;
+  width?: number;
+  height?: number;
+}
+
+const MIN_RESIZE_WIDTH = 80;
+const MAX_RESIZE_WIDTH = 1200;
+const MIN_RESIZE_HEIGHT = 60;
+const MAX_RESIZE_HEIGHT = 900;
+
+export function clampImageDimensions(width: number, height: number): {
+  width: number;
+  height: number;
+} {
+  return {
+    width: Math.round(Math.min(MAX_RESIZE_WIDTH, Math.max(MIN_RESIZE_WIDTH, width))),
+    height: Math.round(Math.min(MAX_RESIZE_HEIGHT, Math.max(MIN_RESIZE_HEIGHT, height)))
+  };
+}
+
+export function parseMarkdownImageModifiers(rawAlt: string): ParsedMarkdownImageModifiers {
+  let remaining = rawAlt.trim();
+  let align: MarkdownImageAlign = 'block';
+  let width: number | undefined;
+  let height: number | undefined;
+
+  // Strip recognized trailing `|modifier` tokens right-to-left (e.g. `|left|420x260` or `|420x260|right`)
+  for (let pass = 0; pass < 2; pass++) {
+    const sizeMatch = remaining.match(/^(.*?)\|(\d{2,4})x(\d{2,4})$/i);
+    if (sizeMatch) {
+      const clamped = clampImageDimensions(Number(sizeMatch[2]), Number(sizeMatch[3]));
+      width = clamped.width;
+      height = clamped.height;
+      remaining = sizeMatch[1].trim();
+      continue;
+    }
+    const alignMatch = remaining.match(/^(.*?)\|(left|right|center|top|bottom)$/i);
+    if (alignMatch) {
+      const pos = alignMatch[2].toLowerCase();
+      align = pos === 'left' ? 'left' : pos === 'right' ? 'right' : 'block';
+      remaining = alignMatch[1].trim();
+      continue;
+    }
+    break;
+  }
+
+  return {
+    alt: remaining,
+    align,
+    width,
+    height
+  };
+}
+
+export function formatMarkdownImageAlt(meta: ParsedMarkdownImageModifiers): string {
+  const cleanAlt = meta.alt.trim().replace(/[\r\n[\]|]/g, ' ').trim();
+  const parts: string[] = [];
+  if (cleanAlt) parts.push(cleanAlt);
+  if (meta.align === 'left' || meta.align === 'right') {
+    parts.push(`|${meta.align}`);
+  }
+  if (typeof meta.width === 'number' && typeof meta.height === 'number') {
+    const clamped = clampImageDimensions(meta.width, meta.height);
+    parts.push(`|${clamped.width}x${clamped.height}`);
+  }
+  return parts.length > 0 ? parts.join('') : 'Course illustration';
+}
 
 export function parseMarkdownImageAltAndPlacement(rawAlt: string): {
   alt: string;
-  align: 'block' | 'left' | 'right';
+  align: MarkdownImageAlign;
 } {
-  const match = rawAlt.match(/^(.*?)\|(left|right|center|top|bottom)$/i);
-  if (!match) {
-    return {
-      alt: rawAlt.trim(),
-      align: 'block'
-    };
+  const { alt, align } = parseMarkdownImageModifiers(rawAlt);
+  return { alt, align };
+}
+
+export function countMarkdownImages(markdown: string): number {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  let count = 0;
+  let inCodeFence = false;
+  for (const line of lines) {
+    if (line.trim().startsWith('```')) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+    if (inCodeFence) continue;
+    const matches = line.match(/!\[[^\]]*\]\([^)\s]+\)/g);
+    if (matches) count += matches.length;
   }
-  const pos = match[2].toLowerCase();
-  return {
-    alt: match[1].trim(),
-    align: pos === 'left' ? 'left' : pos === 'right' ? 'right' : 'block'
-  };
+  return count;
+}
+
+export function updateMarkdownImageAtIndex(
+  markdown: string,
+  targetIndex: number,
+  updater: (current: ParsedMarkdownImageModifiers) => ParsedMarkdownImageModifiers
+): string {
+  const normalized = markdown.replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n');
+  let currentIndex = 0;
+  let inCodeFence = false;
+
+  const updatedLines = lines.map((line) => {
+    if (line.trim().startsWith('```')) {
+      inCodeFence = !inCodeFence;
+      return line;
+    }
+    if (inCodeFence) return line;
+
+    return line.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (fullMatch, rawAlt: string, src: string) => {
+      const idx = currentIndex;
+      currentIndex += 1;
+      if (idx !== targetIndex) return fullMatch;
+      const parsed = parseMarkdownImageModifiers(rawAlt);
+      const next = updater(parsed);
+      return `![${formatMarkdownImageAlt(next)}](${src})`;
+    });
+  });
+
+  return updatedLines.join('\n');
 }
 
 const MAX_DIMENSION_PX = 1400;

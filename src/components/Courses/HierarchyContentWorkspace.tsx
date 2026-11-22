@@ -2,11 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
   Code2,
+  Columns2,
   Edit3,
   Eye,
   FileText,
   Heading2,
-  ImageOff,
   ImagePlus,
   List,
   Plus,
@@ -23,12 +23,14 @@ import {
   ResolvedMainContentSection
 } from '../../utils/courseHierarchy';
 import {
-  isSafeMarkdownImageUrl,
+  countMarkdownImages,
+  MarkdownImageAlign,
   MarkdownImageModal,
   MarkdownImagePlacement,
-  parseMarkdownImageAltAndPlacement,
-  processImageFileToDataUrl
+  processImageFileToDataUrl,
+  updateMarkdownImageAtIndex
 } from './MarkdownImageModal';
+import { ResizableMarkdownImage } from './ResizableMarkdownImage';
 
 interface HierarchyContentWorkspaceProps {
   courseCode: string;
@@ -115,82 +117,36 @@ function applyMarkdownImageInsertion(
   );
 }
 
-const MarkdownImage: React.FC<{ src: string; alt: string; inline?: boolean }> = ({
-  src,
-  alt: rawAlt,
-  inline = false
-}) => {
-  const [hasError, setHasError] = useState(false);
-  const { alt, align } = parseMarkdownImageAltAndPlacement(rawAlt);
+interface MarkdownImageEditCallbacks {
+  allocateIndex: () => number;
+  editable: boolean;
+  onResizeImage?: (imageIndex: number, width: number, height: number) => void;
+  onResetImageSize?: (imageIndex: number) => void;
+  onChangeImageAlign?: (imageIndex: number, align: MarkdownImageAlign) => void;
+}
 
-  if (!isSafeMarkdownImageUrl(src) || hasError) {
-    return (
-      <span
-        className={`my-2 flex items-center gap-2.5 px-3.5 py-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 text-xs text-slate-500 dark:text-slate-400 ${
-          align === 'left'
-            ? 'sm:float-left sm:mr-6 sm:mb-3 w-full sm:w-[42%] sm:max-w-[340px]'
-            : align === 'right'
-            ? 'sm:float-right sm:ml-6 sm:mb-3 w-full sm:w-[42%] sm:max-w-[340px]'
-            : 'clear-both'
-        }`}
-      >
-        <ImageOff className="w-4 h-4 shrink-0 text-slate-400" />
-        <span className="truncate">{alt || 'Image unavailable'}</span>
-      </span>
-    );
-  }
-
-  if (inline) {
-    return (
-      <img
-        src={src}
-        alt={alt || 'Course illustration'}
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        onError={() => setHasError(true)}
-        className="inline-block max-h-64 w-auto max-w-full rounded-lg border border-slate-200 dark:border-slate-700 align-middle my-1"
-      />
-    );
-  }
-
-  const figurePlacementClass =
-    align === 'left'
-      ? 'my-2 sm:my-1 sm:float-left sm:mr-6 sm:mb-3 w-full sm:w-[42%] sm:max-w-[340px]'
-      : align === 'right'
-      ? 'my-2 sm:my-1 sm:float-right sm:ml-6 sm:mb-3 w-full sm:w-[42%] sm:max-w-[340px]'
-      : 'clear-both my-4';
-
-  return (
-    <figure
-      className={`${figurePlacementClass} rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 overflow-hidden`}
-    >
-      <div className="flex items-center justify-center p-2 sm:p-3 bg-white/70 dark:bg-slate-900/40">
-        <img
-          src={src}
-          alt={alt || 'Course illustration'}
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          onError={() => setHasError(true)}
-          className={`${
-            align === 'block' ? 'max-h-[460px] w-auto' : 'max-h-[320px] w-full'
-          } max-w-full rounded-lg object-contain`}
-        />
-      </div>
-      {alt && (
-        <figcaption className="px-3.5 py-2 border-t border-slate-200/80 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 text-center">
-          {alt}
-        </figcaption>
-      )}
-    </figure>
-  );
-};
-
-function renderInlineFormatting(text: string): React.ReactNode[] {
+function renderInlineFormatting(
+  text: string,
+  imageControls?: MarkdownImageEditCallbacks
+): React.ReactNode[] {
   const tokens = text.split(/(!\[[^\]]*\]\([^)\s]+\)|`[^`]+`|\*\*[^*]+\*\*)/g);
   return tokens.map((token, idx) => {
     const imgMatch = token.match(STANDALONE_IMAGE_RE);
     if (imgMatch) {
-      return <MarkdownImage key={idx} alt={imgMatch[1]} src={imgMatch[2]} inline />;
+      const imageIndex = imageControls?.allocateIndex();
+      return (
+        <ResizableMarkdownImage
+          key={idx}
+          rawAlt={imgMatch[1]}
+          src={imgMatch[2]}
+          inline
+          editable={imageControls?.editable}
+          imageIndex={imageIndex}
+          onResize={imageControls?.onResizeImage}
+          onResetSize={imageControls?.onResetImageSize}
+          onChangeAlign={imageControls?.onChangeImageAlign}
+        />
+      );
     }
     if (token.startsWith('`') && token.endsWith('`') && token.length >= 2) {
       return (
@@ -213,10 +169,32 @@ function renderInlineFormatting(text: string): React.ReactNode[] {
   });
 }
 
-export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
+export interface MarkdownProseProps {
+  content: string;
+  editableImages?: boolean;
+  onResizeImage?: (imageIndex: number, width: number, height: number) => void;
+  onResetImageSize?: (imageIndex: number) => void;
+  onChangeImageAlign?: (imageIndex: number, align: MarkdownImageAlign) => void;
+}
+
+export const MarkdownProse: React.FC<MarkdownProseProps> = ({
+  content,
+  editableImages = false,
+  onResizeImage,
+  onResetImageSize,
+  onChangeImageAlign
+}) => {
   const lines = content.replace(/\r\n/g, '\n').split('\n');
   const blocks: React.ReactNode[] = [];
   let i = 0;
+  let imageCounter = 0;
+  const imageControls: MarkdownImageEditCallbacks = {
+    allocateIndex: () => imageCounter++,
+    editable: editableImages,
+    onResizeImage,
+    onResetImageSize,
+    onChangeImageAlign
+  };
 
   while (i < lines.length) {
     const line = lines[i];
@@ -259,7 +237,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
     if (line.startsWith('### ')) {
       blocks.push(
         <h3 key={`h3-${i}`} className="text-sm font-bold text-slate-900 dark:text-white mt-4 mb-1.5">
-          {renderInlineFormatting(line.slice(4))}
+          {renderInlineFormatting(line.slice(4), imageControls)}
         </h3>
       );
       i += 1;
@@ -268,7 +246,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
     if (line.startsWith('## ')) {
       blocks.push(
         <h2 key={`h2-${i}`} className="clear-both text-base font-extrabold text-slate-900 dark:text-white mt-5 mb-2">
-          {renderInlineFormatting(line.slice(3))}
+          {renderInlineFormatting(line.slice(3), imageControls)}
         </h2>
       );
       i += 1;
@@ -277,7 +255,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
     if (line.startsWith('# ')) {
       blocks.push(
         <h1 key={`h1-${i}`} className="clear-both text-lg font-extrabold text-slate-900 dark:text-white mt-5 mb-2">
-          {renderInlineFormatting(line.slice(2))}
+          {renderInlineFormatting(line.slice(2), imageControls)}
         </h1>
       );
       i += 1;
@@ -295,7 +273,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
         <ul key={`ul-${i}`} className="flow-root list-disc pl-5 space-y-1.5 text-sm text-slate-700 dark:text-slate-300">
           {items.map((item, idx) => (
             <li key={idx} className="leading-relaxed">
-              {renderInlineFormatting(item)}
+              {renderInlineFormatting(item, imageControls)}
             </li>
           ))}
         </ul>
@@ -314,7 +292,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
         <ol key={`ol-${i}`} className="flow-root list-decimal pl-5 space-y-1.5 text-sm text-slate-700 dark:text-slate-300">
           {items.map((item, idx) => (
             <li key={idx} className="leading-relaxed">
-              {renderInlineFormatting(item)}
+              {renderInlineFormatting(item, imageControls)}
             </li>
           ))}
         </ol>
@@ -325,11 +303,17 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
     // Standalone Markdown image
     const standaloneImageMatch = line.trim().match(STANDALONE_IMAGE_RE);
     if (standaloneImageMatch) {
+      const imageIndex = imageControls.allocateIndex();
       blocks.push(
-        <MarkdownImage
-          key={`img-${i}`}
-          alt={standaloneImageMatch[1]}
+        <ResizableMarkdownImage
+          key={`img-${i}-${imageIndex}`}
+          rawAlt={standaloneImageMatch[1]}
           src={standaloneImageMatch[2]}
+          editable={editableImages}
+          imageIndex={imageIndex}
+          onResize={onResizeImage}
+          onResetSize={onResetImageSize}
+          onChangeAlign={onChangeImageAlign}
         />
       );
       i += 1;
@@ -353,7 +337,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
     }
     blocks.push(
       <p key={`p-${i}`} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">
-        {renderInlineFormatting(paraLines.join(' '))}
+        {renderInlineFormatting(paraLines.join(' '), imageControls)}
       </p>
     );
   }
@@ -386,7 +370,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
   }, [onConsumeStartInEditMode]);
 
   const [isEditing, setIsEditing] = useState<boolean>(canEdit && startInEditMode);
-  const [editorTab, setEditorTab] = useState<'write' | 'preview'>('write');
+  const [editorTab, setEditorTab] = useState<'write' | 'split' | 'preview'>('write');
   const [draftTitle, setDraftTitle] = useState<string>(targetTitle);
   const [draftSummary, setDraftSummary] = useState<string>(targetSummary);
   const [draftContent, setDraftContent] = useState<string>(targetContent);
@@ -483,9 +467,38 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
 
     setDraftContent(prev => applyMarkdownImageInsertion(prev, src, alt, placement, sel));
     setImageInsertError(null);
+    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
     window.requestAnimationFrame(() => {
       textareaRef.current?.focus();
     });
+  };
+
+  const handleResizeImage = (imageIndex: number, width: number, height: number) => {
+    setDraftContent(prev =>
+      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
+        ...current,
+        width,
+        height
+      }))
+    );
+  };
+
+  const handleResetImageSize = (imageIndex: number) => {
+    setDraftContent(prev =>
+      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
+        alt: current.alt,
+        align: current.align
+      }))
+    );
+  };
+
+  const handleChangeImageAlign = (imageIndex: number, align: MarkdownImageAlign) => {
+    setDraftContent(prev =>
+      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
+        ...current,
+        align
+      }))
+    );
   };
 
   const handleOpenImageModal = () => {
@@ -641,7 +654,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                   <button
                     type="button"
                     onClick={() => setEditorTab('write')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                       editorTab === 'write'
                         ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -652,8 +665,20 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                   </button>
                   <button
                     type="button"
+                    onClick={() => setEditorTab('split')}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                      editorTab === 'split'
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <Columns2 className="w-3.5 h-3.5" />
+                    <span>Split</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setEditorTab('preview')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                       editorTab === 'preview'
                         ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -664,7 +689,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                   </button>
                 </div>
 
-                {editorTab === 'write' && (
+                {editorTab !== 'preview' && (
                   <div className="flex flex-wrap items-center gap-1">
                     <button
                       type="button"
@@ -763,11 +788,111 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                   {imageInsertError && (
                     <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
                   )}
+                  {countMarkdownImages(draftContent) > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300">
+                      <span>
+                        Images detected — switch to <strong>Split</strong> or <strong>Preview</strong> to drag image edges or corners to resize.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEditorTab('split')}
+                        className="inline-flex items-center gap-1 font-semibold text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
+                      >
+                        <Columns2 className="w-3 h-3" />
+                        <span>Open Split Resize View</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : editorTab === 'split' ? (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-stretch">
+                  <div className="space-y-1.5 flex flex-col">
+                    <textarea
+                      ref={textareaRef}
+                      rows={14}
+                      value={draftContent}
+                      onChange={(e) => setDraftContent(e.target.value)}
+                      onPaste={(e) => {
+                        const items = e.clipboardData?.items;
+                        if (!items) return;
+                        for (let idx = 0; idx < items.length; idx++) {
+                          if (items[idx].type.startsWith('image/')) {
+                            const file = items[idx].getAsFile();
+                            if (file) {
+                              e.preventDefault();
+                              void handleDirectImageFile(file);
+                              return;
+                            }
+                          }
+                        }
+                      }}
+                      onDragOver={(e) => {
+                        if (Array.from(e.dataTransfer.types || []).includes('Files')) {
+                          e.preventDefault();
+                          setIsTextareaDragOver(true);
+                        }
+                      }}
+                      onDragLeave={() => setIsTextareaDragOver(false)}
+                      onDrop={(e) => {
+                        const file = e.dataTransfer.files?.[0];
+                        if (file && file.type.startsWith('image/')) {
+                          e.preventDefault();
+                          setIsTextareaDragOver(false);
+                          void handleDirectImageFile(file);
+                        } else {
+                          setIsTextareaDragOver(false);
+                        }
+                      }}
+                      placeholder={`Write detailed ${isSectionLevel ? 'section' : 'chapter'} content here...`}
+                      className={`w-full flex-1 min-h-[320px] p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border text-sm font-mono leading-relaxed text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
+                        isTextareaDragOver
+                          ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-50/40 dark:bg-blue-950/30'
+                          : 'border-slate-200 dark:border-slate-700'
+                      }`}
+                    />
+                    {imageInsertError && (
+                      <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
+                    )}
+                  </div>
+
+                  <div className="min-h-[320px] p-4 sm:p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-3">
+                    {countMarkdownImages(draftContent) > 0 && (
+                      <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span>Drag image corner or edge handles to adjust width &amp; height</span>
+                        <span className="font-mono text-[10px] text-slate-400">Shift = lock ratio</span>
+                      </div>
+                    )}
+                    {draftContent.trim() ? (
+                      <MarkdownProse
+                        content={draftContent}
+                        editableImages
+                        onResizeImage={handleResizeImage}
+                        onResetImageSize={handleResetImageSize}
+                        onChangeImageAlign={handleChangeImageAlign}
+                      />
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">
+                        Start typing on the left or click Insert Image to preview and resize visuals here.
+                      </p>
+                    )}
+                  </div>
                 </div>
               ) : (
-                <div className="min-h-[260px] p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800">
+                <div className="min-h-[260px] p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-3">
+                  {countMarkdownImages(draftContent) > 0 && (
+                    <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                      <span>Interactive preview — drag image corner or edge handles to adjust width &amp; height</span>
+                      <span className="font-mono text-[10px] text-slate-400">Hold Shift on corner to lock aspect ratio</span>
+                    </div>
+                  )}
                   {draftContent.trim() ? (
-                    <MarkdownProse content={draftContent} />
+                    <MarkdownProse
+                      content={draftContent}
+                      editableImages
+                      onResizeImage={handleResizeImage}
+                      onResetImageSize={handleResetImageSize}
+                      onChangeImageAlign={handleChangeImageAlign}
+                    />
                   ) : (
                     <p className="text-xs text-slate-400 italic">
                       Nothing written yet. Switch back to Write to compose content.
@@ -893,7 +1018,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
   }, [onConsumeStartInEditMode]);
 
   const [isEditing, setIsEditing] = useState<boolean>(canEdit && startInEditMode);
-  const [editorTab, setEditorTab] = useState<'write' | 'preview'>('write');
+  const [editorTab, setEditorTab] = useState<'write' | 'split' | 'preview'>('write');
   const [draftTitle, setDraftTitle] = useState<string>(module.title);
   const [draftSummary, setDraftSummary] = useState<string>(module.summary || '');
   const [draftDurationMin, setDraftDurationMin] = useState<number>(module.durationMin || 20);
@@ -1034,9 +1159,38 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
 
     setDraftContent(prev => applyMarkdownImageInsertion(prev, src, alt, placement, sel));
     setImageInsertError(null);
+    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
     window.requestAnimationFrame(() => {
       textareaRef.current?.focus();
     });
+  };
+
+  const handleResizeImage = (imageIndex: number, width: number, height: number) => {
+    setDraftContent(prev =>
+      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
+        ...current,
+        width,
+        height
+      }))
+    );
+  };
+
+  const handleResetImageSize = (imageIndex: number) => {
+    setDraftContent(prev =>
+      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
+        alt: current.alt,
+        align: current.align
+      }))
+    );
+  };
+
+  const handleChangeImageAlign = (imageIndex: number, align: MarkdownImageAlign) => {
+    setDraftContent(prev =>
+      updateMarkdownImageAtIndex(prev, imageIndex, current => ({
+        ...current,
+        align
+      }))
+    );
   };
 
   const handleOpenImageModal = () => {
@@ -1234,7 +1388,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={() => setEditorTab('write')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                       editorTab === 'write'
                         ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1245,8 +1399,20 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                   </button>
                   <button
                     type="button"
+                    onClick={() => setEditorTab('split')}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                      editorTab === 'split'
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <Columns2 className="w-3.5 h-3.5" />
+                    <span>Split</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setEditorTab('preview')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                       editorTab === 'preview'
                         ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1257,7 +1423,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                   </button>
                 </div>
 
-                {editorTab === 'write' && (
+                {editorTab !== 'preview' && (
                   <div className="flex flex-wrap items-center gap-1">
                     <button
                       type="button"
@@ -1356,11 +1522,111 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                   {imageInsertError && (
                     <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
                   )}
+                  {countMarkdownImages(draftContent) > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300">
+                      <span>
+                        Images detected — switch to <strong>Split</strong> or <strong>Preview</strong> to drag image edges or corners to resize.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEditorTab('split')}
+                        className="inline-flex items-center gap-1 font-semibold text-blue-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
+                      >
+                        <Columns2 className="w-3 h-3" />
+                        <span>Open Split Resize View</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : editorTab === 'split' ? (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-stretch">
+                  <div className="space-y-1.5 flex flex-col">
+                    <textarea
+                      ref={textareaRef}
+                      rows={14}
+                      value={draftContent}
+                      onChange={(e) => setDraftContent(e.target.value)}
+                      onPaste={(e) => {
+                        const items = e.clipboardData?.items;
+                        if (!items) return;
+                        for (let idx = 0; idx < items.length; idx++) {
+                          if (items[idx].type.startsWith('image/')) {
+                            const file = items[idx].getAsFile();
+                            if (file) {
+                              e.preventDefault();
+                              void handleDirectImageFile(file);
+                              return;
+                            }
+                          }
+                        }
+                      }}
+                      onDragOver={(e) => {
+                        if (Array.from(e.dataTransfer.types || []).includes('Files')) {
+                          e.preventDefault();
+                          setIsTextareaDragOver(true);
+                        }
+                      }}
+                      onDragLeave={() => setIsTextareaDragOver(false)}
+                      onDrop={(e) => {
+                        const file = e.dataTransfer.files?.[0];
+                        if (file && file.type.startsWith('image/')) {
+                          e.preventDefault();
+                          setIsTextareaDragOver(false);
+                          void handleDirectImageFile(file);
+                        } else {
+                          setIsTextareaDragOver(false);
+                        }
+                      }}
+                      placeholder={`Write detailed lesson content or companion notes here...`}
+                      className={`w-full flex-1 min-h-[320px] p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border text-sm font-mono leading-relaxed text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
+                        isTextareaDragOver
+                          ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-50/40 dark:bg-blue-950/30'
+                          : 'border-slate-200 dark:border-slate-700'
+                      }`}
+                    />
+                    {imageInsertError && (
+                      <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
+                    )}
+                  </div>
+
+                  <div className="min-h-[320px] p-4 sm:p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-3">
+                    {countMarkdownImages(draftContent) > 0 && (
+                      <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span>Drag image corner or edge handles to adjust width &amp; height</span>
+                        <span className="font-mono text-[10px] text-slate-400">Shift = lock ratio</span>
+                      </div>
+                    )}
+                    {draftContent.trim() ? (
+                      <MarkdownProse
+                        content={draftContent}
+                        editableImages
+                        onResizeImage={handleResizeImage}
+                        onResetImageSize={handleResetImageSize}
+                        onChangeImageAlign={handleChangeImageAlign}
+                      />
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">
+                        Start typing on the left or click Insert Image to preview and resize visuals here.
+                      </p>
+                    )}
+                  </div>
                 </div>
               ) : (
-                <div className="min-h-[260px] p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800">
+                <div className="min-h-[260px] p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-3">
+                  {countMarkdownImages(draftContent) > 0 && (
+                    <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                      <span>Interactive preview — drag image corner or edge handles to adjust width &amp; height</span>
+                      <span className="font-mono text-[10px] text-slate-400">Hold Shift on corner to lock aspect ratio</span>
+                    </div>
+                  )}
                   {draftContent.trim() ? (
-                    <MarkdownProse content={draftContent} />
+                    <MarkdownProse
+                      content={draftContent}
+                      editableImages
+                      onResizeImage={handleResizeImage}
+                      onResetImageSize={handleResetImageSize}
+                      onChangeImageAlign={handleChangeImageAlign}
+                    />
                   ) : (
                     <p className="text-xs text-slate-400 italic">
                       Nothing written yet. Switch back to Write to compose content.
