@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Plus,
   Layers,
@@ -37,7 +37,9 @@ import {
   Clapperboard,
   SquarePen,
   FolderPlus,
-  Check
+  Check,
+  LayoutGrid,
+  List
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import {
@@ -471,6 +473,49 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
 
   // Drag-and-Drop Module Builder Studio & Card Outline State
   const [builderCourseId, setBuilderCourseId] = useState<string | null>(null);
+  const [courseDisplayView, setCourseDisplayView] = useState<'thumbnail' | 'list'>(() => {
+    try {
+      const saved = window.localStorage.getItem('netpulse_course_manager_view');
+      return saved === 'list' ? 'list' : 'thumbnail';
+    } catch {
+      return 'thumbnail';
+    }
+  });
+  const [collapsedCourseIds, setCollapsedCourseIds] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = window.localStorage.getItem('netpulse_course_manager_collapsed');
+      return saved ? (JSON.parse(saved) as Record<string, boolean>) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('netpulse_course_manager_view', courseDisplayView);
+    } catch {
+      // ignore storage failures
+    }
+  }, [courseDisplayView]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        'netpulse_course_manager_collapsed',
+        JSON.stringify(collapsedCourseIds)
+      );
+    } catch {
+      // ignore storage failures
+    }
+  }, [collapsedCourseIds]);
+
+  const toggleCourseCollapsed = (courseId: string) => {
+    setCollapsedCourseIds(prev => ({
+      ...prev,
+      [courseId]: !prev[courseId]
+    }));
+  };
+
   const [expandedCardChapters, setExpandedCardChapters] = useState<Record<string, boolean>>({});
   const [collapsedCardSections, setCollapsedCardSections] = useState<Record<string, boolean>>({});
   const [cardNewChapterTitles, setCardNewChapterTitles] = useState<Record<string, string>>({});
@@ -2669,30 +2714,168 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
               onToast={showToast}
             />
           ) : (
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              {courses.map(course => (
+            <div className="space-y-4">
+              {/* Course Manager Toolbar: Collapse/Expand All Courses + Thumbnail / List Display Switcher */}
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                  <span className="font-semibold text-slate-900 dark:text-white tabular-nums">
+                    {courses.length} {courses.length === 1 ? 'Course' : 'Courses'}
+                  </span>
+                  <span className="text-slate-300 dark:text-slate-700">·</span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
+                    {courses.filter(c => !collapsedCourseIds[c.id]).length} Expanded ·{' '}
+                    {courses.filter(c => Boolean(collapsedCourseIds[c.id])).length} Collapsed
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {courses.length > 0 && (() => {
+                    const anyExpanded = courses.some(c => !collapsedCourseIds[c.id]);
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (anyExpanded) {
+                            const next: Record<string, boolean> = {};
+                            courses.forEach(c => {
+                              next[c.id] = true;
+                            });
+                            setCollapsedCourseIds(next);
+                          } else {
+                            setCollapsedCourseIds({});
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 hover:text-blue-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap"
+                        title={anyExpanded ? 'Collapse all courses' : 'Expand all courses'}
+                      >
+                        {anyExpanded ? (
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        )}
+                        <span>{anyExpanded ? 'Collapse All' : 'Expand All'}</span>
+                      </button>
+                    );
+                  })()}
+
+                  <div
+                    role="group"
+                    aria-label="Course display view"
+                    className="inline-flex items-center p-0.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setCourseDisplayView('thumbnail')}
+                      aria-pressed={courseDisplayView === 'thumbnail'}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                        courseDisplayView === 'thumbnail'
+                          ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-cyan-400 shadow-sm'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                      }`}
+                      title="Thumbnail grid view"
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5" />
+                      <span>Thumbnail</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCourseDisplayView('list')}
+                      aria-pressed={courseDisplayView === 'list'}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                        courseDisplayView === 'list'
+                          ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-cyan-400 shadow-sm'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                      }`}
+                      title="Compact list view"
+                    >
+                      <List className="w-3.5 h-3.5" />
+                      <span>List</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className={
+                  courseDisplayView === 'thumbnail'
+                    ? 'grid grid-cols-1 xl:grid-cols-2 gap-4 items-start'
+                    : 'flex flex-col gap-2.5'
+                }
+              >
+              {courses.map(course => {
+                const isCourseCollapsed = Boolean(collapsedCourseIds[course.id]);
+                const cardHierarchy = resolveCourseHierarchy(course);
+                const allCardChaptersExpanded =
+                  cardHierarchy.length > 0 &&
+                  cardHierarchy.every(ch => expandedCardChapters[`${course.id}::${ch.id}`] === true);
+                const hasAnyChecks = course.modules.some((m, idx) => {
+                  const nextM = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
+                  return Boolean(nextM && getBetweenModuleQuiz(course, m, nextM));
+                });
+                const hasRestorableChecks = course.modules.some((m, idx) => {
+                  const nextM = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
+                  if (!nextM || m.type === 'quiz' || nextM.type === 'quiz') return false;
+                  return Boolean(
+                    m.checkpointQuiz?.questions?.length || hasModuleBuiltinCheckpoint(m.id)
+                  );
+                });
+
+                return (
                 <div
                   key={course.id}
-                  className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 flex flex-col justify-between"
+                  className={`${
+                    courseDisplayView === 'list' ? 'px-4 py-3 sm:px-5' : 'p-5'
+                  } rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 flex flex-col justify-between`}
                 >
                   <div className="space-y-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <CourseThumbnail
-                          course={course}
-                          showScrim={false}
-                          className="w-24 h-16 rounded-xl shrink-0 border border-slate-200 dark:border-slate-800"
-                        />
-                        <div className="min-w-0">
-                          <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono text-[10px] font-bold">
-                            {course.code}
-                          </span>
-                          <h3 className="text-base font-bold text-slate-900 dark:text-white mt-0.5 truncate">
-                            {course.title}
-                          </h3>
-                          <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
-                            {course.subtitle}
-                          </p>
+                    <div className="flex flex-wrap sm:flex-nowrap items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                        {courseDisplayView === 'thumbnail' && (
+                          <button
+                            type="button"
+                            onClick={() => toggleCourseCollapsed(course.id)}
+                            className="shrink-0 rounded-xl overflow-hidden focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                            title={isCourseCollapsed ? 'Expand course' : 'Collapse course'}
+                          >
+                            <CourseThumbnail
+                              course={course}
+                              showScrim={false}
+                              className="w-24 h-16 rounded-xl border border-slate-200 dark:border-slate-800"
+                            />
+                          </button>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono text-[10px] font-bold">
+                              {course.code}
+                            </span>
+                            {courseDisplayView === 'list' && (
+                              <span className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                                {cardHierarchy.length} Ch · {course.modules.length} Items · {course.durationHours}h · ${course.price}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => toggleCourseCollapsed(course.id)}
+                            aria-expanded={!isCourseCollapsed}
+                            className="mt-0.5 w-full text-left flex items-center gap-1.5 group/title focus:outline-none"
+                            title={isCourseCollapsed ? 'Click to expand course' : 'Click to collapse course'}
+                          >
+                            <h3 className="text-base font-bold text-slate-900 dark:text-white truncate group-hover/title:text-blue-600 dark:group-hover/title:text-cyan-400 transition-colors">
+                              {course.title}
+                            </h3>
+                          </button>
+                          {isCourseCollapsed ? (
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5 font-mono tabular-nums">
+                              {cardHierarchy.length} Chapters · {course.modules.length} Items ·{' '}
+                              {course.durationHours}h · {course.enrolledCount.toLocaleString()} Enrolled
+                            </p>
+                          ) : (
+                            <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
+                              {course.subtitle}
+                            </p>
+                          )}
                         </div>
                       </div>
 
@@ -2734,28 +2917,26 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
+
+                        <button
+                          type="button"
+                          onClick={() => toggleCourseCollapsed(course.id)}
+                          aria-expanded={!isCourseCollapsed}
+                          aria-label={isCourseCollapsed ? `Expand ${course.title}` : `Collapse ${course.title}`}
+                          title={isCourseCollapsed ? 'Expand course' : 'Collapse course'}
+                          className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        >
+                          {isCourseCollapsed ? (
+                            <ChevronDown className="w-4 h-4" />
+                          ) : (
+                            <ChevronUp className="w-4 h-4" />
+                          )}
+                        </button>
                       </div>
                     </div>
 
                     {/* Modules breakdown with 3-level indentation (collapsed by default) matching Course Builder */}
-                    {(() => {
-                      const cardHierarchy = resolveCourseHierarchy(course);
-                      const allCardChaptersExpanded =
-                        cardHierarchy.length > 0 &&
-                        cardHierarchy.every(ch => expandedCardChapters[`${course.id}::${ch.id}`] === true);
-                      const hasAnyChecks = course.modules.some((m, idx) => {
-                        const nextM = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
-                        return Boolean(nextM && getBetweenModuleQuiz(course, m, nextM));
-                      });
-                      const hasRestorableChecks = course.modules.some((m, idx) => {
-                        const nextM = idx < course.modules.length - 1 ? course.modules[idx + 1] : undefined;
-                        if (!nextM || m.type === 'quiz' || nextM.type === 'quiz') return false;
-                        return Boolean(
-                          m.checkpointQuiz?.questions?.length || hasModuleBuiltinCheckpoint(m.id)
-                        );
-                      });
-
-                      return (
+                    {!isCourseCollapsed && (
                         <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
                           <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2.5">
                             <span>
@@ -3558,19 +3739,22 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                             })}
                           </div>
                         </div>
-                      );
-                    })()}
+                    )}
                   </div>
 
-                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                    <span>Enrolled: {course.enrolledCount.toLocaleString()}</span>
-                    <span>Pass: {course.gradingCriteria?.overallPassingScore ?? 80}%</span>
-                    <span>Access: {course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS}d</span>
-                    <span>Price: ${course.price}</span>
-                    <span>Hours: {course.durationHours}h · Updated {course.updatedAt}</span>
-                  </div>
+                  {!isCourseCollapsed && (
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                      <span>Enrolled: {course.enrolledCount.toLocaleString()}</span>
+                      <span>Pass: {course.gradingCriteria?.overallPassingScore ?? 80}%</span>
+                      <span>Access: {course.defaultAccessDays || DEFAULT_ENROLLMENT_DAYS}d</span>
+                      <span>Price: ${course.price}</span>
+                      <span>Hours: {course.durationHours}h · Updated {course.updatedAt}</span>
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
+              </div>
             </div>
           )}
         </div>
