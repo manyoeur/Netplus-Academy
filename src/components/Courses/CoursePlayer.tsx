@@ -911,6 +911,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <button
+            type="button"
             onClick={() => {
               flushCurrentModuleProgress();
               onBack();

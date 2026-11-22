@@ -13,6 +13,7 @@ import {
   Save,
   Table2,
   Type,
+  Video,
   X
 } from 'lucide-react';
 import {
@@ -40,6 +41,13 @@ import {
 } from './MarkdownTableModal';
 import { EditableMarkdownTable } from './EditableMarkdownTable';
 import { ResizableMarkdownImage } from './ResizableMarkdownImage';
+import {
+  MarkdownVideoModal,
+  ParsedMarkdownVideoModifiers,
+  STANDALONE_VIDEO_RE,
+  updateMarkdownVideoAtIndex
+} from './MarkdownVideoModal';
+import { MarkdownVideoEmbed } from './MarkdownVideoEmbed';
 
 interface HierarchyContentWorkspaceProps {
   courseCode: string;
@@ -77,6 +85,22 @@ function applyMarkdownTableInsertion(
   const trailing =
     after.length === 0 ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
   return `${before}${leading}${tableMarkdown}${trailing}${after}`;
+}
+
+function applyMarkdownVideoInsertion(
+  prev: string,
+  videoMarkdown: string,
+  selection: { start: number; end: number } | null
+): string {
+  const start = selection?.start ?? prev.length;
+  const end = selection?.end ?? prev.length;
+  const before = prev.slice(0, start);
+  const after = prev.slice(end);
+  const leading =
+    before.length === 0 ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+  const trailing =
+    after.length === 0 ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+  return `${before}${leading}${videoMarkdown}${trailing}${after}`;
 }
 
 function applyMarkdownImageInsertion(
@@ -212,6 +236,11 @@ export interface MarkdownProseProps {
   onRemoveTableRow?: (tableIndex: number, rowIndex: number) => void;
   onAddTableColumn?: (tableIndex: number) => void;
   onRemoveTableColumn?: (tableIndex: number, colIndex: number) => void;
+  editableVideos?: boolean;
+  onUpdateVideo?: (
+    videoIndex: number,
+    nextMeta: ParsedMarkdownVideoModifiers | null
+  ) => void;
 }
 
 export const MarkdownProse: React.FC<MarkdownProseProps> = ({
@@ -225,13 +254,16 @@ export const MarkdownProse: React.FC<MarkdownProseProps> = ({
   onAddTableRow,
   onRemoveTableRow,
   onAddTableColumn,
-  onRemoveTableColumn
+  onRemoveTableColumn,
+  editableVideos = false,
+  onUpdateVideo
 }) => {
   const lines = content.replace(/\r\n/g, '\n').split('\n');
   const blocks: React.ReactNode[] = [];
   let i = 0;
   let imageCounter = 0;
   let tableCounter = 0;
+  let videoCounter = 0;
   const imageControls: MarkdownImageEditCallbacks = {
     allocateIndex: () => imageCounter++,
     editable: editableImages,
@@ -402,6 +434,24 @@ export const MarkdownProse: React.FC<MarkdownProseProps> = ({
       continue;
     }
 
+    // Standalone Markdown video embed (@video[Title|autoplay|loop|muted](url))
+    const standaloneVideoMatch = line.trim().match(STANDALONE_VIDEO_RE);
+    if (standaloneVideoMatch) {
+      const videoIndex = videoCounter++;
+      blocks.push(
+        <MarkdownVideoEmbed
+          key={`video-${i}-${videoIndex}`}
+          rawMeta={standaloneVideoMatch[1]}
+          src={standaloneVideoMatch[2]}
+          editable={editableVideos}
+          videoIndex={videoIndex}
+          onUpdateVideo={onUpdateVideo}
+        />
+      );
+      i += 1;
+      continue;
+    }
+
     // Paragraph (combine contiguous non-empty, non-special lines)
     const paraLines: string[] = [line];
     i += 1;
@@ -412,6 +462,7 @@ export const MarkdownProse: React.FC<MarkdownProseProps> = ({
       !lines[i].trim().startsWith('```') &&
       !isMarkdownTableStart(lines, i) &&
       !STANDALONE_IMAGE_RE.test(lines[i].trim()) &&
+      !STANDALONE_VIDEO_RE.test(lines[i].trim()) &&
       !/^\s*[-*]\s+/.test(lines[i]) &&
       !/^\s*\d+\.\s+/.test(lines[i])
     ) {
@@ -459,6 +510,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
   const [draftContent, setDraftContent] = useState<string>(targetContent);
   const [isImageModalOpen, setIsImageModalOpen] = useState<boolean>(false);
   const [isTableModalOpen, setIsTableModalOpen] = useState<boolean>(false);
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState<boolean>(false);
   const [imageInsertError, setImageInsertError] = useState<string | null>(null);
   const [isTextareaDragOver, setIsTextareaDragOver] = useState<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -474,6 +526,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
     setEditorTab('write');
     setIsImageModalOpen(false);
     setIsTableModalOpen(false);
+    setIsVideoModalOpen(false);
     setImageInsertError(null);
     setIsEditing(canEdit && startInEditMode);
   }, [targetKey, targetTitle, targetSummary, targetContent, canEdit, startInEditMode]);
@@ -496,6 +549,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
       setEditorTab('write');
       setIsImageModalOpen(false);
       setIsTableModalOpen(false);
+      setIsVideoModalOpen(false);
       setImageInsertError(null);
       setIsEditing(true);
     }
@@ -631,6 +685,47 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
     savedSelectionRef.current = null;
     setDraftContent(prev => applyMarkdownTableInsertion(prev, tableMarkdown, sel));
     setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
+  };
+
+  const handleOpenVideoModal = () => {
+    const el = textareaRef.current;
+    if (el) {
+      savedSelectionRef.current = {
+        start: el.selectionStart ?? draftContent.length,
+        end: el.selectionEnd ?? draftContent.length
+      };
+    } else {
+      savedSelectionRef.current = {
+        start: draftContent.length,
+        end: draftContent.length
+      };
+    }
+    setIsVideoModalOpen(true);
+  };
+
+  const insertVideoMarkdown = (videoMarkdown: string) => {
+    const el = textareaRef.current;
+    const sel = savedSelectionRef.current ?? (el
+      ? {
+          start: el.selectionStart ?? draftContent.length,
+          end: el.selectionEnd ?? draftContent.length
+        }
+      : null);
+    savedSelectionRef.current = null;
+    setDraftContent(prev => applyMarkdownVideoInsertion(prev, videoMarkdown, sel));
+    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  };
+
+  const handleUpdateVideo = (
+    videoIndex: number,
+    nextMeta: ParsedMarkdownVideoModifiers | null
+  ) => {
+    setDraftContent(prev =>
+      updateMarkdownVideoAtIndex(prev, videoIndex, () => nextMeta)
+    );
   };
 
   const handleUpdateTableCell = (
@@ -798,6 +893,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
 
         {/* Inline Editor OR Rendered Content */}
         {canEdit && isEditing ? (
+          <>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -929,6 +1025,15 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                       <ImagePlus className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
                       <span>Insert Image</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenVideoModal}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+                      title="Embed a YouTube, Vimeo, or MP4 educational video"
+                    >
+                      <Video className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                      <span>Video</span>
+                    </button>
                   </div>
                 )}
               </div>
@@ -981,10 +1086,10 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                   {imageInsertError && (
                     <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
                   )}
-                  {(countMarkdownImages(draftContent) > 0 || /^\|.*\|/m.test(draftContent)) && (
+                  {(countMarkdownImages(draftContent) > 0 || /^\|.*\|/m.test(draftContent) || /^@video\[/m.test(draftContent)) && (
                     <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300">
                       <span>
-                        Switch to <strong>Split</strong> or <strong>Preview</strong> to edit table grid cells inline or drag image handles to resize.
+                        Switch to <strong>Split</strong> or <strong>Preview</strong> to preview embedded videos, edit table cells inline, or resize images.
                       </span>
                       <button
                         type="button"
@@ -1068,10 +1173,12 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                         onRemoveTableRow={handleRemoveTableRow}
                         onAddTableColumn={handleAddTableColumn}
                         onRemoveTableColumn={handleRemoveTableColumn}
+                        editableVideos
+                        onUpdateVideo={handleUpdateVideo}
                       />
                     ) : (
                       <p className="text-xs text-slate-400 italic">
-                        Start typing on the left or click Table / Insert Image to edit visuals and grids here.
+                        Start typing on the left or click Table / Insert Image / Video to add visuals, grids, and embeds.
                       </p>
                     )}
                   </div>
@@ -1097,6 +1204,8 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                       onRemoveTableRow={handleRemoveTableRow}
                       onAddTableColumn={handleAddTableColumn}
                       onRemoveTableColumn={handleRemoveTableColumn}
+                      editableVideos
+                      onUpdateVideo={handleUpdateVideo}
                     />
                   ) : (
                     <p className="text-xs text-slate-400 italic">
@@ -1110,7 +1219,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 Supports Markdown headings (<code className="font-mono">##</code>), lists,{' '}
-                <code className="font-mono">**bold**</code>, tables (<code className="font-mono">| col |</code> with <code className="font-mono">&lt;br&gt;</code> line breaks), code blocks, and images.
+                <code className="font-mono">**bold**</code>, tables (<code className="font-mono">| col |</code> with <code className="font-mono">&lt;br&gt;</code> line breaks), code blocks, images, and videos.
               </p>
 
               <div className="flex items-center gap-2 shrink-0">
@@ -1130,18 +1239,24 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                 </button>
               </div>
             </div>
-
-            <MarkdownImageModal
-              isOpen={isImageModalOpen}
-              onClose={() => setIsImageModalOpen(false)}
-              onInsert={({ src, alt, placement }) => insertImageMarkdown(src, alt, placement)}
-            />
-            <MarkdownTableModal
-              isOpen={isTableModalOpen}
-              onClose={() => setIsTableModalOpen(false)}
-              onInsert={insertTableMarkdown}
-            />
           </form>
+
+          <MarkdownImageModal
+            isOpen={isImageModalOpen}
+            onClose={() => setIsImageModalOpen(false)}
+            onInsert={({ src, alt, placement }) => insertImageMarkdown(src, alt, placement)}
+          />
+          <MarkdownTableModal
+            isOpen={isTableModalOpen}
+            onClose={() => setIsTableModalOpen(false)}
+            onInsert={insertTableMarkdown}
+          />
+          <MarkdownVideoModal
+            isOpen={isVideoModalOpen}
+            onClose={() => setIsVideoModalOpen(false)}
+            onInsert={insertVideoMarkdown}
+          />
+          </>
         ) : targetContent.trim() ? (
           <div className="pt-1">
             <MarkdownProse content={targetContent} />
@@ -1237,6 +1352,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
   const [draftContent, setDraftContent] = useState<string>(targetContent);
   const [isImageModalOpen, setIsImageModalOpen] = useState<boolean>(false);
   const [isTableModalOpen, setIsTableModalOpen] = useState<boolean>(false);
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState<boolean>(false);
   const [imageInsertError, setImageInsertError] = useState<string | null>(null);
   const [isTextareaDragOver, setIsTextareaDragOver] = useState<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1255,6 +1371,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     setEditorTab('write');
     setIsImageModalOpen(false);
     setIsTableModalOpen(false);
+    setIsVideoModalOpen(false);
     setImageInsertError(null);
     setIsEditing(canEdit && startInEditMode);
   }, [
@@ -1301,6 +1418,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
       setEditorTab('write');
       setIsImageModalOpen(false);
       setIsTableModalOpen(false);
+      setIsVideoModalOpen(false);
       setImageInsertError(null);
       setIsEditing(true);
     }
@@ -1450,6 +1568,47 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     savedSelectionRef.current = null;
     setDraftContent(prev => applyMarkdownTableInsertion(prev, tableMarkdown, sel));
     setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
+  };
+
+  const handleOpenVideoModal = () => {
+    const el = textareaRef.current;
+    if (el) {
+      savedSelectionRef.current = {
+        start: el.selectionStart ?? draftContent.length,
+        end: el.selectionEnd ?? draftContent.length
+      };
+    } else {
+      savedSelectionRef.current = {
+        start: draftContent.length,
+        end: draftContent.length
+      };
+    }
+    setIsVideoModalOpen(true);
+  };
+
+  const insertVideoMarkdown = (videoMarkdown: string) => {
+    const el = textareaRef.current;
+    const sel = savedSelectionRef.current ?? (el
+      ? {
+          start: el.selectionStart ?? draftContent.length,
+          end: el.selectionEnd ?? draftContent.length
+        }
+      : null);
+    savedSelectionRef.current = null;
+    setDraftContent(prev => applyMarkdownVideoInsertion(prev, videoMarkdown, sel));
+    setEditorTab(prevTab => (prevTab === 'write' ? 'split' : prevTab));
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  };
+
+  const handleUpdateVideo = (
+    videoIndex: number,
+    nextMeta: ParsedMarkdownVideoModifiers | null
+  ) => {
+    setDraftContent(prev =>
+      updateMarkdownVideoAtIndex(prev, videoIndex, () => nextMeta)
+    );
   };
 
   const handleUpdateTableCell = (
@@ -1618,6 +1777,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
 
         {/* Inline Editor OR Theory Rendered Content */}
         {canEdit && isEditing ? (
+          <>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -1790,6 +1950,15 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                       <ImagePlus className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
                       <span>Insert Image</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenVideoModal}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+                      title="Embed a YouTube, Vimeo, or MP4 educational video"
+                    >
+                      <Video className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                      <span>Video</span>
+                    </button>
                   </div>
                 )}
               </div>
@@ -1842,10 +2011,10 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                   {imageInsertError && (
                     <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
                   )}
-                  {(countMarkdownImages(draftContent) > 0 || /^\|.*\|/m.test(draftContent)) && (
+                  {(countMarkdownImages(draftContent) > 0 || /^\|.*\|/m.test(draftContent) || /^@video\[/m.test(draftContent)) && (
                     <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300">
                       <span>
-                        Switch to <strong>Split</strong> or <strong>Preview</strong> to edit table grid cells inline or drag image handles to resize.
+                        Switch to <strong>Split</strong> or <strong>Preview</strong> to preview embedded videos, edit table cells inline, or resize images.
                       </span>
                       <button
                         type="button"
@@ -1929,10 +2098,12 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                         onRemoveTableRow={handleRemoveTableRow}
                         onAddTableColumn={handleAddTableColumn}
                         onRemoveTableColumn={handleRemoveTableColumn}
+                        editableVideos
+                        onUpdateVideo={handleUpdateVideo}
                       />
                     ) : (
                       <p className="text-xs text-slate-400 italic">
-                        Start typing on the left or click Table / Insert Image to edit visuals and grids here.
+                        Start typing on the left or click Table / Insert Image / Video to add visuals, grids, and embeds.
                       </p>
                     )}
                   </div>
@@ -1958,6 +2129,8 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                       onRemoveTableRow={handleRemoveTableRow}
                       onAddTableColumn={handleAddTableColumn}
                       onRemoveTableColumn={handleRemoveTableColumn}
+                      editableVideos
+                      onUpdateVideo={handleUpdateVideo}
                     />
                   ) : (
                     <p className="text-xs text-slate-400 italic">
@@ -1971,7 +2144,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 Supports Markdown headings (<code className="font-mono">##</code>), lists,{' '}
-                <code className="font-mono">**bold**</code>, tables (<code className="font-mono">| col |</code> with <code className="font-mono">&lt;br&gt;</code> line breaks), code blocks, and images.
+                <code className="font-mono">**bold**</code>, tables (<code className="font-mono">| col |</code> with <code className="font-mono">&lt;br&gt;</code> line breaks), code blocks, images, and videos.
               </p>
 
               <div className="flex items-center gap-2 shrink-0">
@@ -1991,18 +2164,24 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                 </button>
               </div>
             </div>
-
-            <MarkdownImageModal
-              isOpen={isImageModalOpen}
-              onClose={() => setIsImageModalOpen(false)}
-              onInsert={({ src, alt, placement }) => insertImageMarkdown(src, alt, placement)}
-            />
-            <MarkdownTableModal
-              isOpen={isTableModalOpen}
-              onClose={() => setIsTableModalOpen(false)}
-              onInsert={insertTableMarkdown}
-            />
           </form>
+
+          <MarkdownImageModal
+            isOpen={isImageModalOpen}
+            onClose={() => setIsImageModalOpen(false)}
+            onInsert={({ src, alt, placement }) => insertImageMarkdown(src, alt, placement)}
+          />
+          <MarkdownTableModal
+            isOpen={isTableModalOpen}
+            onClose={() => setIsTableModalOpen(false)}
+            onInsert={insertTableMarkdown}
+          />
+          <MarkdownVideoModal
+            isOpen={isVideoModalOpen}
+            onClose={() => setIsVideoModalOpen(false)}
+            onInsert={insertVideoMarkdown}
+          />
+          </>
         ) : module.type === 'theory' ? (
           targetContent.trim() ? (
             <div className="pt-1">
