@@ -1,14 +1,38 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
+  ArrowDownToLine,
+  ArrowUpToLine,
   CheckCircle2,
   Image as ImageIcon,
   ImagePlus,
   Link2,
   Loader2,
+  PanelLeft,
+  PanelRight,
   Upload,
   X
 } from 'lucide-react';
+
+export type MarkdownImagePlacement = 'top' | 'bottom' | 'left' | 'right';
+
+export function parseMarkdownImageAltAndPlacement(rawAlt: string): {
+  alt: string;
+  align: 'block' | 'left' | 'right';
+} {
+  const match = rawAlt.match(/^(.*?)\|(left|right|center|top|bottom)$/i);
+  if (!match) {
+    return {
+      alt: rawAlt.trim(),
+      align: 'block'
+    };
+  }
+  const pos = match[2].toLowerCase();
+  return {
+    alt: match[1].trim(),
+    align: pos === 'left' ? 'left' : pos === 'right' ? 'right' : 'block'
+  };
+}
 
 const MAX_DIMENSION_PX = 1400;
 const MAX_DATA_URL_BYTES = 750 * 1024; // Keep well under Firestore document limits
@@ -163,8 +187,40 @@ export async function processImageFileToDataUrl(
 interface MarkdownImageModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onInsert: (payload: { src: string; alt: string }) => void;
+  onInsert: (payload: { src: string; alt: string; placement: MarkdownImagePlacement }) => void;
 }
+
+const PLACEMENT_OPTIONS: {
+  id: MarkdownImagePlacement;
+  label: string;
+  hint: string;
+  icon: React.FC<{ className?: string }>;
+}[] = [
+  {
+    id: 'top',
+    label: 'Top',
+    hint: 'Places the image at the top above your text.',
+    icon: ArrowUpToLine
+  },
+  {
+    id: 'bottom',
+    label: 'Bottom',
+    hint: 'Places the image at the bottom below your text.',
+    icon: ArrowDownToLine
+  },
+  {
+    id: 'left',
+    label: 'Left',
+    hint: 'Places the image on the left side with text beside it on the right.',
+    icon: PanelLeft
+  },
+  {
+    id: 'right',
+    label: 'Right',
+    hint: 'Places the image on the right side with text beside it on the left.',
+    icon: PanelRight
+  }
+];
 
 export const MarkdownImageModal: React.FC<MarkdownImageModalProps> = ({
   isOpen,
@@ -172,6 +228,7 @@ export const MarkdownImageModal: React.FC<MarkdownImageModalProps> = ({
   onInsert
 }) => {
   const [sourceTab, setSourceTab] = useState<'upload' | 'url'>('upload');
+  const [placement, setPlacement] = useState<MarkdownImagePlacement>('top');
   const [caption, setCaption] = useState<string>('');
   const [imageUrl, setImageUrl] = useState<string>('');
   const [uploadedPreview, setUploadedPreview] = useState<ProcessedImageResult | null>(null);
@@ -186,6 +243,7 @@ export const MarkdownImageModal: React.FC<MarkdownImageModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     setSourceTab('upload');
+    setPlacement('top');
     setCaption('');
     setImageUrl('');
     setUploadedPreview(null);
@@ -257,21 +315,26 @@ export const MarkdownImageModal: React.FC<MarkdownImageModalProps> = ({
       : isUrlValid;
 
   const handleConfirmInsert = () => {
-    const cleanAlt = caption.trim().replace(/[\r\n[\]]/g, ' ');
+    const cleanAlt = caption.trim().replace(/[\r\n[\]|]/g, ' ').trim();
     if (sourceTab === 'upload' && uploadedPreview) {
       onInsert({
         src: uploadedPreview.dataUrl,
-        alt: cleanAlt || uploadedPreview.suggestedAlt
+        alt: cleanAlt || uploadedPreview.suggestedAlt,
+        placement
       });
       onClose();
     } else if (sourceTab === 'url' && isUrlValid) {
       onInsert({
         src: trimmedUrl,
-        alt: cleanAlt || 'Course illustration'
+        alt: cleanAlt || 'Course illustration',
+        placement
       });
       onClose();
     }
   };
+
+  const activePlacementOption =
+    PLACEMENT_OPTIONS.find(opt => opt.id === placement) || PLACEMENT_OPTIONS[0];
 
   return (
     <div
@@ -500,6 +563,38 @@ export const MarkdownImageModal: React.FC<MarkdownImageModalProps> = ({
               )}
             </div>
           )}
+
+          {/* Image Placement */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+              Image Position
+            </label>
+            <div className="grid grid-cols-4 gap-1.5">
+              {PLACEMENT_OPTIONS.map((option) => {
+                const Icon = option.icon;
+                const isSelected = placement === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setPlacement(option.id)}
+                    aria-pressed={isSelected}
+                    className={`inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap ${
+                      isSelected
+                        ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-cyan-300 shadow-2xs'
+                        : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                    <span>{option.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+              {activePlacementOption.hint}
+            </p>
+          </div>
 
           {/* Optional Caption / Alt Text */}
           <div>

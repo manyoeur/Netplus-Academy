@@ -25,6 +25,8 @@ import {
 import {
   isSafeMarkdownImageUrl,
   MarkdownImageModal,
+  MarkdownImagePlacement,
+  parseMarkdownImageAltAndPlacement,
   processImageFileToDataUrl
 } from './MarkdownImageModal';
 
@@ -50,16 +52,88 @@ interface HierarchyContentWorkspaceProps {
 
 const STANDALONE_IMAGE_RE = /^!\[([^\]]*)\]\(([^)\s]+)\)$/;
 
+function applyMarkdownImageInsertion(
+  prev: string,
+  src: string,
+  alt: string,
+  placement: MarkdownImagePlacement | undefined,
+  selection: { start: number; end: number } | null
+): string {
+  const cleanAlt = alt.trim().replace(/[\r\n[\]|]/g, ' ').trim();
+  const tag = placement === 'left' || placement === 'right' ? `|${placement}` : '';
+  const altWithTag = cleanAlt ? `${cleanAlt}${tag}` : tag || 'Course illustration';
+  const markdown = `![${altWithTag}](${src})`;
+
+  if (placement === 'top') {
+    const trimmed = prev.replace(/^\n+/, '');
+    return trimmed ? `${markdown}\n\n${trimmed}` : markdown;
+  }
+
+  if (placement === 'bottom') {
+    const trimmed = prev.replace(/\n+$/, '');
+    return trimmed ? `${trimmed}\n\n${markdown}` : markdown;
+  }
+
+  let start = selection?.start ?? prev.length;
+  let end = selection?.end ?? prev.length;
+
+  // For left/right placement, if cursor is at the very end after existing text,
+  // place the image immediately before the current paragraph so text wraps beside it.
+  if (
+    (placement === 'left' || placement === 'right') &&
+    prev.trim().length > 0 &&
+    prev.slice(end).trim().length === 0
+  ) {
+    const trimmedEnd = prev.replace(/\s+$/, '');
+    const lastBreak = trimmedEnd.lastIndexOf('\n\n');
+    let blockStart = lastBreak >= 0 ? lastBreak + 2 : 0;
+    // If the block starts with a Markdown heading line, place image right below the heading
+    while (blockStart < trimmedEnd.length && trimmedEnd.slice(blockStart).startsWith('#')) {
+      const nextNl = trimmedEnd.indexOf('\n', blockStart);
+      if (nextNl === -1) {
+        blockStart = 0;
+        break;
+      }
+      blockStart = nextNl + 1;
+    }
+    start = blockStart;
+    end = blockStart;
+  }
+
+  if ((placement === 'left' || placement === 'right') && prev.trim().length === 0) {
+    return `${markdown}\n\n`;
+  }
+
+  const prefixNeedsNewline = start > 0 && prev[start - 1] !== '\n' ? '\n' : '';
+  const suffixNeedsNewline = end < prev.length && prev[end] !== '\n' ? '\n' : '';
+  return (
+    prev.slice(0, start) +
+    prefixNeedsNewline +
+    markdown +
+    suffixNeedsNewline +
+    prev.slice(end)
+  );
+}
+
 const MarkdownImage: React.FC<{ src: string; alt: string; inline?: boolean }> = ({
   src,
-  alt,
+  alt: rawAlt,
   inline = false
 }) => {
   const [hasError, setHasError] = useState(false);
+  const { alt, align } = parseMarkdownImageAltAndPlacement(rawAlt);
 
   if (!isSafeMarkdownImageUrl(src) || hasError) {
     return (
-      <span className="my-2 flex items-center gap-2.5 px-3.5 py-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 text-xs text-slate-500 dark:text-slate-400">
+      <span
+        className={`my-2 flex items-center gap-2.5 px-3.5 py-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 text-xs text-slate-500 dark:text-slate-400 ${
+          align === 'left'
+            ? 'sm:float-left sm:mr-6 sm:mb-3 w-full sm:w-[42%] sm:max-w-[340px]'
+            : align === 'right'
+            ? 'sm:float-right sm:ml-6 sm:mb-3 w-full sm:w-[42%] sm:max-w-[340px]'
+            : 'clear-both'
+        }`}
+      >
         <ImageOff className="w-4 h-4 shrink-0 text-slate-400" />
         <span className="truncate">{alt || 'Image unavailable'}</span>
       </span>
@@ -79,8 +153,17 @@ const MarkdownImage: React.FC<{ src: string; alt: string; inline?: boolean }> = 
     );
   }
 
+  const figurePlacementClass =
+    align === 'left'
+      ? 'my-2 sm:my-1 sm:float-left sm:mr-6 sm:mb-3 w-full sm:w-[42%] sm:max-w-[340px]'
+      : align === 'right'
+      ? 'my-2 sm:my-1 sm:float-right sm:ml-6 sm:mb-3 w-full sm:w-[42%] sm:max-w-[340px]'
+      : 'clear-both my-4';
+
   return (
-    <figure className="my-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 overflow-hidden">
+    <figure
+      className={`${figurePlacementClass} rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 overflow-hidden`}
+    >
       <div className="flex items-center justify-center p-2 sm:p-3 bg-white/70 dark:bg-slate-900/40">
         <img
           src={src}
@@ -88,7 +171,9 @@ const MarkdownImage: React.FC<{ src: string; alt: string; inline?: boolean }> = 
           loading="lazy"
           referrerPolicy="no-referrer"
           onError={() => setHasError(true)}
-          className="max-h-[460px] w-auto max-w-full rounded-lg object-contain"
+          className={`${
+            align === 'block' ? 'max-h-[460px] w-auto' : 'max-h-[320px] w-full'
+          } max-w-full rounded-lg object-contain`}
         />
       </div>
       {alt && (
@@ -149,7 +234,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
       blocks.push(
         <div
           key={`code-${i}`}
-          className="my-3 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-950 text-slate-100"
+          className="clear-both my-3 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-950 text-slate-100"
         >
           {lang && (
             <div className="px-3.5 py-1.5 bg-slate-900 border-b border-slate-800 font-mono text-[10px] uppercase tracking-wider text-slate-400">
@@ -182,7 +267,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
     }
     if (line.startsWith('## ')) {
       blocks.push(
-        <h2 key={`h2-${i}`} className="text-base font-extrabold text-slate-900 dark:text-white mt-5 mb-2">
+        <h2 key={`h2-${i}`} className="clear-both text-base font-extrabold text-slate-900 dark:text-white mt-5 mb-2">
           {renderInlineFormatting(line.slice(3))}
         </h2>
       );
@@ -191,7 +276,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
     }
     if (line.startsWith('# ')) {
       blocks.push(
-        <h1 key={`h1-${i}`} className="text-lg font-extrabold text-slate-900 dark:text-white mt-5 mb-2">
+        <h1 key={`h1-${i}`} className="clear-both text-lg font-extrabold text-slate-900 dark:text-white mt-5 mb-2">
           {renderInlineFormatting(line.slice(2))}
         </h1>
       );
@@ -207,7 +292,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
         i += 1;
       }
       blocks.push(
-        <ul key={`ul-${i}`} className="list-disc pl-5 space-y-1.5 text-sm text-slate-700 dark:text-slate-300">
+        <ul key={`ul-${i}`} className="flow-root list-disc pl-5 space-y-1.5 text-sm text-slate-700 dark:text-slate-300">
           {items.map((item, idx) => (
             <li key={idx} className="leading-relaxed">
               {renderInlineFormatting(item)}
@@ -226,7 +311,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
         i += 1;
       }
       blocks.push(
-        <ol key={`ol-${i}`} className="list-decimal pl-5 space-y-1.5 text-sm text-slate-700 dark:text-slate-300">
+        <ol key={`ol-${i}`} className="flow-root list-decimal pl-5 space-y-1.5 text-sm text-slate-700 dark:text-slate-300">
           {items.map((item, idx) => (
             <li key={idx} className="leading-relaxed">
               {renderInlineFormatting(item)}
@@ -273,7 +358,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
     );
   }
 
-  return <div className="space-y-2.5">{blocks}</div>;
+  return <div className="flow-root space-y-2.5">{blocks}</div>;
 };
 
 export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps> = ({
@@ -382,26 +467,21 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
     });
   };
 
-  const insertImageMarkdown = (src: string, alt: string) => {
-    const cleanAlt = alt.trim().replace(/[\r\n[\]]/g, ' ') || 'Course illustration';
-    const markdown = `![${cleanAlt}](${src})`;
+  const insertImageMarkdown = (
+    src: string,
+    alt: string,
+    placement?: MarkdownImagePlacement
+  ) => {
     const el = textareaRef.current;
-    const sel = savedSelectionRef.current;
+    const sel = savedSelectionRef.current ?? (el
+      ? {
+          start: el.selectionStart ?? draftContent.length,
+          end: el.selectionEnd ?? draftContent.length
+        }
+      : null);
     savedSelectionRef.current = null;
 
-    setDraftContent(prev => {
-      const start = sel?.start ?? el?.selectionStart ?? prev.length;
-      const end = sel?.end ?? el?.selectionEnd ?? prev.length;
-      const prefixNeedsNewline = start > 0 && prev[start - 1] !== '\n' ? '\n' : '';
-      const suffixNeedsNewline = end < prev.length && prev[end] !== '\n' ? '\n' : '';
-      return (
-        prev.slice(0, start) +
-        prefixNeedsNewline +
-        markdown +
-        suffixNeedsNewline +
-        prev.slice(end)
-      );
-    });
+    setDraftContent(prev => applyMarkdownImageInsertion(prev, src, alt, placement, sel));
     setImageInsertError(null);
     window.requestAnimationFrame(() => {
       textareaRef.current?.focus();
@@ -724,7 +804,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
             <MarkdownImageModal
               isOpen={isImageModalOpen}
               onClose={() => setIsImageModalOpen(false)}
-              onInsert={({ src, alt }) => insertImageMarkdown(src, alt)}
+              onInsert={({ src, alt, placement }) => insertImageMarkdown(src, alt, placement)}
             />
           </form>
         ) : targetContent.trim() ? (
@@ -938,26 +1018,21 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     });
   };
 
-  const insertImageMarkdown = (src: string, alt: string) => {
-    const cleanAlt = alt.trim().replace(/[\r\n[\]]/g, ' ') || 'Course illustration';
-    const markdown = `![${cleanAlt}](${src})`;
+  const insertImageMarkdown = (
+    src: string,
+    alt: string,
+    placement?: MarkdownImagePlacement
+  ) => {
     const el = textareaRef.current;
-    const sel = savedSelectionRef.current;
+    const sel = savedSelectionRef.current ?? (el
+      ? {
+          start: el.selectionStart ?? draftContent.length,
+          end: el.selectionEnd ?? draftContent.length
+        }
+      : null);
     savedSelectionRef.current = null;
 
-    setDraftContent(prev => {
-      const start = sel?.start ?? el?.selectionStart ?? prev.length;
-      const end = sel?.end ?? el?.selectionEnd ?? prev.length;
-      const prefixNeedsNewline = start > 0 && prev[start - 1] !== '\n' ? '\n' : '';
-      const suffixNeedsNewline = end < prev.length && prev[end] !== '\n' ? '\n' : '';
-      return (
-        prev.slice(0, start) +
-        prefixNeedsNewline +
-        markdown +
-        suffixNeedsNewline +
-        prev.slice(end)
-      );
-    });
+    setDraftContent(prev => applyMarkdownImageInsertion(prev, src, alt, placement, sel));
     setImageInsertError(null);
     window.requestAnimationFrame(() => {
       textareaRef.current?.focus();
@@ -1322,7 +1397,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
             <MarkdownImageModal
               isOpen={isImageModalOpen}
               onClose={() => setIsImageModalOpen(false)}
-              onInsert={({ src, alt }) => insertImageMarkdown(src, alt)}
+              onInsert={({ src, alt, placement }) => insertImageMarkdown(src, alt, placement)}
             />
           </form>
         ) : module.type === 'theory' ? (
