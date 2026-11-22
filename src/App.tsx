@@ -22,6 +22,7 @@ import { PaymentGatewayModal } from './components/Billing/PaymentGatewayModal';
 import { CoursePaymentModal } from './components/Billing/CoursePaymentModal';
 import { Course, CoursePaymentRecord } from './types';
 import { WifiOff, Network } from 'lucide-react';
+import { OfflineIndicator } from './components/PWA/OfflineIndicator';
 
 type ManagementSubTab = 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students';
 
@@ -120,25 +121,34 @@ const AcademyApp: React.FC = () => {
 
   if (!authReady) {
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-[#070b14] text-slate-900 dark:text-slate-100 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center text-white shadow-lg">
-            <Network className="w-5 h-5 animate-pulse" />
+      <>
+        <div className="min-h-screen bg-slate-50 dark:bg-[#070b14] text-slate-900 dark:text-slate-100 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center text-white shadow-lg">
+              <Network className="w-5 h-5 animate-pulse" />
+            </div>
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              Loading Netplus Academy...
+            </p>
           </div>
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            Loading Netplus Academy...
-          </p>
         </div>
-      </div>
+        <OfflineIndicator showOfflineToast={true} />
+      </>
     );
   }
 
   if (!isAuthenticated) {
-    return <LoginPage />;
+    return (
+      <>
+        <LoginPage />
+        <OfflineIndicator showOfflineToast={true} />
+      </>
+    );
   }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#070b14] text-slate-900 dark:text-slate-100 transition-colors flex flex-col font-sans">
+      <OfflineIndicator showOfflineToast={false} />
       
       {/* Left Navigation Sidebar */}
       <Sidebar

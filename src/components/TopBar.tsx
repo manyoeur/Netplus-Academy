@@ -13,6 +13,7 @@ import {
   LogOut
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
+import { PWAInstallButton } from './PWA/PWAInstallButton';
 
 interface TopBarProps {
   onOpenNotifications: () => void;
@@ -112,9 +113,10 @@ export const TopBar: React.FC<TopBarProps> = ({
           )}
         </div>
 
-        {/* Top-Right: Fabric Status, Dark/Light Mode Toggle, Notifications, User Profile */}
+        {/* Top-Right: Install App, Fabric Status, Dark/Light Mode Toggle, Notifications, User Profile */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 ml-auto">
-          
+          <PWAInstallButton compact />
+
           {/* Fabric Status / Offline Toggle */}
           <button
             onClick={toggleManualOfflineSim}

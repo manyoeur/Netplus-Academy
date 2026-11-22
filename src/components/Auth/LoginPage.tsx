@@ -15,6 +15,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
+import { PWAInstallButton } from '../PWA/PWAInstallButton';
 
 const GoogleMark: React.FC = () => (
   <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
@@ -163,24 +164,27 @@ export const LoginPage: React.FC = () => {
           </span>
         </div>
 
-        <button
-          type="button"
-          onClick={toggleDarkMode}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0c1220] text-slate-600 dark:text-slate-300 hover:border-blue-400 dark:hover:border-cyan-500/50 text-xs font-medium transition-colors"
-          aria-label={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-        >
-          {darkMode ? (
-            <>
-              <Sun className="w-4 h-4 text-amber-400" />
-              <span>Light</span>
-            </>
-          ) : (
-            <>
-              <Moon className="w-4 h-4 text-slate-600" />
-              <span>Dark</span>
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-2">
+          <PWAInstallButton compact />
+          <button
+            type="button"
+            onClick={toggleDarkMode}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0c1220] text-slate-600 dark:text-slate-300 hover:border-blue-400 dark:hover:border-cyan-500/50 text-xs font-medium transition-colors"
+            aria-label={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          >
+            {darkMode ? (
+              <>
+                <Sun className="w-4 h-4 text-amber-400" />
+                <span>Light</span>
+              </>
+            ) : (
+              <>
+                <Moon className="w-4 h-4 text-slate-600" />
+                <span>Dark</span>
+              </>
+            )}
+          </button>
+        </div>
       </header>
 
       {/* Centered Simple Login / Sign-Up Card */}
