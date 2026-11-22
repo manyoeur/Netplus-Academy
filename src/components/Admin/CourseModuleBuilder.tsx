@@ -25,7 +25,9 @@ import {
   Clapperboard,
   SquarePen,
   Check,
-  X
+  X,
+  Pin,
+  PinOff
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import {
@@ -160,6 +162,22 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
   const [activeDropIndex, setActiveDropIndex] = useState<number | null>(null);
   const [activeCheckpointDropId, setActiveCheckpointDropId] = useState<string | null>(null);
+  const [isPaletteFrozen, setIsPaletteFrozen] = useState<boolean>(() => {
+    try {
+      const saved = window.localStorage.getItem('netpulse_builder_palette_frozen');
+      return saved === null ? true : saved === 'true';
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('netpulse_builder_palette_frozen', String(isPaletteFrozen));
+    } catch {
+      // ignore storage write failures
+    }
+  }, [isPaletteFrozen]);
 
   // Canvas mode: clean 3-level outline tree (default) OR flat drag-and-drop sequence
   const [canvasViewMode, setCanvasViewMode] = useState<'sequence' | 'hierarchy'>('hierarchy');
@@ -1080,14 +1098,49 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
       {/* 3-Zone Studio Workspace */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
         {/* Zone 1: Component Palette */}
-        <aside className="xl:col-span-3 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
-          <div className="pb-2 border-b border-slate-100 dark:border-slate-800">
-            <h3 className="text-xs font-bold uppercase tracking-wider font-mono text-slate-700 dark:text-slate-200">
-              Component Palette
-            </h3>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-              Drag any block onto the syllabus canvas or click + to inject.
-            </p>
+        <aside
+          className={`xl:col-span-3 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3 ${
+            isPaletteFrozen
+              ? 'xl:sticky xl:top-[4.5rem] xl:z-20 xl:max-h-[calc(100vh-5.5rem)] xl:overflow-y-auto'
+              : ''
+          }`}
+        >
+          <div className="pb-2 border-b border-slate-100 dark:border-slate-800 flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="text-xs font-bold uppercase tracking-wider font-mono text-slate-700 dark:text-slate-200">
+                Component Palette
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                Drag any block onto the syllabus canvas or click + to inject.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsPaletteFrozen(prev => !prev)}
+              aria-pressed={isPaletteFrozen}
+              title={
+                isPaletteFrozen
+                  ? 'Palette is frozen while scrolling — click to unfreeze'
+                  : 'Freeze Component Palette while scrolling'
+              }
+              className={`hidden xl:inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                isPaletteFrozen
+                  ? 'bg-blue-50 dark:bg-blue-950/50 border-blue-200 dark:border-cyan-800 text-blue-700 dark:text-cyan-300 hover:bg-blue-100 dark:hover:bg-blue-950/70'
+                  : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+              }`}
+            >
+              {isPaletteFrozen ? (
+                <>
+                  <Pin className="w-3 h-3" />
+                  <span>Frozen</span>
+                </>
+              ) : (
+                <>
+                  <PinOff className="w-3 h-3" />
+                  <span>Freeze</span>
+                </>
+              )}
+            </button>
           </div>
 
           <div className="space-y-2">
