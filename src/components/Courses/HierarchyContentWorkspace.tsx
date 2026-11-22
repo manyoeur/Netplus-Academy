@@ -6,6 +6,8 @@ import {
   Eye,
   FileText,
   Heading2,
+  ImageOff,
+  ImagePlus,
   List,
   Plus,
   Save,
@@ -20,6 +22,11 @@ import {
   ResolvedChapterSection,
   ResolvedMainContentSection
 } from '../../utils/courseHierarchy';
+import {
+  isSafeMarkdownImageUrl,
+  MarkdownImageModal,
+  processImageFileToDataUrl
+} from './MarkdownImageModal';
 
 interface HierarchyContentWorkspaceProps {
   courseCode: string;
@@ -41,9 +48,65 @@ interface HierarchyContentWorkspaceProps {
   activeModuleTitle?: string;
 }
 
+const STANDALONE_IMAGE_RE = /^!\[([^\]]*)\]\(([^)\s]+)\)$/;
+
+const MarkdownImage: React.FC<{ src: string; alt: string; inline?: boolean }> = ({
+  src,
+  alt,
+  inline = false
+}) => {
+  const [hasError, setHasError] = useState(false);
+
+  if (!isSafeMarkdownImageUrl(src) || hasError) {
+    return (
+      <span className="my-2 flex items-center gap-2.5 px-3.5 py-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 text-xs text-slate-500 dark:text-slate-400">
+        <ImageOff className="w-4 h-4 shrink-0 text-slate-400" />
+        <span className="truncate">{alt || 'Image unavailable'}</span>
+      </span>
+    );
+  }
+
+  if (inline) {
+    return (
+      <img
+        src={src}
+        alt={alt || 'Course illustration'}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setHasError(true)}
+        className="inline-block max-h-64 w-auto max-w-full rounded-lg border border-slate-200 dark:border-slate-700 align-middle my-1"
+      />
+    );
+  }
+
+  return (
+    <figure className="my-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 overflow-hidden">
+      <div className="flex items-center justify-center p-2 sm:p-3 bg-white/70 dark:bg-slate-900/40">
+        <img
+          src={src}
+          alt={alt || 'Course illustration'}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setHasError(true)}
+          className="max-h-[460px] w-auto max-w-full rounded-lg object-contain"
+        />
+      </div>
+      {alt && (
+        <figcaption className="px-3.5 py-2 border-t border-slate-200/80 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 text-center">
+          {alt}
+        </figcaption>
+      )}
+    </figure>
+  );
+};
+
 function renderInlineFormatting(text: string): React.ReactNode[] {
-  const tokens = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+  const tokens = text.split(/(!\[[^\]]*\]\([^)\s]+\)|`[^`]+`|\*\*[^*]+\*\*)/g);
   return tokens.map((token, idx) => {
+    const imgMatch = token.match(STANDALONE_IMAGE_RE);
+    if (imgMatch) {
+      return <MarkdownImage key={idx} alt={imgMatch[1]} src={imgMatch[2]} inline />;
+    }
     if (token.startsWith('`') && token.endsWith('`') && token.length >= 2) {
       return (
         <code
@@ -174,6 +237,20 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
       continue;
     }
 
+    // Standalone Markdown image
+    const standaloneImageMatch = line.trim().match(STANDALONE_IMAGE_RE);
+    if (standaloneImageMatch) {
+      blocks.push(
+        <MarkdownImage
+          key={`img-${i}`}
+          alt={standaloneImageMatch[1]}
+          src={standaloneImageMatch[2]}
+        />
+      );
+      i += 1;
+      continue;
+    }
+
     // Paragraph (combine contiguous non-empty, non-special lines)
     const paraLines: string[] = [line];
     i += 1;
@@ -182,6 +259,7 @@ export const MarkdownProse: React.FC<{ content: string }> = ({ content }) => {
       lines[i].trim() &&
       !lines[i].startsWith('#') &&
       !lines[i].trim().startsWith('```') &&
+      !STANDALONE_IMAGE_RE.test(lines[i].trim()) &&
       !/^\s*[-*]\s+/.test(lines[i]) &&
       !/^\s*\d+\.\s+/.test(lines[i])
     ) {
@@ -227,7 +305,11 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
   const [draftTitle, setDraftTitle] = useState<string>(targetTitle);
   const [draftSummary, setDraftSummary] = useState<string>(targetSummary);
   const [draftContent, setDraftContent] = useState<string>(targetContent);
+  const [isImageModalOpen, setIsImageModalOpen] = useState<boolean>(false);
+  const [imageInsertError, setImageInsertError] = useState<string | null>(null);
+  const [isTextareaDragOver, setIsTextareaDragOver] = useState<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const savedSelectionRef = useRef<{ start: number; end: number } | null>(null);
 
   // Reset editor state only when navigating to a different chapter or section
   useEffect(() => {
@@ -237,6 +319,8 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
     setDraftSummary(targetSummary);
     setDraftContent(targetContent);
     setEditorTab('write');
+    setIsImageModalOpen(false);
+    setImageInsertError(null);
     setIsEditing(canEdit && startInEditMode);
   }, [targetKey, targetTitle, targetSummary, targetContent, canEdit, startInEditMode]);
 
@@ -256,6 +340,8 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
       setDraftSummary(targetSummary);
       setDraftContent(targetContent);
       setEditorTab('write');
+      setIsImageModalOpen(false);
+      setImageInsertError(null);
       setIsEditing(true);
     }
     consumeStartInEditModeRef.current?.();
@@ -273,6 +359,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
     setDraftSummary(targetSummary);
     setDraftContent(targetContent);
     setEditorTab('write');
+    setImageInsertError(null);
     setIsEditing(true);
   };
 
@@ -293,6 +380,66 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
       const cursorPos = start + before.length + selected.length;
       el.setSelectionRange(cursorPos, cursorPos);
     });
+  };
+
+  const insertImageMarkdown = (src: string, alt: string) => {
+    const cleanAlt = alt.trim().replace(/[\r\n[\]]/g, ' ') || 'Course illustration';
+    const markdown = `![${cleanAlt}](${src})`;
+    const el = textareaRef.current;
+    const sel = savedSelectionRef.current;
+    savedSelectionRef.current = null;
+
+    setDraftContent(prev => {
+      const start = sel?.start ?? el?.selectionStart ?? prev.length;
+      const end = sel?.end ?? el?.selectionEnd ?? prev.length;
+      const prefixNeedsNewline = start > 0 && prev[start - 1] !== '\n' ? '\n' : '';
+      const suffixNeedsNewline = end < prev.length && prev[end] !== '\n' ? '\n' : '';
+      return (
+        prev.slice(0, start) +
+        prefixNeedsNewline +
+        markdown +
+        suffixNeedsNewline +
+        prev.slice(end)
+      );
+    });
+    setImageInsertError(null);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  };
+
+  const handleOpenImageModal = () => {
+    const el = textareaRef.current;
+    if (el) {
+      savedSelectionRef.current = {
+        start: el.selectionStart ?? draftContent.length,
+        end: el.selectionEnd ?? draftContent.length
+      };
+    } else {
+      savedSelectionRef.current = {
+        start: draftContent.length,
+        end: draftContent.length
+      };
+    }
+    setImageInsertError(null);
+    setIsImageModalOpen(true);
+  };
+
+  const handleDirectImageFile = async (file: File) => {
+    setImageInsertError(null);
+    const el = textareaRef.current;
+    if (el) {
+      savedSelectionRef.current = {
+        start: el.selectionStart ?? draftContent.length,
+        end: el.selectionEnd ?? draftContent.length
+      };
+    }
+    try {
+      const processed = await processImageFileToDataUrl(file);
+      insertImageMarkdown(processed.dataUrl, processed.suggestedAlt);
+    } catch (err) {
+      setImageInsertError(err instanceof Error ? err.message : 'Could not insert image.');
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -475,19 +622,68 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                       <Code2 className="w-3.5 h-3.5" />
                       <span>Code Block</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenImageModal}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+                      title="Upload, drag/paste, or insert an image URL"
+                    >
+                      <ImagePlus className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                      <span>Insert Image</span>
+                    </button>
                   </div>
                 )}
               </div>
 
               {editorTab === 'write' ? (
-                <textarea
-                  ref={textareaRef}
-                  rows={12}
-                  value={draftContent}
-                  onChange={(e) => setDraftContent(e.target.value)}
-                  placeholder={`Write detailed ${isSectionLevel ? 'section' : 'chapter'} content here using Markdown or plain text...\n\nExample:\n## Key Objectives\n- Understand architectural planes and controller roles\n- Review real-world deployment patterns`}
-                  className="w-full p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-700 text-sm font-mono leading-relaxed text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <div className="space-y-1.5">
+                  <textarea
+                    ref={textareaRef}
+                    rows={12}
+                    value={draftContent}
+                    onChange={(e) => setDraftContent(e.target.value)}
+                    onPaste={(e) => {
+                      const items = e.clipboardData?.items;
+                      if (!items) return;
+                      for (let idx = 0; idx < items.length; idx++) {
+                        if (items[idx].type.startsWith('image/')) {
+                          const file = items[idx].getAsFile();
+                          if (file) {
+                            e.preventDefault();
+                            void handleDirectImageFile(file);
+                            return;
+                          }
+                        }
+                      }
+                    }}
+                    onDragOver={(e) => {
+                      if (Array.from(e.dataTransfer.types || []).includes('Files')) {
+                        e.preventDefault();
+                        setIsTextareaDragOver(true);
+                      }
+                    }}
+                    onDragLeave={() => setIsTextareaDragOver(false)}
+                    onDrop={(e) => {
+                      const file = e.dataTransfer.files?.[0];
+                      if (file && file.type.startsWith('image/')) {
+                        e.preventDefault();
+                        setIsTextareaDragOver(false);
+                        void handleDirectImageFile(file);
+                      } else {
+                        setIsTextareaDragOver(false);
+                      }
+                    }}
+                    placeholder={`Write detailed ${isSectionLevel ? 'section' : 'chapter'} content here using Markdown or plain text...\n\nExample:\n## Key Objectives\n- Understand architectural planes and controller roles\n![Topology Diagram](https://example.com/topology.png)`}
+                    className={`w-full p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border text-sm font-mono leading-relaxed text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
+                      isTextareaDragOver
+                        ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-50/40 dark:bg-blue-950/30'
+                        : 'border-slate-200 dark:border-slate-700'
+                    }`}
+                  />
+                  {imageInsertError && (
+                    <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
+                  )}
+                </div>
               ) : (
                 <div className="min-h-[260px] p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800">
                   {draftContent.trim() ? (
@@ -504,7 +700,7 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 Supports Markdown headings (<code className="font-mono">##</code>), lists,{' '}
-                <code className="font-mono">**bold**</code>, and fenced CLI code blocks.
+                <code className="font-mono">**bold**</code>, code blocks, and images (upload, drag/paste, or URL).
               </p>
 
               <div className="flex items-center gap-2 shrink-0">
@@ -524,6 +720,12 @@ export const HierarchyContentWorkspace: React.FC<HierarchyContentWorkspaceProps>
                 </button>
               </div>
             </div>
+
+            <MarkdownImageModal
+              isOpen={isImageModalOpen}
+              onClose={() => setIsImageModalOpen(false)}
+              onInsert={({ src, alt }) => insertImageMarkdown(src, alt)}
+            />
           </form>
         ) : targetContent.trim() ? (
           <div className="pt-1">
@@ -618,7 +820,11 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
   const [draftVideoUrl, setDraftVideoUrl] = useState<string>(module.videoUrl || '');
   const [draftVideoDuration, setDraftVideoDuration] = useState<string>(module.videoDuration || '');
   const [draftContent, setDraftContent] = useState<string>(targetContent);
+  const [isImageModalOpen, setIsImageModalOpen] = useState<boolean>(false);
+  const [imageInsertError, setImageInsertError] = useState<string | null>(null);
+  const [isTextareaDragOver, setIsTextareaDragOver] = useState<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const savedSelectionRef = useRef<{ start: number; end: number } | null>(null);
 
   // Reset editor state only when switching to a different lesson module
   useEffect(() => {
@@ -631,6 +837,8 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     setDraftVideoDuration(module.videoDuration || '');
     setDraftContent(targetContent);
     setEditorTab('write');
+    setIsImageModalOpen(false);
+    setImageInsertError(null);
     setIsEditing(canEdit && startInEditMode);
   }, [
     module.id,
@@ -674,6 +882,8 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
       setDraftVideoDuration(module.videoDuration || '');
       setDraftContent(targetContent);
       setEditorTab('write');
+      setIsImageModalOpen(false);
+      setImageInsertError(null);
       setIsEditing(true);
     }
     consumeStartInEditModeRef.current?.();
@@ -703,6 +913,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
     setDraftVideoDuration(module.videoDuration || '');
     setDraftContent(targetContent);
     setEditorTab('write');
+    setImageInsertError(null);
     setIsEditing(true);
   };
 
@@ -725,6 +936,66 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
       const cursorPos = start + before.length + selected.length;
       el.setSelectionRange(cursorPos, cursorPos);
     });
+  };
+
+  const insertImageMarkdown = (src: string, alt: string) => {
+    const cleanAlt = alt.trim().replace(/[\r\n[\]]/g, ' ') || 'Course illustration';
+    const markdown = `![${cleanAlt}](${src})`;
+    const el = textareaRef.current;
+    const sel = savedSelectionRef.current;
+    savedSelectionRef.current = null;
+
+    setDraftContent(prev => {
+      const start = sel?.start ?? el?.selectionStart ?? prev.length;
+      const end = sel?.end ?? el?.selectionEnd ?? prev.length;
+      const prefixNeedsNewline = start > 0 && prev[start - 1] !== '\n' ? '\n' : '';
+      const suffixNeedsNewline = end < prev.length && prev[end] !== '\n' ? '\n' : '';
+      return (
+        prev.slice(0, start) +
+        prefixNeedsNewline +
+        markdown +
+        suffixNeedsNewline +
+        prev.slice(end)
+      );
+    });
+    setImageInsertError(null);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  };
+
+  const handleOpenImageModal = () => {
+    const el = textareaRef.current;
+    if (el) {
+      savedSelectionRef.current = {
+        start: el.selectionStart ?? draftContent.length,
+        end: el.selectionEnd ?? draftContent.length
+      };
+    } else {
+      savedSelectionRef.current = {
+        start: draftContent.length,
+        end: draftContent.length
+      };
+    }
+    setImageInsertError(null);
+    setIsImageModalOpen(true);
+  };
+
+  const handleDirectImageFile = async (file: File) => {
+    setImageInsertError(null);
+    const el = textareaRef.current;
+    if (el) {
+      savedSelectionRef.current = {
+        start: el.selectionStart ?? draftContent.length,
+        end: el.selectionEnd ?? draftContent.length
+      };
+    }
+    try {
+      const processed = await processImageFileToDataUrl(file);
+      insertImageMarkdown(processed.dataUrl, processed.suggestedAlt);
+    } catch (err) {
+      setImageInsertError(err instanceof Error ? err.message : 'Could not insert image.');
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -949,19 +1220,68 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                       <Code2 className="w-3.5 h-3.5" />
                       <span>Code Block</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenImageModal}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 whitespace-nowrap"
+                      title="Upload, drag/paste, or insert an image URL"
+                    >
+                      <ImagePlus className="w-3.5 h-3.5 text-blue-600 dark:text-cyan-400" />
+                      <span>Insert Image</span>
+                    </button>
                   </div>
                 )}
               </div>
 
               {editorTab === 'write' ? (
-                <textarea
-                  ref={textareaRef}
-                  rows={12}
-                  value={draftContent}
-                  onChange={(e) => setDraftContent(e.target.value)}
-                  placeholder={`Write detailed lesson content or companion notes here using Markdown or plain text...\n\nExample:\n## Key Objectives\n- Understand architectural concepts and command syntax\n- Review real-world deployment verification`}
-                  className="w-full p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-700 text-sm font-mono leading-relaxed text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <div className="space-y-1.5">
+                  <textarea
+                    ref={textareaRef}
+                    rows={12}
+                    value={draftContent}
+                    onChange={(e) => setDraftContent(e.target.value)}
+                    onPaste={(e) => {
+                      const items = e.clipboardData?.items;
+                      if (!items) return;
+                      for (let idx = 0; idx < items.length; idx++) {
+                        if (items[idx].type.startsWith('image/')) {
+                          const file = items[idx].getAsFile();
+                          if (file) {
+                            e.preventDefault();
+                            void handleDirectImageFile(file);
+                            return;
+                          }
+                        }
+                      }
+                    }}
+                    onDragOver={(e) => {
+                      if (Array.from(e.dataTransfer.types || []).includes('Files')) {
+                        e.preventDefault();
+                        setIsTextareaDragOver(true);
+                      }
+                    }}
+                    onDragLeave={() => setIsTextareaDragOver(false)}
+                    onDrop={(e) => {
+                      const file = e.dataTransfer.files?.[0];
+                      if (file && file.type.startsWith('image/')) {
+                        e.preventDefault();
+                        setIsTextareaDragOver(false);
+                        void handleDirectImageFile(file);
+                      } else {
+                        setIsTextareaDragOver(false);
+                      }
+                    }}
+                    placeholder={`Write detailed lesson content or companion notes here using Markdown or plain text...\n\nExample:\n## Key Objectives\n- Understand architectural concepts and command syntax\n![Topology Diagram](https://example.com/topology.png)`}
+                    className={`w-full p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border text-sm font-mono leading-relaxed text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
+                      isTextareaDragOver
+                        ? 'border-blue-500 ring-2 ring-blue-500/40 bg-blue-50/40 dark:bg-blue-950/30'
+                        : 'border-slate-200 dark:border-slate-700'
+                    }`}
+                  />
+                  {imageInsertError && (
+                    <p className="text-xs text-red-600 dark:text-red-400">{imageInsertError}</p>
+                  )}
+                </div>
               ) : (
                 <div className="min-h-[260px] p-5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800">
                   {draftContent.trim() ? (
@@ -978,7 +1298,7 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 Supports Markdown headings (<code className="font-mono">##</code>), lists,{' '}
-                <code className="font-mono">**bold**</code>, and fenced CLI code blocks.
+                <code className="font-mono">**bold**</code>, code blocks, and images (upload, drag/paste, or URL).
               </p>
 
               <div className="flex items-center gap-2 shrink-0">
@@ -998,6 +1318,12 @@ export const ModuleContentWorkspace: React.FC<ModuleContentWorkspaceProps> = ({
                 </button>
               </div>
             </div>
+
+            <MarkdownImageModal
+              isOpen={isImageModalOpen}
+              onClose={() => setIsImageModalOpen(false)}
+              onInsert={({ src, alt }) => insertImageMarkdown(src, alt)}
+            />
           </form>
         ) : module.type === 'theory' ? (
           targetContent.trim() ? (
