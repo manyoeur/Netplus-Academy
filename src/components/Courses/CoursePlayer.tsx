@@ -1133,8 +1133,10 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                         {/* Level 1: Chapter Header */}
                         <div
                           className={`group flex items-start justify-between gap-1.5 px-2 py-2 rounded-lg transition-colors ${
-                            isChapterOpen || isChapterSelected
-                              ? 'bg-emerald-100/75 dark:bg-emerald-900/30'
+                            isChapterSelected
+                              ? 'bg-emerald-100 dark:bg-emerald-900/60 border-l-[3px] border-emerald-600 dark:border-emerald-400 ring-1 ring-emerald-500/40 dark:ring-emerald-400/40 shadow-xs'
+                              : isChapterOpen
+                              ? 'bg-emerald-50/90 dark:bg-emerald-900/25'
                               : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
                           }`}
                         >
@@ -1216,6 +1218,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                               toggleChapterAccordion(chapter.id);
                             }}
                             className="flex-1 min-w-0 text-left select-none"
+                            aria-current={isChapterSelected ? 'page' : undefined}
                             title={
                               isChapterOpen
                                 ? 'Click to view chapter · Double-click to collapse'
@@ -1225,11 +1228,17 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                             <span
                               className={`text-[13px] font-bold leading-snug transition-colors block ${
                                 isChapterSelected
-                                  ? 'text-emerald-700 dark:text-emerald-300'
+                                  ? 'text-emerald-900 dark:text-emerald-100'
                                   : 'text-slate-900 dark:text-white group-hover:text-emerald-700 dark:group-hover:text-emerald-300'
                               }`}
                             >
-                              <span className="tabular-nums mr-1.5">{chapter.chapterNumber}</span>
+                              <span
+                                className={`tabular-nums mr-1.5 ${
+                                  isChapterSelected ? 'text-emerald-700 dark:text-emerald-300' : ''
+                                }`}
+                              >
+                                {chapter.chapterNumber}
+                              </span>
                               {chapter.title}
                             </span>
                           </button>
@@ -1279,6 +1288,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                               const isSectionSelected =
                                 selectedOutlineNode.level === 'section' &&
                                 selectedOutlineNode.sectionId === section.id;
+                              const isSectionActiveBranch =
+                                selectedOutlineNode.level === 'module' &&
+                                section.items.some(item => item.flatIndex === activeModuleIndex);
                               const sectionHasContent = Boolean(section.contentMarkdown?.trim());
                               const sectionTotal = section.items.length;
                               const sectionDoneCount = section.items.filter(item =>
@@ -1293,7 +1305,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                   <div
                                     className={`group/sec flex items-start justify-between gap-1.5 px-2 py-1.5 rounded-md transition-colors ${
                                       isSectionSelected
-                                        ? 'bg-white dark:bg-slate-800 shadow-2xs'
+                                        ? 'bg-emerald-100 dark:bg-emerald-900/60 border-l-[3px] border-emerald-600 dark:border-emerald-400 ring-1 ring-emerald-500/40 dark:ring-emerald-400/40 shadow-xs'
+                                        : isSectionActiveBranch
+                                        ? 'bg-emerald-100/65 dark:bg-emerald-900/30'
                                         : 'hover:bg-white/70 dark:hover:bg-slate-800/50'
                                     }`}
                                   >
@@ -1354,6 +1368,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                         toggleSectionAccordion(section.id);
                                       }}
                                       className="flex-1 min-w-0 text-left select-none"
+                                      aria-current={isSectionSelected ? 'page' : undefined}
                                       title={
                                         isSectionOpen
                                           ? 'Click to view section · Double-click to collapse'
@@ -1363,11 +1378,21 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                       <span
                                         className={`text-[12px] font-bold leading-snug transition-colors block ${
                                           isSectionSelected
-                                            ? 'text-emerald-700 dark:text-emerald-300'
+                                            ? 'text-emerald-900 dark:text-emerald-100'
+                                            : isSectionActiveBranch
+                                            ? 'text-emerald-800 dark:text-emerald-200'
                                             : 'text-slate-800 dark:text-slate-200 group-hover/sec:text-emerald-700 dark:group-hover/sec:text-emerald-300'
                                         }`}
                                       >
-                                        <span className="tabular-nums mr-1.5">{section.sectionNumber}</span>
+                                        <span
+                                          className={`tabular-nums mr-1.5 ${
+                                            isSectionSelected || isSectionActiveBranch
+                                              ? 'text-emerald-700 dark:text-emerald-300'
+                                              : ''
+                                          }`}
+                                        >
+                                          {section.sectionNumber}
+                                        </span>
                                         {section.title}
                                       </span>
                                     </button>
@@ -1443,31 +1468,32 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                           return (
                                             <React.Fragment key={m.id}>
                                               <div
-                                                className={`group/mod relative w-full px-2 py-1.5 rounded-lg transition-colors flex items-start gap-1.5 ${
-                                                  isDedicatedQuiz && modQuiz
-                                                    ? isModQuizPassed
-                                                      ? 'border-l-2 border-emerald-500 dark:border-emerald-400'
-                                                      : 'border-l-2 border-amber-400 dark:border-amber-500'
-                                                    : ''
-                                                } ${
+                                                className={`group/mod relative w-full px-2.5 py-2 rounded-lg transition-all flex items-start gap-1.5 ${
                                                   isActive
-                                                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold shadow-2xs'
+                                                    ? isDedicatedQuiz && modQuiz && !isModQuizPassed
+                                                      ? 'bg-amber-100/90 dark:bg-amber-900/45 border-l-[3px] border-amber-600 dark:border-amber-400 ring-1 ring-amber-500/45 text-amber-950 dark:text-amber-50 font-semibold shadow-xs'
+                                                      : 'bg-emerald-100 dark:bg-emerald-900/60 border-l-[3px] border-emerald-600 dark:border-emerald-400 ring-1 ring-emerald-500/45 dark:ring-emerald-400/45 text-emerald-950 dark:text-emerald-50 font-semibold shadow-xs'
+                                                    : isDedicatedQuiz && modQuiz
+                                                    ? isModQuizPassed
+                                                      ? 'border-l-2 border-emerald-500 dark:border-emerald-400 bg-emerald-50/45 dark:bg-emerald-950/20 hover:bg-white/80 dark:hover:bg-slate-800/50 text-slate-800 dark:text-slate-200'
+                                                      : 'border-l-2 border-amber-400 dark:border-amber-500 hover:bg-white/70 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
                                                     : isModMasteryLocked
                                                     ? 'text-slate-400 dark:text-slate-500 hover:bg-white/60 dark:hover:bg-slate-800/40'
-                                                    : isDedicatedQuiz && modQuiz && isModQuizPassed
-                                                    ? 'bg-emerald-50/45 dark:bg-emerald-950/20 hover:bg-white/80 dark:hover:bg-slate-800/50 text-slate-800 dark:text-slate-200'
                                                     : 'hover:bg-white/70 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
                                                 }`}
                                               >
                                                 <button
                                                   type="button"
                                                   onClick={() => handleSelectModule(idx, false)}
+                                                  aria-current={isActive ? 'page' : undefined}
                                                   className="flex-1 min-w-0 text-left flex items-start gap-2.5"
                                                 >
                                                   <div className="mt-0.5 shrink-0 relative z-10">
                                                     {isDone || isModQuizPassed ? (
                                                       <span
-                                                        className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center"
+                                                        className={`w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center ${
+                                                          isActive ? 'ring-2 ring-emerald-300 dark:ring-emerald-700' : ''
+                                                        }`}
                                                         aria-label="Completed"
                                                       >
                                                         <Check className="w-2.5 h-2.5 stroke-[3]" />
@@ -1478,17 +1504,21 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                       </span>
                                                     ) : isDedicatedQuiz && modQuiz ? (
                                                       <span
-                                                        className="w-4 h-4 rounded-full border border-amber-500/80 bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center"
+                                                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                                                          isActive
+                                                            ? 'border-amber-600 bg-amber-600 text-white dark:border-amber-400 dark:bg-amber-500'
+                                                            : 'border-amber-500/80 bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400'
+                                                        }`}
                                                         aria-label="Quiz pending"
                                                       >
                                                         <Clock className="w-2.5 h-2.5" />
                                                       </span>
                                                     ) : (
                                                       <span
-                                                        className={`w-4 h-4 rounded-full border flex items-center justify-center bg-white dark:bg-slate-900 ${
+                                                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${
                                                           isActive
-                                                            ? 'border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400'
-                                                            : 'border-emerald-500/60 text-emerald-600/80 dark:text-emerald-400/80'
+                                                            ? 'border-emerald-600 bg-emerald-600 text-white dark:border-emerald-400 dark:bg-emerald-500 shadow-2xs'
+                                                            : 'border-emerald-500/60 bg-white dark:bg-slate-900 text-emerald-600/80 dark:text-emerald-400/80'
                                                         }`}
                                                       >
                                                         <ChevronRight className="w-2.5 h-2.5" />
@@ -1497,8 +1527,20 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                   </div>
 
                                                   <div className="flex-1 min-w-0">
-                                                    <p className="text-[12px] leading-snug">
-                                                      <span className="tabular-nums mr-1.5 text-slate-500 dark:text-slate-400">
+                                                    <p
+                                                      className={`text-[12px] leading-snug ${
+                                                        isActive ? 'font-bold' : ''
+                                                      }`}
+                                                    >
+                                                      <span
+                                                        className={`tabular-nums mr-1.5 ${
+                                                          isActive
+                                                            ? isDedicatedQuiz && modQuiz && !isModQuizPassed
+                                                              ? 'text-amber-700 dark:text-amber-300 font-bold'
+                                                              : 'text-emerald-700 dark:text-emerald-300 font-bold'
+                                                            : 'text-slate-500 dark:text-slate-400'
+                                                        }`}
+                                                      >
                                                         {itemNumber}
                                                       </span>
                                                       {m.title}
