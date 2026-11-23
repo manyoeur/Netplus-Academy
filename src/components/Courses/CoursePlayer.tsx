@@ -253,8 +253,10 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     null
   );
 
-  // Reading scroll progress state
-  const moduleContentRef = useRef<HTMLDivElement>(null);
+  // Reading scroll progress & independent split-pane scroll refs
+  const moduleContentRef = useRef<HTMLDivElement | null>(null);
+  const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
+  const outlineScrollRef = useRef<HTMLDivElement | null>(null);
   const isRestoringRef = useRef<boolean>(false);
   const saveTimeoutRef = useRef<number | null>(null);
   const [currentReadingPercent, setCurrentReadingPercent] = useState<number>(() => {
@@ -304,7 +306,81 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     setVideoSeekRequest(null);
   }, [activeModule?.id]);
 
+  const isContainerScrollable = useCallback((el: HTMLElement | null): el is HTMLElement => {
+    if (!el) return false;
+    const overflowY = window.getComputedStyle(el).overflowY;
+    return (overflowY === 'auto' || overflowY === 'scroll') && el.clientHeight > 0;
+  }, []);
+
+  const scrollWorkspaceToTop = useCallback(
+    (behavior: ScrollBehavior = 'smooth') => {
+      const wsEl = workspaceScrollRef.current;
+      if (isContainerScrollable(wsEl)) {
+        wsEl.scrollTo({ top: 0, behavior });
+      } else {
+        window.scrollTo({ top: 0, behavior });
+      }
+    },
+    [isContainerScrollable]
+  );
+
+  // Keep the highlighted item visible inside the independent Course Outline scroll container
+  useEffect(() => {
+    if (isOutlineSidebarCollapsed || isOutlineBodyCollapsed) return;
+    const container = outlineScrollRef.current;
+    if (!container || container.scrollHeight <= container.clientHeight + 2) return;
+
+    const raf = window.requestAnimationFrame(() => {
+      const activeEl = container.querySelector<HTMLElement>('[data-outline-active="true"]');
+      if (!activeEl) return;
+      const containerRect = container.getBoundingClientRect();
+      const itemRect = activeEl.getBoundingClientRect();
+      const topPadding = 16;
+      const bottomPadding = 16;
+
+      if (itemRect.top < containerRect.top + topPadding) {
+        const delta = itemRect.top - (containerRect.top + topPadding);
+        container.scrollTo({
+          top: Math.max(0, container.scrollTop + delta),
+          behavior: 'smooth'
+        });
+      } else if (itemRect.bottom > containerRect.bottom - bottomPadding) {
+        const delta = itemRect.bottom - (containerRect.bottom - bottomPadding);
+        container.scrollTo({
+          top: container.scrollTop + delta,
+          behavior: 'smooth'
+        });
+      }
+    });
+
+    return () => window.cancelAnimationFrame(raf);
+  }, [
+    activeModuleIndex,
+    selectedOutlineNode,
+    isOutlineSidebarCollapsed,
+    isOutlineBodyCollapsed
+  ]);
+
   const computeScrollMetrics = useCallback(() => {
+    const wsEl = workspaceScrollRef.current;
+    if (isContainerScrollable(wsEl)) {
+      const scrollTop = Math.max(0, wsEl.scrollTop);
+      const maxScroll = Math.max(0, wsEl.scrollHeight - wsEl.clientHeight);
+      if (maxScroll <= 2) {
+        return {
+          scrollY: 0,
+          scrollRatio: 0,
+          percent: 0
+        };
+      }
+      const ratio = Math.min(1, Math.max(0, scrollTop / maxScroll));
+      return {
+        scrollY: Math.round(scrollTop),
+        scrollRatio: Number(ratio.toFixed(4)),
+        percent: Math.round(ratio * 100)
+      };
+    }
+
     const el = moduleContentRef.current;
     const scrollY = Math.max(0, window.scrollY || document.documentElement.scrollTop || 0);
     const docMaxScroll = Math.max(
@@ -340,7 +416,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       scrollRatio: Number(ratio.toFixed(4)),
       percent: Math.round(ratio * 100)
     };
-  }, []);
+  }, [isContainerScrollable]);
 
   const persistModuleReading = useCallback(
     (targetCourseId: string, targetModuleId: string, metrics: { scrollY: number; scrollRatio: number; percent: number }) => {
@@ -406,34 +482,58 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     let raf2 = 0;
     const raf1 = window.requestAnimationFrame(() => {
       raf2 = window.requestAnimationFrame(() => {
-        const docMaxScroll = Math.max(
-          0,
-          document.documentElement.scrollHeight - window.innerHeight
-        );
+        const wsEl = workspaceScrollRef.current;
 
-        if (savedProgress && savedProgress.scrollY > 24 && docMaxScroll > 24) {
-          let targetScrollY = savedProgress.scrollY;
-          const el = moduleContentRef.current;
-          if (el && savedProgress.scrollRatio > 0) {
-            const currentY = window.scrollY || 0;
-            const rect = el.getBoundingClientRect();
-            const elTop = currentY + rect.top;
-            const elBottom = elTop + el.offsetHeight;
-            const startY = Math.max(0, elTop - 100);
-            const endY = Math.max(startY + 1, elBottom - window.innerHeight);
-            const span = Math.min(docMaxScroll, endY) - startY;
-            if (span > 20) {
-              const ratioTarget = Math.round(startY + savedProgress.scrollRatio * span);
-              targetScrollY = Math.abs(ratioTarget - savedProgress.scrollY) < 160
+        if (isContainerScrollable(wsEl)) {
+          const maxScroll = Math.max(0, wsEl.scrollHeight - wsEl.clientHeight);
+          if (
+            savedProgress &&
+            (savedProgress.scrollY > 24 || savedProgress.scrollRatio > 0.02) &&
+            maxScroll > 24
+          ) {
+            const ratioTarget = Math.round(savedProgress.scrollRatio * maxScroll);
+            const targetScrollTop =
+              savedProgress.scrollY > 0 && Math.abs(ratioTarget - savedProgress.scrollY) < 160
                 ? savedProgress.scrollY
                 : ratioTarget;
-            }
+            wsEl.scrollTo({
+              top: Math.min(maxScroll, Math.max(0, targetScrollTop)),
+              behavior: 'auto'
+            });
+          } else {
+            wsEl.scrollTo({ top: 0, behavior: 'auto' });
           }
-
-          const clampedY = Math.min(docMaxScroll, Math.max(0, targetScrollY));
-          window.scrollTo({ top: clampedY, behavior: 'auto' });
         } else {
-          window.scrollTo({ top: 0, behavior: 'auto' });
+          const docMaxScroll = Math.max(
+            0,
+            document.documentElement.scrollHeight - window.innerHeight
+          );
+
+          if (savedProgress && savedProgress.scrollY > 24 && docMaxScroll > 24) {
+            let targetScrollY = savedProgress.scrollY;
+            const el = moduleContentRef.current;
+            if (el && savedProgress.scrollRatio > 0) {
+              const currentY = window.scrollY || 0;
+              const rect = el.getBoundingClientRect();
+              const elTop = currentY + rect.top;
+              const elBottom = elTop + el.offsetHeight;
+              const startY = Math.max(0, elTop - 100);
+              const endY = Math.max(startY + 1, elBottom - window.innerHeight);
+              const span = Math.min(docMaxScroll, endY) - startY;
+              if (span > 20) {
+                const ratioTarget = Math.round(startY + savedProgress.scrollRatio * span);
+                targetScrollY =
+                  Math.abs(ratioTarget - savedProgress.scrollY) < 160
+                    ? savedProgress.scrollY
+                    : ratioTarget;
+              }
+            }
+
+            const clampedY = Math.min(docMaxScroll, Math.max(0, targetScrollY));
+            window.scrollTo({ top: clampedY, behavior: 'auto' });
+          } else {
+            window.scrollTo({ top: 0, behavior: 'auto' });
+          }
         }
 
         releaseTimer = window.setTimeout(() => {
@@ -452,9 +552,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       }
       isRestoringRef.current = false;
     };
-  }, [course.id, activeModule?.id, currentUser.id]);
+  }, [course.id, activeModule?.id, currentUser.id, isContainerScrollable]);
 
-  // Listen for scroll events on the active module and persist reading progress to localStorage
+  // Listen for scroll events on the active workspace container (or window on mobile) and persist reading progress
   useEffect(() => {
     if (!activeModule || selectedOutlineNode.level !== 'module') return;
 
@@ -487,8 +587,12 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       writeReadingStore(currentUser.id, updatedStore);
     };
 
-    const handleScroll = () => {
+    const handleScroll = (e: Event) => {
       if (isRestoringRef.current) return;
+      const wsEl = workspaceScrollRef.current;
+      if (e.target === document && isContainerScrollable(wsEl)) {
+        return;
+      }
       const metrics = computeScrollMetrics();
       pendingMetrics = metrics;
       setCurrentReadingPercent(metrics.percent);
@@ -502,9 +606,12 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       }, 150);
     };
 
+    const wsEl = workspaceScrollRef.current;
+    wsEl?.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('pagehide', writePendingToStorage);
     return () => {
+      wsEl?.removeEventListener('scroll', handleScroll);
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('pagehide', writePendingToStorage);
       if (saveTimeoutRef.current !== null) {
@@ -513,7 +620,15 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       }
       writePendingToStorage();
     };
-  }, [course.id, activeModule?.id, currentUser.id, selectedOutlineNode.level, computeScrollMetrics, persistModuleReading]);
+  }, [
+    course.id,
+    activeModule?.id,
+    currentUser.id,
+    selectedOutlineNode.level,
+    computeScrollMetrics,
+    persistModuleReading,
+    isContainerScrollable
+  ]);
 
   const flushCurrentModuleProgress = useCallback(() => {
     if (!activeModule || isRestoringRef.current || selectedOutlineNode.level !== 'module') return;
@@ -701,7 +816,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     setExpandedChapters(prev => ({ ...prev, [chapterId]: true }));
     setOpenHierarchyEditorOnSelect(openEditor);
     setSelectedOutlineNode({ level: 'chapter', chapterId });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollWorkspaceToTop('smooth');
   };
 
   const handleSelectHierarchySection = (
@@ -714,7 +829,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     setExpandedSections(prev => ({ ...prev, [sectionId]: true }));
     setOpenHierarchyEditorOnSelect(openEditor);
     setSelectedOutlineNode({ level: 'section', chapterId, sectionId });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollWorkspaceToTop('smooth');
   };
 
   const handleSaveHierarchyContent = (payload: {
@@ -830,7 +945,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     }
     setActiveModuleIndex(idx);
     if (openEditor || wasViewingHierarchy) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      scrollWorkspaceToTop('smooth');
     }
   };
 
@@ -1000,14 +1115,18 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
         </div>
       </div>
 
-      {/* Main 2-Column Workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+      {/* Main 2-Column Workspace (Independent vertical scroll panes on desktop lg+) */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start lg:items-stretch lg:h-[calc(100dvh-12.25rem)] lg:min-h-[540px]">
 
-        {/* Left Column: Collapsible Course Outline Only (no thumbnail) */}
+        {/* Left Column: Collapsible Course Outline Only (independent vertical scroll) */}
         {!isOutlineSidebarCollapsed && (
-          <div className="lg:col-span-1 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+          <div
+            className={`lg:col-span-1 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col min-h-0 ${
+              isOutlineBodyCollapsed ? 'lg:self-start' : 'lg:h-full'
+            }`}
+          >
             {/* Course Outline Header with Progress Bar & Collapse Toggle */}
-            <div className="p-4 bg-emerald-50/90 dark:bg-emerald-950/35 border-b border-emerald-200/70 dark:border-emerald-900/50 space-y-2.5">
+            <div className="shrink-0 p-4 bg-emerald-50/90 dark:bg-emerald-950/35 border-b border-emerald-200/70 dark:border-emerald-900/50 space-y-2.5">
               <div className="flex items-start justify-between gap-2.5">
                 <div
                   onDoubleClick={(e) => {
@@ -1082,7 +1201,11 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
             {/* 3-Level Nested Course Outline: 1.0 Chapter -> 1.1 Main Contents -> 1.1.1 Course Contents */}
             {!isOutlineBodyCollapsed && (
-              <div className="p-3 space-y-3">
+              <div
+                ref={outlineScrollRef}
+                aria-label="Course Outline Navigation"
+                className="flex-1 min-h-0 lg:overflow-y-auto lg:overscroll-y-contain p-3 space-y-3"
+              >
                 <div className="divide-y divide-slate-200/80 dark:divide-slate-800">
                   {hierarchyTree.map((chapter) => {
                     const isChapterOpen = Boolean(expandedChapters[chapter.id]);
@@ -1104,6 +1227,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                       <div key={chapter.id} className="py-1.5 first:pt-0 last:pb-0">
                         {/* Level 1: Chapter Header */}
                         <div
+                          data-outline-active={isChapterSelected ? 'true' : undefined}
                           className={`group flex items-start justify-between gap-1.5 px-2 py-2 rounded-lg transition-colors ${
                             isChapterSelected
                               ? 'bg-emerald-100 dark:bg-emerald-900/60 border-l-[3px] border-emerald-600 dark:border-emerald-400 ring-1 ring-emerald-500/40 dark:ring-emerald-400/40 shadow-xs'
@@ -1275,6 +1399,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                 <div key={section.id} className="space-y-1">
                                   {/* Level 2 Subheader */}
                                   <div
+                                    data-outline-active={isSectionSelected ? 'true' : undefined}
                                     className={`group/sec flex items-start justify-between gap-1.5 px-2 py-1.5 rounded-md transition-colors ${
                                       isSectionSelected
                                         ? 'bg-emerald-100 dark:bg-emerald-900/60 border-l-[3px] border-emerald-600 dark:border-emerald-400 ring-1 ring-emerald-500/40 dark:ring-emerald-400/40 shadow-xs'
@@ -1440,6 +1565,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                           return (
                                             <React.Fragment key={m.id}>
                                               <div
+                                                data-outline-active={isActive ? 'true' : undefined}
                                                 className={`group/mod relative w-full px-2.5 py-2 rounded-lg transition-all flex items-start gap-1.5 ${
                                                   isActive
                                                     ? isDedicatedQuiz && modQuiz && !isModQuizPassed
@@ -1688,10 +1814,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           </div>
         )}
 
-        {/* Right Column: Module Learning Workspace */}
+        {/* Right Column: Module Learning Workspace (independent vertical scroll) */}
         <div
-          ref={moduleContentRef}
-          className={`${isOutlineSidebarCollapsed ? 'lg:col-span-4' : 'lg:col-span-3'} space-y-4`}
+          className={`${isOutlineSidebarCollapsed ? 'lg:col-span-4' : 'lg:col-span-3'} lg:h-full flex flex-col min-w-0 min-h-0 gap-4`}
         >
           {/* Frozen Workspace Header Strip: Outline Collapse + Title + Icon-Only Prev/Next */}
           {(() => {
@@ -1783,7 +1908,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             }
 
             return (
-              <div className="sticky top-[62px] z-20 px-3.5 py-2 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3">
+              <div className="shrink-0 sticky top-[62px] lg:static z-20 px-3.5 py-2 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <button
                     type="button"
@@ -1857,6 +1982,15 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               </div>
             );
           })()}
+          {/* Scrollable Course Workspace Body (independent from Course Outline panel) */}
+          <div
+            ref={(el) => {
+              workspaceScrollRef.current = el;
+              moduleContentRef.current = el;
+            }}
+            aria-label="Course Workspace Content"
+            className="flex-1 min-h-0 lg:overflow-y-auto lg:overscroll-y-contain lg:pr-1.5 space-y-4"
+          >
           {/* First-Level Chapter & Second-Level Section Content Reading / Writing Stage */}
           {isViewingHierarchyContent && activeHierarchyChapter ? (
             <HierarchyContentWorkspace
@@ -2197,6 +2331,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               )}
             </ModuleContentWorkspace>
           )}
+          </div>
 
         </div>
 
@@ -2241,7 +2376,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
               setPostQuizModalModuleIndex(null);
               if (completedIdx < course.modules.length - 1) {
                 setActiveModuleIndex(completedIdx + 1);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                scrollWorkspaceToTop('smooth');
               } else if (progressPercent === 100) {
                 onViewCertificates();
               }
@@ -2294,7 +2429,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           if (targetIdx >= 0) {
             setSelectedOutlineNode({ level: 'module' });
             setActiveModuleIndex(targetIdx);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            scrollWorkspaceToTop('smooth');
           }
         }}
         onSaveNote={saveQuickNote}
