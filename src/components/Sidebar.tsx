@@ -332,7 +332,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         },
         {
           id: 'subnet-calc',
-          label: 'Subnet & VLSM Calc',
+          label: 'Subnet & VLSM',
           icon: Calculator,
           accentText: 'text-sky-600 dark:text-sky-400',
           accentBg: 'bg-sky-50 dark:bg-sky-950/60',

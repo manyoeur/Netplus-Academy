@@ -90,6 +90,7 @@ import {
   saveLocalStudyGoal,
   updateDailyGoalMinutesInData
 } from '../utils/studyGoal';
+import { syncStudyGoalSnapshotToHistory } from '../utils/studyHistory';
 import {
   QuickNote,
   QuickNoteInput,
@@ -436,6 +437,10 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [currentUser.id]);
 
   const dailyStudyGoal = computeDailyStudyGoal(studyGoalData);
+
+  useEffect(() => {
+    syncStudyGoalSnapshotToHistory(currentUser.id, studyGoalData);
+  }, [currentUser.id, studyGoalData]);
 
   useEffect(() => {
     if (dailyStudyGoal.totalSecondsToday > 0 && !learningStreak.studiedToday) {

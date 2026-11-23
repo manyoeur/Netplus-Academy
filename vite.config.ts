@@ -16,13 +16,11 @@ export default defineConfig(() => {
           if (process.env.DISABLE_HMR !== 'true') return;
           const normalizedId = id.replace(/\\/g, '/').split('?')[0];
           if (!normalizedId.endsWith('/vite/dist/client/client.mjs')) return;
-          let patched = code.replace(
-            'transport.connect(createHMRHandler(handleMessage));',
-            '/* HMR disabled via DISABLE_HMR=true */'
-          );
-          patched = patched.replace(
-            'ws.send(JSON.stringify(data));',
-            'if (ws && ws.readyState === 1) ws.send(JSON.stringify(data));'
+          const transportPattern =
+            /const transport = normalizeModuleRunnerTransport\(\(\(\) => \{[\s\S]*?\}\)\(\)\);/;
+          const patched = code.replace(
+            transportPattern,
+            'const transport = normalizeModuleRunnerTransport({ connect() {}, disconnect() {}, send() {} });'
           );
           if (patched !== code) {
             return { code: patched, map: null };

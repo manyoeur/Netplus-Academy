@@ -31,6 +31,12 @@ import {
   loadShortcutsEnabled,
   saveShortcutsEnabled
 } from './utils/keyboardShortcuts';
+import {
+  isLabToolTabId,
+  LabToolTabId,
+  recordCourseAccess,
+  recordLabAccess
+} from './utils/recentActivity';
 
 type ManagementSubTab = 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students';
 
@@ -153,6 +159,21 @@ const AcademyApp: React.FC = () => {
     setActiveCourseId(courseId);
     setCurrentTab('player');
   };
+
+  // Record Recent Activity whenever user opens a course or standalone lab tool
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser.id) return;
+    if (currentTab === 'player' && activeCourseId) {
+      const targetCourse = courses.find(c => c.id === activeCourseId);
+      if (targetCourse) {
+        recordCourseAccess(currentUser.id, targetCourse);
+      }
+      return;
+    }
+    if (isLabToolTabId(currentTab)) {
+      recordLabAccess(currentUser.id, currentTab);
+    }
+  }, [isAuthenticated, currentUser.id, currentTab, activeCourseId, courses]);
 
   // Track active study seconds when interacting with course content, lab simulator, or practice tools
   const lastInteractionAtRef = useRef<number>(Date.now());
@@ -325,8 +346,9 @@ const AcademyApp: React.FC = () => {
             onSelectCourse={handleSelectCourse}
             onViewCertificates={() => setCurrentTab('certificates')}
             onOpenPricing={() => setIsPaymentOpen(true)}
-            onOpenCliLab={() => setCurrentTab('lab-sandbox')}
-            onBrowseCourses={() => setCurrentTab('courses')}
+            onOpenCliLab={() => handleNavigateTab('lab-sandbox')}
+            onOpenLabTab={(tabId: LabToolTabId) => handleNavigateTab(tabId)}
+            onBrowseCourses={() => handleNavigateTab('courses')}
             onOpenCourseCheckout={(course, receipt) => {
               setCheckoutCourse(course);
               setCheckoutReceipt(receipt || null);

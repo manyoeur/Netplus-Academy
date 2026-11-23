@@ -57,6 +57,7 @@ import {
   readReadingStore,
   writeReadingStore
 } from '../../utils/readingProgress';
+import { recordCourseAccess } from '../../utils/recentActivity';
 
 interface CoursePlayerProps {
   courseId: string;
@@ -471,6 +472,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
     };
     writeReadingStore(currentUser.id, nextStore);
     setReadingStore(nextStore);
+    recordCourseAccess(currentUser.id, course, activeModule);
 
     if (savedProgress) {
       setCurrentReadingPercent(savedProgress.percent);

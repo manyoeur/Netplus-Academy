@@ -92,7 +92,7 @@ export const GLOBAL_KEYBOARD_SHORTCUTS: KeyboardShortcutDef[] = [
     id: 'tool-subnet',
     key: 's',
     displayKey: 'S',
-    label: 'Subnet & VLSM Calc',
+    label: 'Subnet & VLSM',
     description: 'Open Subnetting & VLSM Architecture Calculator',
     category: 'tools',
     tabId: 'subnet-calc',

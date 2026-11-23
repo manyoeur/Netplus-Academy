@@ -30,6 +30,8 @@ import { DailyStreakCard } from './DailyStreakCard';
 import { DailyStudyGoalCard } from './DailyStudyGoalCard';
 import { StudentGreetingHero } from './StudentGreetingHero';
 import { MilestoneBadgesCard } from './MilestoneBadgesCard';
+import { RecentActivityCard } from './RecentActivityCard';
+import { WeeklyLearningTrendsCard } from './WeeklyLearningTrendsCard';
 import {
   resolveCourseEnrollment,
   formatEnrollmentDateRange,
@@ -41,6 +43,15 @@ import {
   readReadingStore,
   resolveLastActiveCourseSession
 } from '../../utils/readingProgress';
+import {
+  getCombinedRecentActivity,
+  LabToolTabId,
+  RECENT_ACTIVITY_UPDATED_EVENT
+} from '../../utils/recentActivity';
+import {
+  buildWeeklyLearningTrends,
+  STUDY_HISTORY_UPDATED_EVENT
+} from '../../utils/studyHistory';
 import { formatVideoTimestamp } from '../../utils/quickNotes';
 
 interface StudentDashboardProps {
@@ -48,6 +59,7 @@ interface StudentDashboardProps {
   onViewCertificates: () => void;
   onOpenPricing: () => void;
   onOpenCliLab: () => void;
+  onOpenLabTab?: (tabId: LabToolTabId) => void;
   onBrowseCourses?: () => void;
   onOpenCourseCheckout?: (course: Course | null, receipt?: CoursePaymentRecord) => void;
 }
@@ -60,6 +72,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onViewCertificates,
   onOpenPricing,
   onOpenCliLab,
+  onOpenLabTab,
   onBrowseCourses,
   onOpenCourseCheckout
 }) => {
@@ -93,20 +106,30 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [readingStore, setReadingStore] = useState<ReadingStore>(() =>
     readReadingStore(currentUser.id)
   );
+  const [activityTick, setActivityTick] = useState<number>(0);
 
   useEffect(() => {
     setReadingStore(readReadingStore(currentUser.id));
+    setActivityTick(t => t + 1);
   }, [currentUser.id]);
 
   useEffect(() => {
     const syncReadingStore = () => {
       setReadingStore(readReadingStore(currentUser.id));
+      setActivityTick(t => t + 1);
+    };
+    const syncRecentActivityOnly = () => {
+      setActivityTick(t => t + 1);
     };
     window.addEventListener('focus', syncReadingStore);
     window.addEventListener('storage', syncReadingStore);
+    window.addEventListener(RECENT_ACTIVITY_UPDATED_EVENT, syncRecentActivityOnly);
+    window.addEventListener(STUDY_HISTORY_UPDATED_EVENT, syncRecentActivityOnly);
     return () => {
       window.removeEventListener('focus', syncReadingStore);
       window.removeEventListener('storage', syncReadingStore);
+      window.removeEventListener(RECENT_ACTIVITY_UPDATED_EVENT, syncRecentActivityOnly);
+      window.removeEventListener(STUDY_HISTORY_UPDATED_EVENT, syncRecentActivityOnly);
     };
   }, [currentUser.id]);
 
@@ -126,6 +149,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const lastActiveSession = useMemo(
     () => resolveLastActiveCourseSession(currentUser, courses, readingStore),
     [currentUser, courses, readingStore]
+  );
+
+  const recentActivities = useMemo(
+    () => getCombinedRecentActivity(currentUser.id, courses, readingStore, 25, 'all'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentUser.id, courses, readingStore, activityTick]
+  );
+
+  const weeklyLearningTrends = useMemo(
+    () => buildWeeklyLearningTrends(currentUser.id, dailyStudyGoal),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentUser.id, dailyStudyGoal, activityTick]
   );
 
   const enrolledCourses = courses.filter(c => currentUser.enrolledCourseIds.includes(c.id));
@@ -213,6 +248,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       </div>
 
+      {/* Recent Activity (Last 5 accessed courses & labs with timestamps) */}
+      <RecentActivityCard
+        activities={recentActivities}
+        onSelectCourse={onSelectCourse}
+        onOpenLabTab={tabId => {
+          if (onOpenLabTab) {
+            onOpenLabTab(tabId);
+          } else {
+            onOpenCliLab();
+          }
+        }}
+        onBrowseCourses={onBrowseCourses}
+      />
+
       {/* Daily Study Goal Radial Progress */}
       <DailyStudyGoalCard
         goal={dailyStudyGoal}
@@ -225,6 +274,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             ? () => onSelectCourse(enrolledCourses[0].id)
             : undefined
         }
+        onOpenLab={onOpenCliLab}
+      />
+
+      {/* Weekly Learning Trends (Recharts 7-day study time visualization) */}
+      <WeeklyLearningTrendsCard
+        summary={weeklyLearningTrends}
+        hasEnrolledCourses={enrolledCourses.length > 0}
+        onContinueCourse={
+          lastActiveSession && !lastActiveSession.isExpired
+            ? () => onSelectCourse(lastActiveSession.course.id)
+            : enrolledCourses.length > 0
+            ? () => onSelectCourse(enrolledCourses[0].id)
+            : undefined
+        }
+        onBrowseCourses={onBrowseCourses}
         onOpenLab={onOpenCliLab}
       />
 

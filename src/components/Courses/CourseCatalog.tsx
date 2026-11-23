@@ -160,25 +160,39 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
   };
 
   const filteredCourses = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const searchTokens = searchQuery
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+
     const filtered = courses.filter(c => {
       const matchesCat = matchesSelectedCategory(c, selectedCategory);
       const matchesLevel = selectedLevel === 'All' || c.level === selectedLevel;
       const matchesFavorite = !showFavoritesOnly || bookmarkedCourseIds.includes(c.id);
-      const matchesSearch =
-        !q ||
-        c.title.toLowerCase().includes(q) ||
-        c.code.toLowerCase().includes(q) ||
-        c.subtitle.toLowerCase().includes(q) ||
-        c.category.toLowerCase().includes(q) ||
-        c.description.toLowerCase().includes(q) ||
-        c.instructor.name.toLowerCase().includes(q) ||
-        c.modules.some(
-          m =>
-            m.title.toLowerCase().includes(q) ||
-            (m.chapterTitle || '').toLowerCase().includes(q) ||
-            (m.mainContentTitle || '').toLowerCase().includes(q)
-        );
+
+      let matchesSearch = true;
+      if (searchTokens.length > 0) {
+        const searchableText = [
+          c.title,
+          c.level,
+          c.code,
+          c.subtitle,
+          c.category,
+          c.description,
+          c.instructor.name,
+          ...c.modules.flatMap(m => [
+            m.title,
+            m.chapterTitle || '',
+            m.mainContentTitle || ''
+          ])
+        ]
+          .join(' ')
+          .toLowerCase();
+
+        matchesSearch = searchTokens.every(token => searchableText.includes(token));
+      }
+
       return matchesCat && matchesLevel && matchesFavorite && matchesSearch;
     });
 
@@ -316,69 +330,63 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
         </div>
       </div>
 
-      {/* Filter Toolbar & View Mode Switcher */}
-      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          {/* Category Filter Buttons */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0 text-xs">
-            {categories.map(cat => (
+      {/* Search Bar, Skill Level Filter & View Mode Switcher */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 shadow-sm space-y-3.5">
+        {/* Primary Row: Prominent Course Title / Skill Level Search Bar + Skill Level Dropdown + Sort + View Mode */}
+        <div className="flex flex-col lg:flex-row lg:items-center gap-2.5">
+          <div role="search" className="relative flex-1 min-w-0">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && searchQuery) {
+                  e.preventDefault();
+                  setSearchQuery('');
+                }
+              }}
+              aria-label="Search courses by title or skill level"
+              placeholder="Search courses by title, code, or skill level (e.g. Beginner, Intermediate, Advanced)..."
+              className="w-full pl-10 pr-9 py-2.5 rounded-xl text-xs sm:text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
+            />
+            {searchQuery && (
               <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-3 py-1.5 rounded-xl font-medium whitespace-nowrap shrink-0 transition-all ${
-                  selectedCategory === cat
-                    ? 'bg-blue-600 text-white font-semibold shadow-sm'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                }`}
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear course search"
+                title="Clear search (Esc)"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/70 dark:hover:bg-slate-800 transition-colors"
               >
-                {cat}
+                <X className="w-3.5 h-3.5" />
               </button>
-            ))}
+            )}
           </div>
 
-          {/* Search, Level, Sort & Grid/List Switcher */}
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 shrink-0">
-            <div className="relative flex-1 sm:w-56 md:w-64 min-w-[180px]">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search courses, BGP, OSPF..."
-                className="w-full pl-9 pr-8 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  aria-label="Clear search"
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
+            <div className="relative flex items-center shrink-0">
+              <Signal className="w-3.5 h-3.5 text-slate-400 absolute left-3 pointer-events-none" />
+              <select
+                value={selectedLevel}
+                onChange={(e) => setSelectedLevel(e.target.value)}
+                aria-label="Filter by skill level"
+                className="pl-8 pr-3 py-2.5 rounded-xl text-xs font-medium bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 shrink-0"
+              >
+                {levels.map(lvl => (
+                  <option key={lvl} value={lvl}>
+                    {lvl === 'All' ? 'All Skill Levels' : lvl}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <select
-              value={selectedLevel}
-              onChange={(e) => setSelectedLevel(e.target.value)}
-              aria-label="Filter by difficulty level"
-              className="px-3 py-2 rounded-xl text-xs font-medium bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 shrink-0"
-            >
-              {levels.map(lvl => (
-                <option key={lvl} value={lvl}>
-                  {lvl === 'All' ? 'All Levels' : lvl}
-                </option>
-              ))}
-            </select>
-
             <div className="relative flex items-center shrink-0">
-              <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 pointer-events-none" />
+              <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 absolute left-3 pointer-events-none" />
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as SortOption)}
                 aria-label="Sort courses"
-                className="pl-8 pr-3 py-2 rounded-xl text-xs font-medium bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="pl-8 pr-3 py-2.5 rounded-xl text-xs font-medium bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="recommended">Recommended</option>
                 <option value="recent">Recently Added</option>
@@ -428,7 +436,24 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
           </div>
         </div>
 
-        {/* Quick Sort & Difficulty Level Bar */}
+        {/* Category Filter Buttons */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs pt-1 border-t border-slate-100 dark:border-slate-800/80">
+          {categories.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat)}
+              className={`px-3 py-1.5 rounded-xl font-medium whitespace-nowrap shrink-0 transition-all ${
+                selectedCategory === cat
+                  ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+
+        {/* Quick Sort & Skill Level Filter Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
@@ -478,7 +503,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
                 setSortBy(prev => (prev === 'difficulty_asc' ? 'difficulty_desc' : 'difficulty_asc'))
               }
               aria-pressed={sortBy === 'difficulty_asc' || sortBy === 'difficulty_desc'}
-              title="Click to sort by Difficulty Level (toggle Beginner ↔ Expert)"
+              title="Click to sort by Skill Level (toggle Beginner ↔ Expert)"
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
                 sortBy === 'difficulty_asc' || sortBy === 'difficulty_desc'
                   ? 'bg-blue-600 text-white shadow-2xs'
@@ -494,7 +519,7 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
 
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
-              Difficulty:
+              Skill Level:
             </span>
             {levels.map(lvl => (
               <button
@@ -551,6 +576,22 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
             <span className="font-medium text-slate-600 dark:text-slate-300">
               {sortSummaryLabel}
             </span>
+            {searchQuery.trim() && (
+              <>
+                <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">·</span>
+                <span className="text-slate-600 dark:text-slate-300">
+                  Query: &ldquo;{searchQuery.trim()}&rdquo;
+                </span>
+              </>
+            )}
+            {selectedLevel !== 'All' && (
+              <>
+                <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">·</span>
+                <span className="text-slate-600 dark:text-slate-300">
+                  Skill Level: {selectedLevel}
+                </span>
+              </>
+            )}
           </div>
           {hasActiveFilters && (
             <button
@@ -568,15 +609,17 @@ export const CourseCatalog: React.FC<CourseCatalogProps> = ({
       {filteredCourses.length === 0 ? (
         <div className="p-12 rounded-2xl bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 text-center space-y-3">
           <p className="text-sm font-semibold text-slate-900 dark:text-white">
-            No courses match your current filters
+            {searchQuery.trim()
+              ? `No courses match "${searchQuery.trim()}"`
+              : 'No courses match your current filters'}
           </p>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Try clearing your search query or switching back to all difficulty levels and tracks.
+            Try searching by another course title or skill level (Beginner, Intermediate, Advanced, Expert), or reset all active filters.
           </p>
           <button
             type="button"
             onClick={resetFilters}
-            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all"
+            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all whitespace-nowrap"
           >
             Show All Courses
           </button>
