@@ -9,6 +9,26 @@ export default defineConfig(() => {
     plugins: [
       react(),
       tailwindcss(),
+      {
+        name: 'disable-hmr-websocket-when-disabled',
+        apply: 'serve' as const,
+        transform(code: string, id: string) {
+          if (process.env.DISABLE_HMR !== 'true') return;
+          const normalizedId = id.replace(/\\/g, '/').split('?')[0];
+          if (!normalizedId.endsWith('/vite/dist/client/client.mjs')) return;
+          let patched = code.replace(
+            'transport.connect(createHMRHandler(handleMessage));',
+            '/* HMR disabled via DISABLE_HMR=true */'
+          );
+          patched = patched.replace(
+            'ws.send(JSON.stringify(data));',
+            'if (ws && ws.readyState === 1) ws.send(JSON.stringify(data));'
+          );
+          if (patched !== code) {
+            return { code: patched, map: null };
+          }
+        },
+      },
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: [
@@ -118,6 +138,7 @@ export default defineConfig(() => {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
+      ws: process.env.DISABLE_HMR === 'true' ? (false as const) : undefined,
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
