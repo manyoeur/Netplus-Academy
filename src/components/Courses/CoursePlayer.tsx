@@ -51,6 +51,12 @@ import {
   getEnrollmentExpirationInfo,
   DEFAULT_ENROLLMENT_DAYS
 } from '../../utils/enrollmentDates';
+import {
+  CourseReadingState,
+  ReadingStore,
+  readReadingStore,
+  writeReadingStore
+} from '../../utils/readingProgress';
 
 interface CoursePlayerProps {
   courseId: string;
@@ -60,44 +66,7 @@ interface CoursePlayerProps {
   onOpenCourseCheckout?: (course: Course) => void;
 }
 
-interface ModuleReadingProgress {
-  scrollY: number;
-  scrollRatio: number;
-  percent: number;
-  updatedAt: string;
-}
 
-interface CourseReadingState {
-  lastModuleId: string;
-  modules: Record<string, ModuleReadingProgress>;
-}
-
-type ReadingStore = Record<string, CourseReadingState>;
-
-const READING_PROGRESS_STORAGE_PREFIX = 'netpulse_academy_reading_progress_v1';
-
-function getReadingStorageKey(userId: string): string {
-  return `${READING_PROGRESS_STORAGE_PREFIX}:${userId}`;
-}
-
-function readReadingStore(userId: string): ReadingStore {
-  try {
-    const raw = localStorage.getItem(getReadingStorageKey(userId));
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeReadingStore(userId: string, store: ReadingStore): void {
-  try {
-    localStorage.setItem(getReadingStorageKey(userId), JSON.stringify(store));
-  } catch {
-    // Ignore localStorage quota or private-mode errors
-  }
-}
 
 type CheckpointStore = Record<string, Record<string, QuizResult>>;
 
@@ -380,15 +349,17 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
           lastModuleId: targetModuleId,
           modules: {}
         };
+        const nowIso = new Date().toISOString();
         const updatedCourse: CourseReadingState = {
           lastModuleId: targetModuleId,
+          lastOpenedAt: nowIso,
           modules: {
             ...existingCourse.modules,
             [targetModuleId]: {
               scrollY: metrics.scrollY,
               scrollRatio: metrics.scrollRatio,
               percent: metrics.percent,
-              updatedAt: new Date().toISOString()
+              updatedAt: nowIso
             }
           }
         };
@@ -418,6 +389,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
       ...store,
       [course.id]: {
         lastModuleId: activeModule.id,
+        lastOpenedAt: new Date().toISOString(),
         modules: courseState?.modules || {}
       }
     };

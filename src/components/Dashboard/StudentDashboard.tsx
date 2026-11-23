@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   BookOpen,
   Award,
@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   ArrowRight,
   Sparkles,
-  ShieldCheck,
   LayoutGrid,
   List,
   Calendar,
@@ -17,7 +16,6 @@ import {
   Building2,
   CreditCard,
   FileText,
-  Flame,
   NotebookPen,
   Clock as ClockIcon,
   Bookmark,
@@ -30,12 +28,18 @@ import { QuickNotesDrawer } from '../Courses/QuickNotesDrawer';
 import { CourseRadialProgressChart } from './CourseRadialProgressChart';
 import { DailyStreakCard } from './DailyStreakCard';
 import { DailyStudyGoalCard } from './DailyStudyGoalCard';
+import { StudentGreetingHero } from './StudentGreetingHero';
 import {
   resolveCourseEnrollment,
   formatEnrollmentDateRange,
   getEnrollmentExpirationInfo
 } from '../../utils/enrollmentDates';
-import { formatStudyDuration } from '../../utils/studyGoal';
+import {
+  ReadingStore,
+  computeOverallStudentProgress,
+  readReadingStore,
+  resolveLastActiveCourseSession
+} from '../../utils/readingProgress';
 import { formatVideoTimestamp } from '../../utils/quickNotes';
 
 interface StudentDashboardProps {
@@ -84,6 +88,26 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
   });
 
+  const [readingStore, setReadingStore] = useState<ReadingStore>(() =>
+    readReadingStore(currentUser.id)
+  );
+
+  useEffect(() => {
+    setReadingStore(readReadingStore(currentUser.id));
+  }, [currentUser.id]);
+
+  useEffect(() => {
+    const syncReadingStore = () => {
+      setReadingStore(readReadingStore(currentUser.id));
+    };
+    window.addEventListener('focus', syncReadingStore);
+    window.addEventListener('storage', syncReadingStore);
+    return () => {
+      window.removeEventListener('focus', syncReadingStore);
+      window.removeEventListener('storage', syncReadingStore);
+    };
+  }, [currentUser.id]);
+
   useEffect(() => {
     try {
       localStorage.setItem(DASHBOARD_VIEW_STORAGE_KEY, viewMode);
@@ -91,6 +115,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       // Ignore storage write errors in restricted browsing contexts
     }
   }, [viewMode]);
+
+  const overallProgress = useMemo(
+    () => computeOverallStudentProgress(currentUser, courses),
+    [currentUser, courses]
+  );
+
+  const lastActiveSession = useMemo(
+    () => resolveLastActiveCourseSession(currentUser, courses, readingStore),
+    [currentUser, courses, readingStore]
+  );
 
   const enrolledCourses = courses.filter(c => currentUser.enrolledCourseIds.includes(c.id));
   const totalCompletedModules = currentUser.completedModuleIds.length;
@@ -123,121 +157,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   return (
     <div className="w-full space-y-8">
-      {/* Welcome Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-xl">
-        <div className="flex items-center gap-4">
-          <img
-            src={currentUser.avatar}
-            alt={currentUser.name}
-            referrerPolicy="no-referrer"
-            className="w-16 h-16 rounded-2xl object-cover ring-4 ring-white/20 shadow-md"
-          />
-          <div>
-            <div className="flex items-center gap-2 mb-1 text-xs text-slate-300">
-              <span className="font-mono uppercase font-bold text-cyan-300">
-                {currentUser.role.toUpperCase()}
-              </span>
-              <span>·</span>
-              <span>Joined {currentUser.joinedDate}</span>
-            </div>
-            <h1 className="text-xl sm:text-2xl font-black">
-              Welcome back, {currentUser.name}
-            </h1>
-            <p className="text-xs text-slate-300 mt-0.5">
-              Academy Subscription: <strong className="text-cyan-300 uppercase">{currentUser.subscription.tier}</strong>
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => {
-              document
-                .getElementById('learning-streak-tracker')
-                ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }}
-            title={`Learning Streak: ${learningStreak.currentStreak} consecutive ${
-              learningStreak.currentStreak === 1 ? 'day' : 'days'
-            } with logged study time · Today: ${
-              dailyStudyGoal.totalSecondsToday > 0
-                ? formatStudyDuration(dailyStudyGoal.totalSecondsToday)
-                : learningStreak.studiedToday
-                ? 'Checked in'
-                : 'Not logged yet'
-            } · Best: ${learningStreak.longestStreak}d (${learningStreak.badge.title})`}
-            aria-label={`Learning Streak: ${learningStreak.currentStreak} consecutive ${
-              learningStreak.currentStreak === 1 ? 'day' : 'days'
-            }`}
-            className={`px-3 py-1.5 rounded-xl backdrop-blur-md border text-xs font-mono flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-              learningStreak.studiedToday
-                ? 'bg-amber-500/20 border-amber-400/50 text-amber-100 hover:bg-amber-500/30'
-                : learningStreak.streakAtRisk
-                ? 'bg-amber-500/15 border-amber-400/35 text-amber-200 hover:bg-amber-500/25'
-                : 'bg-white/10 border-white/15 text-slate-200 hover:bg-white/15'
-            }`}
-          >
-            <Flame
-              className={`w-4 h-4 shrink-0 ${
-                learningStreak.currentStreak > 0 ? 'text-amber-400' : 'text-slate-300'
-              }`}
-            />
-            <span className="font-semibold text-slate-200">Learning Streak</span>
-            <span className="font-bold tabular-nums text-white">
-              {learningStreak.currentStreak}{' '}
-              {learningStreak.currentStreak === 1 ? 'day' : 'days'}
-            </span>
-            <span className="text-white/35" aria-hidden="true">
-              ·
-            </span>
-            {learningStreak.studiedToday ? (
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-300">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                {dailyStudyGoal.totalSecondsToday > 0
-                  ? formatStudyDuration(dailyStudyGoal.totalSecondsToday)
-                  : 'Today'}
-              </span>
-            ) : learningStreak.streakAtRisk ? (
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                Log today
-              </span>
-            ) : (
-              <span className="text-[11px] font-semibold text-cyan-200">
-                {learningStreak.badge.title}
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsQuickNotesOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/15 text-xs font-semibold text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
-            title="View and manage Quick Notes saved to your profile"
-          >
-            <NotebookPen className="w-4 h-4 text-cyan-300" />
-            <span>Quick Notes</span>
-            <span className="font-mono text-[11px] font-bold text-cyan-200 tabular-nums">
-              ({quickNotes.length})
-            </span>
-          </button>
-
-          {currentUser.subscription.tier === 'free' ? (
-            <button
-              onClick={onOpenPricing}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white text-xs font-bold shadow-md flex items-center gap-1.5 whitespace-nowrap shrink-0"
-            >
-              <Sparkles className="w-4 h-4 text-amber-300" />
-              <span>Upgrade to Pro ($29/mo)</span>
-            </button>
-          ) : (
-            <div className="px-3 py-1.5 rounded-xl bg-white/10 backdrop-blur-md border border-white/10 text-xs font-mono text-cyan-300 flex items-center gap-1.5 whitespace-nowrap shrink-0">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>{currentUser.subscription.tier.toUpperCase()} Member</span>
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Dynamic Greeting & Resume Where You Left Off */}
+      <StudentGreetingHero
+        user={currentUser}
+        lastSession={lastActiveSession}
+        overallProgress={overallProgress}
+        learningStreak={learningStreak}
+        dailyStudyGoal={dailyStudyGoal}
+        quickNotesCount={quickNotes.length}
+        onResumeCourse={onSelectCourse}
+        onOpenQuickNotes={() => setIsQuickNotesOpen(true)}
+        onOpenCliLab={onOpenCliLab}
+        onOpenPricing={onOpenPricing}
+        onBrowseCourses={onBrowseCourses}
+        onOpenCourseCheckout={onOpenCourseCheckout}
+      />
 
       {/* Daily Learning Streak & Achievement Badge */}
       <DailyStreakCard
@@ -283,7 +217,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         onUpdateGoalMinutes={setDailyStudyGoalMinutes}
         hasEnrolledCourses={enrolledCourses.length > 0}
         onContinueCourse={
-          enrolledCourses.length > 0 ? () => onSelectCourse(enrolledCourses[0].id) : undefined
+          lastActiveSession && !lastActiveSession.isExpired
+            ? () => onSelectCourse(lastActiveSession.course.id)
+            : enrolledCourses.length > 0
+            ? () => onSelectCourse(enrolledCourses[0].id)
+            : undefined
         }
         onOpenLab={onOpenCliLab}
       />
