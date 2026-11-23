@@ -29,6 +29,7 @@ import { CourseRadialProgressChart } from './CourseRadialProgressChart';
 import { DailyStreakCard } from './DailyStreakCard';
 import { DailyStudyGoalCard } from './DailyStudyGoalCard';
 import { StudentGreetingHero } from './StudentGreetingHero';
+import { MilestoneBadgesCard } from './MilestoneBadgesCard';
 import {
   resolveCourseEnrollment,
   formatEnrollmentDateRange,
@@ -70,6 +71,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     recordLearningActivity,
     dailyStudyGoal,
     setDailyStudyGoalMinutes,
+    milestoneOverview,
     quickNotes,
     saveQuickNote,
     deleteQuickNote,
@@ -223,6 +225,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             ? () => onSelectCourse(enrolledCourses[0].id)
             : undefined
         }
+        onOpenLab={onOpenCliLab}
+      />
+
+      {/* Virtual Milestone Badges (Study Time & Course Completion Goals) */}
+      <MilestoneBadgesCard
+        overview={milestoneOverview}
+        hasEnrolledCourses={enrolledCourses.length > 0}
+        onContinueCourse={
+          lastActiveSession && !lastActiveSession.isExpired
+            ? () => onSelectCourse(lastActiveSession.course.id)
+            : enrolledCourses.length > 0
+            ? () => onSelectCourse(enrolledCourses[0].id)
+            : undefined
+        }
+        onBrowseCourses={onBrowseCourses}
         onOpenLab={onOpenCliLab}
       />
 

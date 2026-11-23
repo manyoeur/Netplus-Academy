@@ -106,6 +106,14 @@ import {
   normalizeCourseBookmark,
   saveLocalCourseBookmarks
 } from '../utils/courseBookmarks';
+import {
+  ComputedMilestoneOverview,
+  MilestoneTrackerData,
+  computeMilestoneBadgesOverview,
+  loadLocalMilestoneTracker,
+  reconcileUnlockedBadges,
+  saveLocalMilestoneTracker
+} from '../utils/milestoneBadges';
 import { 
   INITIAL_USERS, 
   INITIAL_COURSES, 
@@ -194,6 +202,7 @@ interface AcademyContextType {
   dailyStudyGoal: ComputedDailyStudyGoal;
   setDailyStudyGoalMinutes: (minutes: number) => void;
   recordStudyTime: (seconds: number, source: StudySource, moduleId?: string) => void;
+  milestoneOverview: ComputedMilestoneOverview;
   personalFlashcards: PersonalFlashcard[];
   savePersonalFlashcard: (input: PersonalFlashcardInput) => PersonalFlashcard;
   deletePersonalFlashcard: (cardId: string) => void;
@@ -872,6 +881,60 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     } catch {
       return INITIAL_COURSES;
     }
+  });
+
+  const [milestoneTrackerData, setMilestoneTrackerData] = useState<MilestoneTrackerData>(() =>
+    loadLocalMilestoneTracker(currentUser.id)
+  );
+  const milestoneHydratedUserRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    milestoneHydratedUserRef.current = null;
+    setMilestoneTrackerData(loadLocalMilestoneTracker(currentUser.id));
+  }, [currentUser.id]);
+
+  useEffect(() => {
+    const isInitialForUser = milestoneHydratedUserRef.current !== currentUser.id;
+    const { nextTracker, newlyUnlocked, changed } = reconcileUnlockedBadges({
+      user: currentUser,
+      courses,
+      dailyGoal: dailyStudyGoal,
+      trackerData: milestoneTrackerData
+    });
+
+    if (isInitialForUser) {
+      milestoneHydratedUserRef.current = currentUser.id;
+    }
+
+    if (changed) {
+      saveLocalMilestoneTracker(currentUser.id, nextTracker);
+      setMilestoneTrackerData(nextTracker);
+
+      if (!isInitialForUser && newlyUnlocked.length > 0) {
+        newlyUnlocked.forEach(badge => {
+          triggerSystemNotification(
+            `Milestone Badge Unlocked: ${badge.title}`,
+            `${badge.subtitle} — ${badge.description}`,
+            'system'
+          );
+        });
+      }
+    }
+  }, [
+    currentUser,
+    courses,
+    dailyStudyGoal.courseSeconds,
+    dailyStudyGoal.labSeconds,
+    dailyStudyGoal.practiceSeconds,
+    dailyStudyGoal.goalReached,
+    dailyStudyGoal.dateKey
+  ]);
+
+  const milestoneOverview = computeMilestoneBadgesOverview({
+    user: currentUser,
+    courses,
+    dailyGoal: dailyStudyGoal,
+    trackerData: milestoneTrackerData
   });
 
   const [forumPosts, setForumPosts] = useState<ForumPost[]>(() => {
@@ -3046,6 +3109,7 @@ export const AcademyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         dailyStudyGoal,
         setDailyStudyGoalMinutes,
         recordStudyTime,
+        milestoneOverview,
         personalFlashcards,
         savePersonalFlashcard,
         deletePersonalFlashcard,

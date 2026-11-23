@@ -10,7 +10,8 @@ import {
   ArrowRight,
   Menu,
   X,
-  LogOut
+  LogOut,
+  Keyboard
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
 import { PWAInstallButton } from './PWA/PWAInstallButton';
@@ -18,6 +19,7 @@ import { PWAInstallButton } from './PWA/PWAInstallButton';
 interface TopBarProps {
   onOpenNotifications: () => void;
   onOpenPricing: () => void;
+  onOpenShortcuts?: () => void;
   isSidebarPinned: boolean;
   isSidebarOpen: boolean;
   mobileMenuOpen: boolean;
@@ -28,6 +30,7 @@ interface TopBarProps {
 export const TopBar: React.FC<TopBarProps> = ({
   onOpenNotifications,
   onOpenPricing,
+  onOpenShortcuts,
   isSidebarPinned,
   isSidebarOpen,
   mobileMenuOpen,
@@ -233,6 +236,25 @@ export const TopBar: React.FC<TopBarProps> = ({
                     </span>
                     <ArrowRight className="w-3 h-3 text-slate-400" />
                   </button>
+
+                  {onOpenShortcuts && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRoleMenuOpen(false);
+                        onOpenShortcuts();
+                      }}
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Keyboard className="w-3.5 h-3.5 text-cyan-500" />
+                        <span>Keyboard Shortcuts</span>
+                      </span>
+                      <kbd className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[10px] text-slate-500 dark:text-slate-400">
+                        ?
+                      </kbd>
+                    </button>
+                  )}
 
                   <button
                     onClick={async () => {

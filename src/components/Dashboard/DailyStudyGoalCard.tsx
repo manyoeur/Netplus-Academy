@@ -110,6 +110,7 @@ export const DailyStudyGoalCard: React.FC<DailyStudyGoalCardProps> = ({
 
   return (
     <section
+      id="daily-study-goal-card"
       aria-label="Daily Study Goal progress"
       className="rounded-2xl bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 shadow-sm p-5 sm:p-6"
     >

@@ -26,9 +26,11 @@ import {
   Binary,
   Gamepad2,
   SquareStack,
+  Keyboard,
   LucideIcon
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
+import { getTabShortcutHint } from '../utils/keyboardShortcuts';
 
 interface SidebarProps {
   currentTab: string;
@@ -41,6 +43,7 @@ interface SidebarProps {
   setIsOpen: React.Dispatch<React.SetStateAction<boolean>>;
   mobileMenuOpen: boolean;
   setMobileMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  onOpenShortcuts?: () => void;
 }
 
 interface NavItemConfig {
@@ -72,7 +75,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isOpen,
   setIsOpen,
   mobileMenuOpen,
-  setMobileMenuOpen
+  setMobileMenuOpen,
+  onOpenShortcuts
 }) => {
   const { currentUser } = useAcademy();
 
@@ -607,6 +611,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {section.items.map(item => {
                     const Icon = item.icon;
                     const active = isNavItemActive(item.id);
+                    const shortcutHint = getTabShortcutHint(item.id, currentUser.role);
                     return (
                       <button
                         key={item.id}
@@ -656,6 +661,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               {item.tag}
                             </span>
                           )}
+                          {shortcutHint && (
+                            <kbd
+                              aria-hidden="true"
+                              className={`hidden sm:inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded text-[9px] font-mono font-bold border transition-colors ${
+                                active
+                                  ? 'bg-white/15 border-white/25 text-white/90'
+                                  : 'bg-slate-100/90 dark:bg-slate-800/90 border-slate-200/90 dark:border-slate-700/80 text-slate-400 dark:text-slate-500 group-hover/nav:text-slate-700 dark:group-hover/nav:text-slate-200 group-hover/nav:border-slate-300 dark:group-hover/nav:border-slate-600'
+                              }`}
+                            >
+                              {shortcutHint}
+                            </kbd>
+                          )}
                           <ChevronRight
                             aria-hidden="true"
                             className={`w-3.5 h-3.5 transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
@@ -673,16 +690,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </nav>
 
             {/* Slim Footer */}
-            <div className="px-3.5 py-2.5 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between text-[10px] font-mono text-slate-400 dark:text-slate-500 bg-slate-50/70 dark:bg-[#070b14]/60">
-              <span>{isPinned ? 'Pinned Mode' : 'Auto-hide (3.5s)'}</span>
-              <button
-                type="button"
-                onClick={handleTogglePin}
-                className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px] hover:border-blue-400 dark:hover:border-cyan-500/60 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-                title="Toggle Pin Mode (Ctrl+B)"
-              >
-                Ctrl+B
-              </button>
+            <div className="px-3.5 py-2.5 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between gap-2 text-[10px] font-mono text-slate-400 dark:text-slate-500 bg-slate-50/70 dark:bg-[#070b14]/60">
+              <span className="truncate">{isPinned ? 'Pinned Mode' : 'Auto-hide (3.5s)'}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {onOpenShortcuts && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      onOpenShortcuts();
+                    }}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px] hover:border-blue-400 dark:hover:border-cyan-500/60 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                    title="Keyboard Shortcuts (?)"
+                    aria-label="Open Keyboard Shortcuts"
+                  >
+                    <Keyboard className="w-2.5 h-2.5" />
+                    <span>?</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleTogglePin}
+                  className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px] hover:border-blue-400 dark:hover:border-cyan-500/60 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                  title="Toggle Pin Mode (Ctrl+B)"
+                >
+                  Ctrl+B
+                </button>
+              </div>
             </div>
           </div>
         ) : (
@@ -710,6 +744,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {railNavItems.map(item => {
                 const Icon = item.icon;
                 const isActive = isNavItemActive(item.id);
+                const shortcutHint = getTabShortcutHint(item.id, currentUser.role);
+                const tooltipText = shortcutHint ? `${item.label} (${shortcutHint})` : item.label;
                 return (
                   <button
                     key={item.id}
@@ -717,10 +753,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onClick={() => handleNavClick(item.id)}
                     onMouseEnter={(e) => {
                       const rect = e.currentTarget.getBoundingClientRect();
-                      setRailTooltip({ label: item.label, top: rect.top + rect.height / 2 });
+                      setRailTooltip({ label: tooltipText, top: rect.top + rect.height / 2 });
                     }}
                     onMouseLeave={() => setRailTooltip(null)}
-                    aria-label={item.label}
+                    aria-label={tooltipText}
                     className={`group/rail relative flex items-center justify-center w-11 h-11 rounded-xl border transition-[transform,background-color,border-color,color,box-shadow] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                       isActive
                         ? 'bg-slate-900 dark:bg-gradient-to-tr dark:from-indigo-600 dark:to-blue-600 text-white border-slate-900 dark:border-indigo-400/30 shadow-md shadow-slate-900/15 dark:shadow-indigo-500/30'
@@ -779,8 +815,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Global Quick Search / Command Palette Modal */}
       {commandPaletteOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-start justify-center pt-20 p-4">
-          <div className="w-full max-w-xl bg-white dark:bg-[#0c1220] rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-100">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Quick Jump Command Palette"
+          onClick={() => setCommandPaletteOpen(false)}
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-start justify-center pt-20 p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-xl bg-white dark:bg-[#0c1220] rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-100"
+          >
             <div className="p-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3">
               <Search className="w-4 h-4 text-blue-500 shrink-0" />
               <input
@@ -799,6 +844,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="max-h-72 overflow-y-auto p-1.5 space-y-1">
               {filteredQuickJumps.map(item => {
                 const Icon = item.icon;
+                const shortcutHint = getTabShortcutHint(item.id, currentUser.role);
                 return (
                   <button
                     key={item.id}
@@ -818,7 +864,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <p className="text-[10px] text-slate-400 font-mono">{item.category}</p>
                       </div>
                     </div>
-                    <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-500 group-hover:translate-x-1 transition-all" />
+                    <div className="flex items-center gap-2 shrink-0">
+                      {shortcutHint && (
+                        <kbd className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                          {shortcutHint}
+                        </kbd>
+                      )}
+                      <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-500 group-hover:translate-x-1 transition-all" />
+                    </div>
                   </button>
                 );
               })}

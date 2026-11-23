@@ -1222,7 +1222,12 @@ export const BinaryGame: React.FC = () => {
 
       {/* STATE 2 & 3: PLAYING / PAUSED */}
       {(gameState === 'PLAYING' || gameState === 'PAUSED') && (
-        <div className="relative bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
+        <div
+          data-active-binary-game={
+            gameState === 'PLAYING' && question.kind !== 'bin-to-dec' ? 'true' : undefined
+          }
+          className="relative bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden"
+        >
           {/* Responsive Top Arena HUD */}
           <div className="px-4 sm:px-5 py-3.5 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-4 sm:gap-6">

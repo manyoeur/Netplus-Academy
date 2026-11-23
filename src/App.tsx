@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AcademyProvider, useAcademy } from './context/AcademyContext';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
@@ -23,6 +23,14 @@ import { CoursePaymentModal } from './components/Billing/CoursePaymentModal';
 import { Course, CoursePaymentRecord } from './types';
 import { WifiOff, Network } from 'lucide-react';
 import { OfflineIndicator } from './components/PWA/OfflineIndicator';
+import { KeyboardShortcutsModal, ShortcutFeedbackToast } from './components/KeyboardShortcutsModal';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import {
+  KeyboardShortcutDef,
+  ManagementSubTabId,
+  loadShortcutsEnabled,
+  saveShortcutsEnabled
+} from './utils/keyboardShortcuts';
 
 type ManagementSubTab = 'courses' | 'progress' | 'accounts' | 'invite-instructors' | 'invite-students';
 
@@ -66,6 +74,80 @@ const AcademyApp: React.FC = () => {
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [checkoutCourse, setCheckoutCourse] = useState<Course | null>(null);
   const [checkoutReceipt, setCheckoutReceipt] = useState<CoursePaymentRecord | null>(null);
+
+  // Global Keyboard Shortcuts Manager
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
+  const [shortcutsEnabled, setShortcutsEnabled] = useState<boolean>(() => loadShortcutsEnabled());
+  const [activeShortcutToast, setActiveShortcutToast] = useState<KeyboardShortcutDef | null>(null);
+  const shortcutToastTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (shortcutToastTimerRef.current !== null) {
+        window.clearTimeout(shortcutToastTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleToggleShortcutsEnabled = useCallback((enabled: boolean) => {
+    setShortcutsEnabled(enabled);
+    saveShortcutsEnabled(enabled);
+  }, []);
+
+  const showShortcutToast = useCallback((shortcut: KeyboardShortcutDef) => {
+    setActiveShortcutToast(shortcut);
+    if (shortcutToastTimerRef.current !== null) {
+      window.clearTimeout(shortcutToastTimerRef.current);
+    }
+    shortcutToastTimerRef.current = window.setTimeout(() => {
+      setActiveShortcutToast(null);
+      shortcutToastTimerRef.current = null;
+    }, 1600);
+  }, []);
+
+  const handleNavigateTab = useCallback((tabId: string) => {
+    if (tabId === 'pricing') {
+      setIsPaymentOpen(true);
+    } else {
+      setCurrentTab(tabId);
+      setActiveCourseId(null);
+    }
+  }, []);
+
+  const handleSelectManagementTab = useCallback((subTab: ManagementSubTabId) => {
+    setManagementSubTab(subTab);
+    setCurrentTab('management');
+    setActiveCourseId(null);
+  }, []);
+
+  const handleTriggerShortcutFromModal = useCallback(
+    (shortcut: KeyboardShortcutDef) => {
+      if (!shortcut.tabId) return;
+      if (shortcut.tabId === 'management' && shortcut.managementSubTab) {
+        handleSelectManagementTab(shortcut.managementSubTab);
+      } else {
+        handleNavigateTab(shortcut.tabId);
+      }
+      showShortcutToast(shortcut);
+    },
+    [handleNavigateTab, handleSelectManagementTab, showShortcutToast]
+  );
+
+  useKeyboardShortcuts({
+    enabled: shortcutsEnabled,
+    isAuthenticated,
+    userRole: currentUser.role,
+    isModalOpen:
+      isNotificationsOpen ||
+      isPaymentOpen ||
+      Boolean(checkoutCourse || checkoutReceipt),
+    isShortcutsModalOpen,
+    onNavigateTab: handleNavigateTab,
+    onSelectManagementTab: handleSelectManagementTab,
+    onToggleShortcutsModal: () => setIsShortcutsModalOpen(prev => !prev),
+    onCloseShortcutsModal: () => setIsShortcutsModalOpen(false),
+    onShortcutTriggered: showShortcutToast
+  });
 
   const handleSelectCourse = (courseId: string) => {
     setActiveCourseId(courseId);
@@ -153,26 +235,16 @@ const AcademyApp: React.FC = () => {
       {/* Left Navigation Sidebar */}
       <Sidebar
         currentTab={currentTab}
-        setCurrentTab={(tab) => {
-          if (tab === 'pricing') {
-            setIsPaymentOpen(true);
-          } else {
-            setCurrentTab(tab);
-            setActiveCourseId(null);
-          }
-        }}
+        setCurrentTab={handleNavigateTab}
         managementSubTab={managementSubTab}
-        onSelectManagementTab={(subTab) => {
-          setManagementSubTab(subTab);
-          setCurrentTab('management');
-          setActiveCourseId(null);
-        }}
+        onSelectManagementTab={handleSelectManagementTab}
         isPinned={isSidebarPinned}
         setIsPinned={setIsSidebarPinned}
         isOpen={isSidebarOpen}
         setIsOpen={setIsSidebarOpen}
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
+        onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
       />
 
       {/* Workspace Content Wrapper: responds smoothly to expanded sidebar (256px) or collapsed icon rail (72px) */}
@@ -182,6 +254,7 @@ const AcademyApp: React.FC = () => {
         <TopBar
           onOpenNotifications={() => setIsNotificationsOpen(true)}
           onOpenPricing={() => setIsPaymentOpen(true)}
+          onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
           isSidebarPinned={isSidebarPinned}
           isSidebarOpen={isSidebarOpen}
           mobileMenuOpen={mobileMenuOpen}
@@ -347,6 +420,18 @@ const AcademyApp: React.FC = () => {
           handleSelectCourse(paidCourse.id);
         }}
       />
+
+      {/* Global Keyboard Shortcuts Reference Modal & Feedback Toast */}
+      <KeyboardShortcutsModal
+        isOpen={isShortcutsModalOpen}
+        onClose={() => setIsShortcutsModalOpen(false)}
+        userRole={currentUser.role}
+        shortcutsEnabled={shortcutsEnabled}
+        onToggleShortcutsEnabled={handleToggleShortcutsEnabled}
+        currentTab={currentTab}
+        onTriggerShortcut={handleTriggerShortcutFromModal}
+      />
+      <ShortcutFeedbackToast shortcut={activeShortcutToast} />
 
       {/* Footer */}
       <footer className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 py-6 text-xs text-slate-500 dark:text-slate-400">
