@@ -183,6 +183,161 @@ Provide:
   }
 });
 
+// AI Subnet Binary Math Explainer
+app.post('/api/ai/explain-subnet', async (req: Request, res: Response) => {
+  try {
+    const client = getGeminiClient();
+    if (!client) {
+      return res.status(503).json({
+        error:
+          'Gemini API key is not configured. Please add or select GEMINI_API_KEY in the Settings > Secrets panel.',
+      });
+    }
+
+    const {
+      ipAddress,
+      cidr,
+      subnetMask,
+      wildcardMask,
+      networkId,
+      broadcastAddress,
+      firstHost,
+      lastHost,
+      usableHosts,
+      totalAddresses,
+      binaryIp,
+      binaryMask,
+    } = req.body || {};
+
+    const cleanIp = typeof ipAddress === 'string' ? ipAddress.trim() : '';
+    const octets = cleanIp.split('.').map(part => Number(part));
+    const isValidIp =
+      octets.length === 4 &&
+      cleanIp.split('.').every(part => /^\d{1,3}$/.test(part)) &&
+      octets.every(num => Number.isInteger(num) && num >= 0 && num <= 255);
+
+    const parsedCidr = Number(cidr);
+    if (!isValidIp || !Number.isInteger(parsedCidr) || parsedCidr < 0 || parsedCidr > 32) {
+      return res.status(400).json({
+        error: 'Please enter a valid IPv4 address and CIDR prefix length (/0 to /32).',
+      });
+    }
+
+    const prompt = `Break down the binary subnetting math step-by-step for this exact student calculation:
+
+Input IPv4 Address: ${cleanIp}
+CIDR Prefix Length: /${parsedCidr}
+Binary IPv4 Address: ${String(binaryIp || '')}
+Binary Subnet Mask: ${String(binaryMask || '')}
+Dotted-Decimal Subnet Mask: ${String(subnetMask || '')}
+Cisco Wildcard Mask: ${String(wildcardMask || '')}
+Network ID: ${String(networkId || '')}
+Broadcast Address: ${String(broadcastAddress || '')}
+Usable Host Range: ${String(firstHost || '')} to ${String(lastHost || '')}
+Usable Hosts / Total Addresses: ${Number(usableHosts) || 0} usable / ${Number(totalAddresses) || 0} total
+
+Instructions:
+1. Tailor EVERY step, binary pattern, and arithmetic operation strictly to ${cleanIp}/${parsedCidr}—never give generic /24 textbook examples unless the student actually entered /24.
+2. Provide 5 clear sequential steps:
+   - Step 1: Splitting the 32 bits into ${parsedCidr} Network bits (1s) and ${32 - parsedCidr} Host bits (0s), identifying the interesting octet.
+   - Step 2: Converting the subnet mask /${parsedCidr} from binary bit weights (128, 64, 32, 16, 8, 4, 2, 1) to decimal (${String(subnetMask || '')}).
+   - Step 3: Bitwise AND between Binary IP and Binary Mask in the interesting octet to calculate Network ID (${String(networkId || '')}).
+   - Step 4: Setting all ${32 - parsedCidr} host bits to 1 (or adding block size - 1) to derive Broadcast Address (${String(broadcastAddress || '')}).
+   - Step 5: Determining usable host range (${String(firstHost || '')} – ${String(lastHost || '')}) and Wildcard Mask (${String(wildcardMask || '')}).
+3. Keep each "concept" crisp (1–2 sentences) and put exact aligned binary/decimal math in "binaryOperation" so students can read the bit math clearly.`;
+
+    const response = await client.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: {
+        systemInstruction:
+          'You are a CCIE networking instructor explaining IPv4 CIDR binary subnetting step by step with exact, verified binary arithmetic.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            summary: {
+              type: Type.STRING,
+              description: 'Concise 1-2 sentence overview of this CIDR calculation and interesting octet.',
+            },
+            interestingOctet: {
+              type: Type.INTEGER,
+              description: 'Octet number (1 to 4) where the network/host boundary falls.',
+            },
+            blockSizeFormula: {
+              type: Type.STRING,
+              description: 'Exact power-of-2 block size & host count formula for this CIDR.',
+            },
+            steps: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  stepNumber: { type: Type.INTEGER },
+                  title: { type: Type.STRING },
+                  concept: { type: Type.STRING },
+                  binaryOperation: {
+                    type: Type.STRING,
+                    description: 'Exact binary or bit-weight math equation for this specific IP/CIDR.',
+                  },
+                  resultLabel: {
+                    type: Type.STRING,
+                    description: 'Short final takeaway value for this step.',
+                  },
+                },
+                required: ['stepNumber', 'title', 'concept', 'binaryOperation', 'resultLabel'],
+              },
+            },
+            examTip: {
+              type: Type.STRING,
+              description: 'Practical CCNA / Network+ mental-math shortcut tailored to this CIDR.',
+            },
+          },
+          required: ['summary', 'interestingOctet', 'blockSizeFormula', 'steps', 'examTip'],
+        },
+      },
+    });
+
+    const rawText = response.text;
+    if (!rawText) {
+      return res.status(502).json({
+        error: 'Gemini returned an empty response while explaining this subnet.',
+      });
+    }
+
+    const parsed = JSON.parse(rawText);
+    if (!parsed || !Array.isArray(parsed.steps) || parsed.steps.length === 0) {
+      return res.status(502).json({
+        error: 'The AI explanation payload was malformed. Please try again.',
+      });
+    }
+
+    const normalizedSteps = parsed.steps.map((step: any, index: number) => ({
+      stepNumber: Number.isFinite(Number(step.stepNumber)) ? Number(step.stepNumber) : index + 1,
+      title: String(step.title || `Step ${index + 1}`),
+      concept: String(step.concept || ''),
+      binaryOperation: String(step.binaryOperation || ''),
+      resultLabel: String(step.resultLabel || ''),
+    }));
+
+    return res.json({
+      targetCidr: `${cleanIp}/${parsedCidr}`,
+      summary: String(parsed.summary || ''),
+      interestingOctet: Math.min(4, Math.max(1, Number(parsed.interestingOctet) || 4)),
+      blockSizeFormula: String(parsed.blockSizeFormula || ''),
+      steps: normalizedSteps,
+      examTip: String(parsed.examTip || ''),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    console.error('Error explaining subnet:', error);
+    const formatted = formatGeminiError(error);
+    return res.status(formatted.status).json({
+      error: formatted.message,
+    });
+  }
+});
+
 // AI Networking Flashcard Deck Generator
 app.post('/api/flashcards/generate', async (req: Request, res: Response) => {
   try {
