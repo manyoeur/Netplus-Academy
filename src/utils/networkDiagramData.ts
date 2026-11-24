@@ -1433,6 +1433,303 @@ export function computeCableGeometry(
   };
 }
 
+export interface AlignmentGuideAnchor {
+  x: number;
+  y: number;
+}
+
+export interface AlignmentGuideLine {
+  orientation: 'vertical' | 'horizontal';
+  pos: number;
+  start: number;
+  end: number;
+  kind: 'center' | 'edge';
+  anchors: AlignmentGuideAnchor[];
+}
+
+export interface DeviceAlignmentOptions {
+  snapToGrid: boolean;
+  gridSize?: number;
+  enableGuides: boolean;
+  bypassSnap?: boolean;
+  threshold?: number;
+  maxX?: number;
+  maxY?: number;
+}
+
+export interface DeviceAlignmentResult {
+  x: number;
+  y: number;
+  snappedXToGuide: boolean;
+  snappedYToGuide: boolean;
+  guides: AlignmentGuideLine[];
+}
+
+export function computeDeviceAlignment(
+  rawX: number,
+  rawY: number,
+  dragWidth: number,
+  dragHeight: number,
+  stationaryNodes: NetworkDiagramNode[],
+  options: DeviceAlignmentOptions
+): DeviceAlignmentResult {
+  const gridSize = options.gridSize ?? GRID_SNAP_SIZE;
+  const threshold = options.threshold ?? 7;
+  const maxX = options.maxX ?? Math.max(0, DIAGRAM_CANVAS_WIDTH - dragWidth);
+  const maxY = options.maxY ?? Math.max(0, DIAGRAM_CANVAS_HEIGHT - dragHeight);
+  const bypass = Boolean(options.bypassSnap);
+  const checkEdgesX = Math.abs(dragWidth - NODE_WIDTH) > 1;
+  const checkEdgesY = Math.abs(dragHeight - NODE_HEIGHT) > 1;
+
+  let bestAlignX: number | null = null;
+  let bestDistX = threshold + 0.001;
+  let bestAlignY: number | null = null;
+  let bestDistY = threshold + 0.001;
+
+  if (options.enableGuides && !bypass && stationaryNodes.length > 0) {
+    const candLeft = rawX;
+    const candCenterX = rawX + dragWidth / 2;
+    const candRight = rawX + dragWidth;
+    const candTop = rawY;
+    const candCenterY = rawY + dragHeight / 2;
+    const candBottom = rawY + dragHeight;
+
+    for (const other of stationaryNodes) {
+      const oLeft = other.x;
+      const oCenterX = other.x + NODE_WIDTH / 2;
+      const oRight = other.x + NODE_WIDTH;
+
+      const centerDx = oCenterX - candCenterX;
+      if (Math.abs(centerDx) < bestDistX) {
+        bestDistX = Math.abs(centerDx);
+        bestAlignX = rawX + centerDx;
+      }
+      if (checkEdgesX) {
+        const leftDx = oLeft - candLeft;
+        if (Math.abs(leftDx) < bestDistX) {
+          bestDistX = Math.abs(leftDx);
+          bestAlignX = rawX + leftDx;
+        }
+        const rightDx = oRight - candRight;
+        if (Math.abs(rightDx) < bestDistX) {
+          bestDistX = Math.abs(rightDx);
+          bestAlignX = rawX + rightDx;
+        }
+      }
+
+      const oTop = other.y;
+      const oCenterY = other.y + NODE_HEIGHT / 2;
+      const oBottom = other.y + NODE_HEIGHT;
+
+      const centerDy = oCenterY - candCenterY;
+      if (Math.abs(centerDy) < bestDistY) {
+        bestDistY = Math.abs(centerDy);
+        bestAlignY = rawY + centerDy;
+      }
+      if (checkEdgesY) {
+        const topDy = oTop - candTop;
+        if (Math.abs(topDy) < bestDistY) {
+          bestDistY = Math.abs(topDy);
+          bestAlignY = rawY + topDy;
+        }
+        const bottomDy = oBottom - candBottom;
+        if (Math.abs(bottomDy) < bestDistY) {
+          bestDistY = Math.abs(bottomDy);
+          bestAlignY = rawY + bottomDy;
+        }
+      }
+    }
+  }
+
+  const snappedXToGuide = bestAlignX !== null;
+  const snappedYToGuide = bestAlignY !== null;
+
+  const rawResolvedX =
+    bestAlignX !== null
+      ? bestAlignX
+      : !bypass && options.snapToGrid
+      ? Math.round(rawX / gridSize) * gridSize
+      : Math.round(rawX);
+
+  const rawResolvedY =
+    bestAlignY !== null
+      ? bestAlignY
+      : !bypass && options.snapToGrid
+      ? Math.round(rawY / gridSize) * gridSize
+      : Math.round(rawY);
+
+  const resolvedX = Math.max(0, Math.min(maxX, rawResolvedX));
+  const resolvedY = Math.max(0, Math.min(maxY, rawResolvedY));
+
+  const guides: AlignmentGuideLine[] = [];
+
+  if (options.enableGuides && stationaryNodes.length > 0) {
+    const MATCH_EPS = 0.8;
+    const OVERHANG = 18;
+
+    const dragLeft = resolvedX;
+    const dragCenterX = resolvedX + dragWidth / 2;
+    const dragRight = resolvedX + dragWidth;
+    const dragTop = resolvedY;
+    const dragCenterY = resolvedY + dragHeight / 2;
+    const dragBottom = resolvedY + dragHeight;
+
+    // Vertical guides
+    const vCenterMatches = stationaryNodes.filter(
+      n => Math.abs(n.x + NODE_WIDTH / 2 - dragCenterX) <= MATCH_EPS
+    );
+    if (vCenterMatches.length > 0) {
+      const start = Math.max(
+        0,
+        Math.min(dragTop, ...vCenterMatches.map(m => m.y)) - OVERHANG
+      );
+      const end = Math.min(
+        DIAGRAM_CANVAS_HEIGHT,
+        Math.max(dragBottom, ...vCenterMatches.map(m => m.y + NODE_HEIGHT)) + OVERHANG
+      );
+      guides.push({
+        orientation: 'vertical',
+        pos: dragCenterX,
+        start,
+        end,
+        kind: 'center',
+        anchors: [
+          { x: dragCenterX, y: dragCenterY },
+          ...vCenterMatches.map(m => ({
+            x: m.x + NODE_WIDTH / 2,
+            y: m.y + NODE_HEIGHT / 2
+          }))
+        ]
+      });
+    }
+
+    if (checkEdgesX) {
+      const vLeftMatches = stationaryNodes.filter(n => Math.abs(n.x - dragLeft) <= MATCH_EPS);
+      if (vLeftMatches.length > 0) {
+        const start = Math.max(
+          0,
+          Math.min(dragTop, ...vLeftMatches.map(m => m.y)) - OVERHANG
+        );
+        const end = Math.min(
+          DIAGRAM_CANVAS_HEIGHT,
+          Math.max(dragBottom, ...vLeftMatches.map(m => m.y + NODE_HEIGHT)) + OVERHANG
+        );
+        guides.push({
+          orientation: 'vertical',
+          pos: dragLeft,
+          start,
+          end,
+          kind: 'edge',
+          anchors: []
+        });
+      }
+
+      const vRightMatches = stationaryNodes.filter(
+        n => Math.abs(n.x + NODE_WIDTH - dragRight) <= MATCH_EPS
+      );
+      if (vRightMatches.length > 0) {
+        const start = Math.max(
+          0,
+          Math.min(dragTop, ...vRightMatches.map(m => m.y)) - OVERHANG
+        );
+        const end = Math.min(
+          DIAGRAM_CANVAS_HEIGHT,
+          Math.max(dragBottom, ...vRightMatches.map(m => m.y + NODE_HEIGHT)) + OVERHANG
+        );
+        guides.push({
+          orientation: 'vertical',
+          pos: dragRight,
+          start,
+          end,
+          kind: 'edge',
+          anchors: []
+        });
+      }
+    }
+
+    // Horizontal guides
+    const hCenterMatches = stationaryNodes.filter(
+      n => Math.abs(n.y + NODE_HEIGHT / 2 - dragCenterY) <= MATCH_EPS
+    );
+    if (hCenterMatches.length > 0) {
+      const start = Math.max(
+        0,
+        Math.min(dragLeft, ...hCenterMatches.map(m => m.x)) - OVERHANG
+      );
+      const end = Math.min(
+        DIAGRAM_CANVAS_WIDTH,
+        Math.max(dragRight, ...hCenterMatches.map(m => m.x + NODE_WIDTH)) + OVERHANG
+      );
+      guides.push({
+        orientation: 'horizontal',
+        pos: dragCenterY,
+        start,
+        end,
+        kind: 'center',
+        anchors: [
+          { x: dragCenterX, y: dragCenterY },
+          ...hCenterMatches.map(m => ({
+            x: m.x + NODE_WIDTH / 2,
+            y: m.y + NODE_HEIGHT / 2
+          }))
+        ]
+      });
+    }
+
+    if (checkEdgesY) {
+      const hTopMatches = stationaryNodes.filter(n => Math.abs(n.y - dragTop) <= MATCH_EPS);
+      if (hTopMatches.length > 0) {
+        const start = Math.max(
+          0,
+          Math.min(dragLeft, ...hTopMatches.map(m => m.x)) - OVERHANG
+        );
+        const end = Math.min(
+          DIAGRAM_CANVAS_WIDTH,
+          Math.max(dragRight, ...hTopMatches.map(m => m.x + NODE_WIDTH)) + OVERHANG
+        );
+        guides.push({
+          orientation: 'horizontal',
+          pos: dragTop,
+          start,
+          end,
+          kind: 'edge',
+          anchors: []
+        });
+      }
+
+      const hBottomMatches = stationaryNodes.filter(
+        n => Math.abs(n.y + NODE_HEIGHT - dragBottom) <= MATCH_EPS
+      );
+      if (hBottomMatches.length > 0) {
+        const start = Math.max(
+          0,
+          Math.min(dragLeft, ...hBottomMatches.map(m => m.x)) - OVERHANG
+        );
+        const end = Math.min(
+          DIAGRAM_CANVAS_WIDTH,
+          Math.max(dragRight, ...hBottomMatches.map(m => m.x + NODE_WIDTH)) + OVERHANG
+        );
+        guides.push({
+          orientation: 'horizontal',
+          pos: dragBottom,
+          start,
+          end,
+          kind: 'edge',
+          anchors: []
+        });
+      }
+    }
+  }
+
+  return {
+    x: resolvedX,
+    y: resolvedY,
+    snappedXToGuide,
+    snappedYToGuide,
+    guides
+  };
+}
+
 function drawRoundedRect(
   ctx: CanvasRenderingContext2D,
   x: number,

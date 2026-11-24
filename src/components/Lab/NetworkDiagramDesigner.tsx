@@ -15,6 +15,7 @@ import {
   Image as ImageIcon,
   Layers,
   Loader2,
+  Magnet,
   Maximize2,
   MousePointer2,
   Network,
@@ -33,10 +34,12 @@ import {
   ZoomOut
 } from 'lucide-react';
 import {
+  AlignmentGuideLine,
   CABLE_SPECS,
   CableRoutingStyle,
   CableType,
   computeCableGeometry,
+  computeDeviceAlignment,
   computeRackBoundsForNodes,
   ConcretePortSide,
   DIAGRAM_CANVAS_HEIGHT,
@@ -248,6 +251,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
   const [activeRoutingStyle, setActiveRoutingStyle] =
     useState<CableRoutingStyle>('orthogonal');
   const [snapToGrid, setSnapToGrid] = useState<boolean>(true);
+  const [guidesEnabled, setGuidesEnabled] = useState<boolean>(true);
   const [showGrid, setShowGrid] = useState<boolean>(true);
   const [zoom, setZoom] = useState<number>(0.9);
   const [isPanning, setIsPanning] = useState<boolean>(false);
@@ -264,6 +268,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
   const [exportedImageFormat, setExportedImageFormat] = useState<'png' | 'svg' | null>(null);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuideLine[]>([]);
 
   // Marquee multi-selection box on canvas
   const [marqueeRect, setMarqueeRect] = useState<{
@@ -294,6 +299,10 @@ export const NetworkDiagramDesigner: React.FC = () => {
   zoomRef.current = zoom;
   const selectedNodeIdsRef = useRef(selectedNodeIds);
   selectedNodeIdsRef.current = selectedNodeIds;
+  const snapToGridRef = useRef(snapToGrid);
+  snapToGridRef.current = snapToGrid;
+  const guidesEnabledRef = useRef(guidesEnabled);
+  guidesEnabledRef.current = guidesEnabled;
 
   const focusCanvas = useCallback(() => {
     viewportRef.current?.focus({ preventScroll: true });
@@ -399,7 +408,12 @@ export const NetworkDiagramDesigner: React.FC = () => {
   }, []);
 
   const addDeviceAt = useCallback(
-    (deviceType: NetworkDeviceType, rawX?: number, rawY?: number) => {
+    (
+      deviceType: NetworkDeviceType,
+      rawX?: number,
+      rawY?: number,
+      useExactCoords: boolean = false
+    ) => {
       const meta = STENCIL_MAP[deviceType];
       const el = viewportRef.current;
       let x = rawX;
@@ -418,6 +432,9 @@ export const NetworkDiagramDesigner: React.FC = () => {
         }
       }
 
+      const finalX = useExactCoords ? Math.round(x) : snapCoord(x);
+      const finalY = useExactCoords ? Math.round(y) : snapCoord(y);
+
       const existingCount = docRef.current.nodes.filter(n => n.type === deviceType).length + 1;
       const newNode: NetworkDiagramNode = {
         id: `nd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -427,8 +444,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
         subnetMask: meta.defaultMask,
         vlanOrAsn: meta.defaultVlanOrAsn,
         notes: '',
-        x: Math.max(20, Math.min(DIAGRAM_CANVAS_WIDTH - NODE_WIDTH - 20, snapCoord(x))),
-        y: Math.max(20, Math.min(DIAGRAM_CANVAS_HEIGHT - NODE_HEIGHT - 20, snapCoord(y)))
+        x: Math.max(20, Math.min(DIAGRAM_CANVAS_WIDTH - NODE_WIDTH - 20, finalX)),
+        y: Math.max(20, Math.min(DIAGRAM_CANVAS_HEIGHT - NODE_HEIGHT - 20, finalY))
       };
 
       commitChange(prev => ({
@@ -1227,15 +1244,29 @@ export const NetworkDiagramDesigner: React.FC = () => {
     const startClientX = e.clientX;
     const startClientY = e.clientY;
     const preDragDoc = cloneDiagramDocument(docRef.current);
+    const activeMoveSet = new Set(activeMoveIds);
+    const stationaryNodes = preDragDoc.nodes.filter(n => !activeMoveSet.has(n.id));
     const origPositions = new Map<string, { x: number; y: number }>();
     preDragDoc.nodes.forEach(n => {
-      if (activeMoveIds.includes(n.id)) {
+      if (activeMoveSet.has(n.id)) {
         origPositions.set(n.id, { x: n.x, y: n.y });
       }
     });
 
-    const origX = node.x;
-    const origY = node.y;
+    const origCoords = Array.from(origPositions.values());
+    const boxOrigX = origCoords.length > 0 ? Math.min(...origCoords.map(p => p.x)) : node.x;
+    const boxOrigY = origCoords.length > 0 ? Math.min(...origCoords.map(p => p.y)) : node.y;
+    const boxMaxX =
+      origCoords.length > 0
+        ? Math.max(...origCoords.map(p => p.x + NODE_WIDTH))
+        : node.x + NODE_WIDTH;
+    const boxMaxY =
+      origCoords.length > 0
+        ? Math.max(...origCoords.map(p => p.y + NODE_HEIGHT))
+        : node.y + NODE_HEIGHT;
+    const boxW = Math.max(NODE_WIDTH, boxMaxX - boxOrigX);
+    const boxH = Math.max(NODE_HEIGHT, boxMaxY - boxOrigY);
+
     let deltaX = 0;
     let deltaY = 0;
     let hasMoved = false;
@@ -1248,16 +1279,22 @@ export const NetworkDiagramDesigner: React.FC = () => {
       }
       if (!hasMoved) return;
 
-      const snappedLeadX = Math.max(
-        0,
-        Math.min(DIAGRAM_CANVAS_WIDTH - NODE_WIDTH, snapCoord(origX + rawDx))
+      const aligned = computeDeviceAlignment(
+        boxOrigX + rawDx,
+        boxOrigY + rawDy,
+        boxW,
+        boxH,
+        stationaryNodes,
+        {
+          snapToGrid: snapToGridRef.current,
+          enableGuides: guidesEnabledRef.current,
+          bypassSnap: moveEvt.altKey
+        }
       );
-      const snappedLeadY = Math.max(
-        0,
-        Math.min(DIAGRAM_CANVAS_HEIGHT - NODE_HEIGHT, snapCoord(origY + rawDy))
-      );
-      deltaX = snappedLeadX - origX;
-      deltaY = snappedLeadY - origY;
+
+      deltaX = aligned.x - boxOrigX;
+      deltaY = aligned.y - boxOrigY;
+      setAlignmentGuides(aligned.guides);
 
       dispatchHistory({
         type: 'PREVIEW',
@@ -1279,6 +1316,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      setAlignmentGuides([]);
       if (hasMoved) {
         const finalDoc: NetworkDiagramDocument = {
           ...preDragDoc,
@@ -1513,6 +1551,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
     const origH = rack.height;
     const preDragDoc = cloneDiagramDocument(docRef.current);
     const memberSet = new Set(rack.nodeIds);
+    const stationaryNodes = preDragDoc.nodes.filter(n => !memberSet.has(n.id));
     const origMemberPos = new Map<string, { x: number; y: number }>();
     preDragDoc.nodes.forEach(n => {
       if (memberSet.has(n.id)) {
@@ -1535,10 +1574,21 @@ export const NetworkDiagramDesigner: React.FC = () => {
       if (!hasMoved) return;
 
       if (mode === 'move') {
-        const nextX = Math.max(0, Math.min(DIAGRAM_CANVAS_WIDTH - origW, snapCoord(origX + rawDx)));
-        const nextY = Math.max(0, Math.min(DIAGRAM_CANVAS_HEIGHT - origH, snapCoord(origY + rawDy)));
-        deltaX = nextX - origX;
-        deltaY = nextY - origY;
+        const aligned = computeDeviceAlignment(
+          origX + rawDx,
+          origY + rawDy,
+          origW,
+          origH,
+          stationaryNodes,
+          {
+            snapToGrid: snapToGridRef.current,
+            enableGuides: guidesEnabledRef.current,
+            bypassSnap: moveEvt.altKey
+          }
+        );
+        deltaX = aligned.x - origX;
+        deltaY = aligned.y - origY;
+        setAlignmentGuides(aligned.guides);
       } else {
         latestW = Math.max(180, snapCoord(origW + rawDx));
         latestH = Math.max(140, snapCoord(origH + rawDy));
@@ -1578,6 +1628,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      setAlignmentGuides([]);
       if (hasMoved) {
         const finalDoc: NetworkDiagramDocument = {
           ...preDragDoc,
@@ -1748,6 +1799,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
 
   const handleCanvasDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
+    setAlignmentGuides([]);
     const isLabelDrop = e.dataTransfer.getData('application/x-network-label');
     if (isLabelDrop) {
       const pt = clientToCanvas(e.clientX, e.clientY);
@@ -1757,7 +1809,21 @@ export const NetworkDiagramDesigner: React.FC = () => {
     const deviceType = e.dataTransfer.getData('application/x-network-device') as NetworkDeviceType;
     if (!deviceType || !STENCIL_MAP[deviceType]) return;
     const pt = clientToCanvas(e.clientX, e.clientY);
-    addDeviceAt(deviceType, pt.x - NODE_WIDTH / 2, pt.y - NODE_HEIGHT / 2);
+    const aligned = computeDeviceAlignment(
+      pt.x - NODE_WIDTH / 2,
+      pt.y - NODE_HEIGHT / 2,
+      NODE_WIDTH,
+      NODE_HEIGHT,
+      docRef.current.nodes,
+      {
+        snapToGrid: snapToGridRef.current,
+        enableGuides: guidesEnabledRef.current,
+        bypassSnap: e.altKey,
+        maxX: DIAGRAM_CANVAS_WIDTH - NODE_WIDTH - 20,
+        maxY: DIAGRAM_CANVAS_HEIGHT - NODE_HEIGHT - 20
+      }
+    );
+    addDeviceAt(deviceType, Math.max(20, aligned.x), Math.max(20, aligned.y), true);
   };
 
   const handleApplyTemplate = (templateId: string) => {
@@ -2367,7 +2433,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
               </button>
             </div>
 
-            {/* Grid & Snap Toggle */}
+            {/* Grid, Snap & Smart Alignment Guides Controls */}
             <button
               type="button"
               onClick={() => setSnapToGrid(s => !s)}
@@ -2377,10 +2443,25 @@ export const NetworkDiagramDesigner: React.FC = () => {
                   ? 'bg-blue-50 dark:bg-blue-950/50 border-blue-300 dark:border-cyan-700 text-blue-700 dark:text-cyan-300'
                   : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
               }`}
-              title="Toggle 20px grid snapping"
+              title={`Toggle ${GRID_SNAP_SIZE}px grid snapping (hold Alt while dragging to bypass)`}
             >
               <Grid3x3 className="w-3.5 h-3.5" />
-              <span>Snap 20px</span>
+              <span>Snap {GRID_SNAP_SIZE}px</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setGuidesEnabled(g => !g)}
+              aria-pressed={guidesEnabled}
+              className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
+                guidesEnabled
+                  ? 'bg-blue-50 dark:bg-blue-950/50 border-blue-300 dark:border-cyan-700 text-blue-700 dark:text-cyan-300'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+              title="Toggle automatic alignment guidelines when dragging devices"
+            >
+              <Magnet className="w-3.5 h-3.5" />
+              <span>Guides</span>
             </button>
 
             <button
@@ -2640,6 +2721,32 @@ export const NetworkDiagramDesigner: React.FC = () => {
             onDragOver={e => {
               e.preventDefault();
               e.dataTransfer.dropEffect = 'copy';
+              if (
+                guidesEnabledRef.current &&
+                e.dataTransfer.types.includes('application/x-network-device')
+              ) {
+                const pt = clientToCanvas(e.clientX, e.clientY);
+                const aligned = computeDeviceAlignment(
+                  pt.x - NODE_WIDTH / 2,
+                  pt.y - NODE_HEIGHT / 2,
+                  NODE_WIDTH,
+                  NODE_HEIGHT,
+                  docRef.current.nodes,
+                  {
+                    snapToGrid: snapToGridRef.current,
+                    enableGuides: true,
+                    bypassSnap: e.altKey,
+                    maxX: DIAGRAM_CANVAS_WIDTH - NODE_WIDTH - 20,
+                    maxY: DIAGRAM_CANVAS_HEIGHT - NODE_HEIGHT - 20
+                  }
+                );
+                setAlignmentGuides(aligned.guides);
+              }
+            }}
+            onDragLeave={e => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setAlignmentGuides([]);
+              }
             }}
             onDrop={handleCanvasDrop}
             className={`w-full h-[640px] overflow-auto relative select-none focus:outline-none ${
@@ -3059,6 +3166,59 @@ export const NetworkDiagramDesigner: React.FC = () => {
                   );
                 })}
 
+                {/* Layer 5: Automatic Smart Alignment Guidelines */}
+                {alignmentGuides.length > 0 && (
+                  <svg
+                    width={DIAGRAM_CANVAS_WIDTH}
+                    height={DIAGRAM_CANVAS_HEIGHT}
+                    aria-hidden="true"
+                    className="absolute inset-0 pointer-events-none z-20"
+                  >
+                    {alignmentGuides.map((guide, idx) => (
+                      <g key={`${guide.orientation}-${guide.kind}-${idx}`}>
+                        {guide.orientation === 'vertical' ? (
+                          <line
+                            x1={guide.pos}
+                            y1={guide.start}
+                            x2={guide.pos}
+                            y2={guide.end}
+                            strokeWidth={1.25}
+                            strokeDasharray={guide.kind === 'center' ? '4 4' : '3 4'}
+                            className={
+                              guide.kind === 'center'
+                                ? 'stroke-blue-500/75 dark:stroke-cyan-400/80'
+                                : 'stroke-blue-400/55 dark:stroke-cyan-400/55'
+                            }
+                          />
+                        ) : (
+                          <line
+                            x1={guide.start}
+                            y1={guide.pos}
+                            x2={guide.end}
+                            y2={guide.pos}
+                            strokeWidth={1.25}
+                            strokeDasharray={guide.kind === 'center' ? '4 4' : '3 4'}
+                            className={
+                              guide.kind === 'center'
+                                ? 'stroke-blue-500/75 dark:stroke-cyan-400/80'
+                                : 'stroke-blue-400/55 dark:stroke-cyan-400/55'
+                            }
+                          />
+                        )}
+                        {guide.anchors.map((pt, aIdx) => (
+                          <circle
+                            key={aIdx}
+                            cx={pt.x}
+                            cy={pt.y}
+                            r={2.5}
+                            className="fill-blue-500/80 dark:fill-cyan-400/85"
+                          />
+                        ))}
+                      </g>
+                    ))}
+                  </svg>
+                )}
+
                 {/* Marquee Box-Select Rectangle */}
                 {marqueeRect && (
                   <div
@@ -3091,7 +3251,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
 
           {/* Bottom-left Quick Hint */}
           <div className="pointer-events-none absolute left-3 bottom-3 hidden sm:flex items-center px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm border border-slate-200/80 dark:border-slate-700/80 text-[11px] text-slate-500 dark:text-slate-400 shadow-xs">
-            Drag empty canvas or Shift+Click to multi-select devices · Ctrl+G to group into Rack · Double-click to edit
+            Drag empty canvas or Shift+Click to multi-select · Hold Alt while dragging to bypass snap · Double-click to edit
           </div>
 
           {/* Floating Properties Box — appears ONLY when double-clicking or adding a label */}
