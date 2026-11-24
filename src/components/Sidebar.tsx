@@ -28,6 +28,7 @@ import {
   SquareStack,
   Keyboard,
   Workflow,
+  ClipboardList,
   LucideIcon
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
@@ -332,6 +333,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
           tag: 'SIM'
         },
         {
+          id: 'lab-exercises',
+          label: 'Lab Exercises',
+          icon: ClipboardList,
+          accentText: 'text-emerald-600 dark:text-emerald-400',
+          accentBg: 'bg-emerald-50 dark:bg-emerald-950/60',
+          accentBar: 'bg-emerald-500',
+          tag: 'LABS'
+        },
+        {
           id: 'network-designer',
           label: 'Network Designer',
           icon: Workflow,
@@ -465,6 +475,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'dashboard', label: 'My Enrolled Courses & Progress', category: 'Learning', icon: UserCheck },
     { id: 'flashcard', label: 'Flashcard · AI Terminology, Protocols & Ports Deck', category: 'Curriculum', icon: SquareStack },
     { id: 'lab-sandbox', label: 'Lab Simulation · Network Topology & Cisco Lab', category: 'Hands-on Labs', icon: Network },
+    { id: 'lab-exercises', label: 'Lab Exercises · Step-by-Step Networking Lab Guidelines', category: 'Hands-on Labs', icon: ClipboardList },
     { id: 'network-designer', label: 'Network Designer · Topology & Cable Diagram Studio', category: 'Hands-on Labs', icon: Workflow },
     { id: 'subnet-calc', label: 'Subnetting & VLSM Architecture Calculator', category: 'Hands-on Labs', icon: Calculator },
     { id: 'base-converter', label: 'Binary, Decimal & Hexadecimal Converter', category: 'Hands-on Labs', icon: Binary },

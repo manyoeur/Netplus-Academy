@@ -6,6 +6,7 @@ export type RecentActivityKind = 'course' | 'lab';
 
 export type LabToolTabId =
   | 'lab-sandbox'
+  | 'lab-exercises'
   | 'network-designer'
   | 'subnet-calc'
   | 'base-converter'
@@ -36,6 +37,12 @@ export const LAB_TOOLS_METADATA: Record<LabToolTabId, LabToolMetadata> = {
     title: 'Lab Simulation',
     codeOrCategory: 'CLI & TOPOLOGY',
     subtitle: 'Network topology & interactive Cisco IOS CLI sandbox'
+  },
+  'lab-exercises': {
+    tabId: 'lab-exercises',
+    title: 'Lab Exercises',
+    codeOrCategory: 'LAB GUIDES',
+    subtitle: 'Step-by-step Cisco IOS configuration & troubleshooting guides'
   },
   'network-designer': {
     tabId: 'network-designer',
@@ -70,6 +77,7 @@ const MAX_STORED_ENTRIES = 25;
 export function isLabToolTabId(tabId: string): tabId is LabToolTabId {
   return (
     tabId === 'lab-sandbox' ||
+    tabId === 'lab-exercises' ||
     tabId === 'network-designer' ||
     tabId === 'subnet-calc' ||
     tabId === 'base-converter' ||

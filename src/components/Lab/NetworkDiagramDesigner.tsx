@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   Cable,
   Check,
@@ -48,6 +48,11 @@ import {
   STENCIL_MAP,
   ZoneColorTheme
 } from '../../utils/networkDiagramData';
+import {
+  cloneDiagramDocument,
+  createInitialDiagramHistory,
+  diagramHistoryReducer
+} from '../../utils/diagramHistory';
 import { NetworkDeviceGlyph } from './NetworkDeviceGlyph';
 
 const STORAGE_KEY = 'netpulse_network_diagram_designer_v1';
@@ -97,13 +102,18 @@ const ZONE_STYLE_MAP: Record<
   }
 };
 
-function cloneDoc(doc: NetworkDiagramDocument): NetworkDiagramDocument {
-  return {
-    name: doc.name,
-    nodes: doc.nodes.map(n => ({ ...n })),
-    cables: doc.cables.map(c => ({ ...c })),
-    zones: doc.zones.map(z => ({ ...z }))
-  };
+function reconcileTarget(
+  target: SelectionState,
+  doc: NetworkDiagramDocument
+): SelectionState {
+  if (!target) return null;
+  if (target.kind === 'node') {
+    return doc.nodes.some(n => n.id === target.id) ? target : null;
+  }
+  if (target.kind === 'cable') {
+    return doc.cables.some(c => c.id === target.id) ? target : null;
+  }
+  return doc.zones.some(z => z.id === target.id) ? target : null;
 }
 
 function loadInitialDiagram(): NetworkDiagramDocument {
@@ -129,13 +139,18 @@ function loadInitialDiagram(): NetworkDiagramDocument {
   } catch {
     // Fall back to default starter template
   }
-  return cloneDoc(DIAGRAM_TEMPLATES[0].document);
+  return cloneDiagramDocument(DIAGRAM_TEMPLATES[0].document);
 }
 
 export const NetworkDiagramDesigner: React.FC = () => {
-  const [doc, setDoc] = useState<NetworkDiagramDocument>(() => loadInitialDiagram());
-  const [undoStack, setUndoStack] = useState<NetworkDiagramDocument[]>([]);
-  const [redoStack, setRedoStack] = useState<NetworkDiagramDocument[]>([]);
+  const [history, dispatchHistory] = useReducer(
+    diagramHistoryReducer,
+    undefined,
+    () => createInitialDiagramHistory(loadInitialDiagram())
+  );
+  const doc = history.present;
+  const canUndo = history.past.length > 0;
+  const canRedo = history.future.length > 0;
 
   const [toolMode, setToolMode] = useState<DiagramToolMode>('select');
   const [activeCableType, setActiveCableType] = useState<CableType>('ethernet');
@@ -186,6 +201,11 @@ export const NetworkDiagramDesigner: React.FC = () => {
     }
   }, [doc]);
 
+  useEffect(() => {
+    setSelection(prev => reconcileTarget(prev, doc));
+    setInspectorTarget(prev => reconcileTarget(prev, doc));
+  }, [doc]);
+
   const showNotice = useCallback((msg: string) => {
     setStatusNotice(msg);
     window.setTimeout(() => {
@@ -193,40 +213,42 @@ export const NetworkDiagramDesigner: React.FC = () => {
     }, 2400);
   }, []);
 
-  const commitChange = useCallback((updater: (prev: NetworkDiagramDocument) => NetworkDiagramDocument) => {
-    setDoc(prev => {
-      const next = updater(prev);
-      setUndoStack(u => [...u.slice(-39), cloneDoc(prev)]);
-      setRedoStack([]);
-      return next;
-    });
+  const commitChange = useCallback(
+    (updater: (prev: NetworkDiagramDocument) => NetworkDiagramDocument) => {
+      dispatchHistory({ type: 'COMMIT', updater });
+    },
+    []
+  );
+
+  const commitCoalescedEdit = useCallback(
+    (editKey: string, updater: (prev: NetworkDiagramDocument) => NetworkDiagramDocument) => {
+      dispatchHistory({
+        type: 'COALESCED_EDIT',
+        editKey,
+        now: Date.now(),
+        updater
+      });
+    },
+    []
+  );
+
+  const endEditSession = useCallback(() => {
+    dispatchHistory({ type: 'END_EDIT_SESSION' });
   }, []);
 
   const handleUndo = useCallback(() => {
-    setUndoStack(prevUndo => {
-      if (prevUndo.length === 0) return prevUndo;
-      const previousDoc = prevUndo[prevUndo.length - 1];
-      setRedoStack(r => [...r.slice(-39), cloneDoc(docRef.current)]);
-      setDoc(cloneDoc(previousDoc));
-      setSelection(null);
-      setInspectorTarget(null);
-      setConnectSourceId(null);
-      return prevUndo.slice(0, -1);
-    });
-  }, []);
+    if (!canUndo) return;
+    dispatchHistory({ type: 'UNDO' });
+    setConnectSourceId(null);
+    setWirePreview(null);
+  }, [canUndo]);
 
   const handleRedo = useCallback(() => {
-    setRedoStack(prevRedo => {
-      if (prevRedo.length === 0) return prevRedo;
-      const nextDoc = prevRedo[prevRedo.length - 1];
-      setUndoStack(u => [...u.slice(-39), cloneDoc(docRef.current)]);
-      setDoc(cloneDoc(nextDoc));
-      setSelection(null);
-      setInspectorTarget(null);
-      setConnectSourceId(null);
-      return prevRedo.slice(0, -1);
-    });
-  }, []);
+    if (!canRedo) return;
+    dispatchHistory({ type: 'REDO' });
+    setConnectSourceId(null);
+    setWirePreview(null);
+  }, [canRedo]);
 
   const snapCoord = useCallback(
     (val: number) => (snapToGrid ? Math.round(val / GRID_SNAP_SIZE) * GRID_SNAP_SIZE : Math.round(val)),
@@ -470,7 +492,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
         const step = e.shiftKey ? GRID_SNAP_SIZE : 4;
         const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
         const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
-        commitChange(prev => ({
+        commitCoalescedEdit(`nudge:${selection.id}`, prev => ({
           ...prev,
           nodes: prev.nodes.map(n =>
             n.id === selection.id
@@ -493,7 +515,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
     handleRedo,
     handleDeleteSelection,
     handleDuplicateSelectedNode,
-    commitChange
+    commitCoalescedEdit
   ]);
 
   const applyZoom = useCallback((nextRaw: number, anchorX?: number, anchorY?: number) => {
@@ -616,7 +638,9 @@ export const NetworkDiagramDesigner: React.FC = () => {
     const startClientY = e.clientY;
     const origX = node.x;
     const origY = node.y;
-    const preDragDoc = cloneDoc(docRef.current);
+    let latestX = origX;
+    let latestY = origY;
+    const preDragDoc = cloneDiagramDocument(docRef.current);
     let hasMoved = false;
 
     const onMove = (moveEvt: MouseEvent) => {
@@ -635,19 +659,33 @@ export const NetworkDiagramDesigner: React.FC = () => {
         0,
         Math.min(DIAGRAM_CANVAS_HEIGHT - NODE_HEIGHT, snapCoord(origY + dy))
       );
+      latestX = nextX;
+      latestY = nextY;
 
-      setDoc(prev => ({
-        ...prev,
-        nodes: prev.nodes.map(n => (n.id === node.id ? { ...n, x: nextX, y: nextY } : n))
-      }));
+      dispatchHistory({
+        type: 'PREVIEW',
+        updater: prev => ({
+          ...prev,
+          nodes: prev.nodes.map(n => (n.id === node.id ? { ...n, x: nextX, y: nextY } : n))
+        })
+      });
     };
 
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       if (hasMoved) {
-        setUndoStack(u => [...u.slice(-39), preDragDoc]);
-        setRedoStack([]);
+        const finalDoc: NetworkDiagramDocument = {
+          ...preDragDoc,
+          nodes: preDragDoc.nodes.map(n =>
+            n.id === node.id ? { ...n, x: latestX, y: latestY } : n
+          )
+        };
+        dispatchHistory({
+          type: 'COMMIT_DRAG',
+          preDragDoc,
+          nextDoc: finalDoc
+        });
       }
     };
 
@@ -719,7 +757,11 @@ export const NetworkDiagramDesigner: React.FC = () => {
     const origY = zone.y;
     const origW = zone.width;
     const origH = zone.height;
-    const preDragDoc = cloneDoc(docRef.current);
+    let latestX = origX;
+    let latestY = origY;
+    let latestW = origW;
+    let latestH = origH;
+    const preDragDoc = cloneDiagramDocument(docRef.current);
     let hasMoved = false;
 
     const onMove = (moveEvt: MouseEvent) => {
@@ -730,32 +772,44 @@ export const NetworkDiagramDesigner: React.FC = () => {
       }
       if (!hasMoved) return;
 
-      setDoc(prev => ({
-        ...prev,
-        zones: prev.zones.map(z => {
-          if (z.id !== zone.id) return z;
-          if (mode === 'move') {
-            return {
-              ...z,
-              x: Math.max(0, Math.min(DIAGRAM_CANVAS_WIDTH - z.width, snapCoord(origX + dx))),
-              y: Math.max(0, Math.min(DIAGRAM_CANVAS_HEIGHT - z.height, snapCoord(origY + dy)))
-            };
-          }
-          return {
-            ...z,
-            width: Math.max(180, snapCoord(origW + dx)),
-            height: Math.max(120, snapCoord(origH + dy))
-          };
+      if (mode === 'move') {
+        latestX = Math.max(0, Math.min(DIAGRAM_CANVAS_WIDTH - zone.width, snapCoord(origX + dx)));
+        latestY = Math.max(0, Math.min(DIAGRAM_CANVAS_HEIGHT - zone.height, snapCoord(origY + dy)));
+      } else {
+        latestW = Math.max(180, snapCoord(origW + dx));
+        latestH = Math.max(120, snapCoord(origH + dy));
+      }
+
+      dispatchHistory({
+        type: 'PREVIEW',
+        updater: prev => ({
+          ...prev,
+          zones: prev.zones.map(z =>
+            z.id === zone.id
+              ? { ...z, x: latestX, y: latestY, width: latestW, height: latestH }
+              : z
+          )
         })
-      }));
+      });
     };
 
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       if (hasMoved) {
-        setUndoStack(u => [...u.slice(-39), preDragDoc]);
-        setRedoStack([]);
+        const finalDoc: NetworkDiagramDocument = {
+          ...preDragDoc,
+          zones: preDragDoc.zones.map(z =>
+            z.id === zone.id
+              ? { ...z, x: latestX, y: latestY, width: latestW, height: latestH }
+              : z
+          )
+        };
+        dispatchHistory({
+          type: 'COMMIT_DRAG',
+          preDragDoc,
+          nextDoc: finalDoc
+        });
       }
     };
 
@@ -831,7 +885,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
   const handleApplyTemplate = (templateId: string) => {
     const tpl = DIAGRAM_TEMPLATES.find(t => t.id === templateId);
     if (!tpl) return;
-    commitChange(() => cloneDoc(tpl.document));
+    commitChange(() => cloneDiagramDocument(tpl.document));
     setSelection(null);
     setInspectorTarget(null);
     setConnectSourceId(null);
@@ -933,28 +987,52 @@ export const NetworkDiagramDesigner: React.FC = () => {
       ? doc.zones.find(z => z.id === inspectorTarget.id) || null
       : null;
 
-  const updateInspectedNode = (patch: Partial<NetworkDiagramNode>) => {
+  const updateInspectedNode = (
+    patch: Partial<NetworkDiagramNode>,
+    editKey?: string
+  ) => {
     if (!inspectedNode) return;
-    setDoc(prev => ({
+    const updater = (prev: NetworkDiagramDocument): NetworkDiagramDocument => ({
       ...prev,
       nodes: prev.nodes.map(n => (n.id === inspectedNode.id ? { ...n, ...patch } : n))
-    }));
+    });
+    if (editKey) {
+      commitCoalescedEdit(`node:${inspectedNode.id}:${editKey}`, updater);
+    } else {
+      commitChange(updater);
+    }
   };
 
-  const updateInspectedCable = (patch: Partial<NetworkDiagramCable>) => {
+  const updateInspectedCable = (
+    patch: Partial<NetworkDiagramCable>,
+    editKey?: string
+  ) => {
     if (!inspectedCable) return;
-    setDoc(prev => ({
+    const updater = (prev: NetworkDiagramDocument): NetworkDiagramDocument => ({
       ...prev,
       cables: prev.cables.map(c => (c.id === inspectedCable.id ? { ...c, ...patch } : c))
-    }));
+    });
+    if (editKey) {
+      commitCoalescedEdit(`cable:${inspectedCable.id}:${editKey}`, updater);
+    } else {
+      commitChange(updater);
+    }
   };
 
-  const updateInspectedZone = (patch: Partial<NetworkDiagramZone>) => {
+  const updateInspectedZone = (
+    patch: Partial<NetworkDiagramZone>,
+    editKey?: string
+  ) => {
     if (!inspectedZone) return;
-    setDoc(prev => ({
+    const updater = (prev: NetworkDiagramDocument): NetworkDiagramDocument => ({
       ...prev,
       zones: prev.zones.map(z => (z.id === inspectedZone.id ? { ...z, ...patch } : z))
-    }));
+    });
+    if (editKey) {
+      commitCoalescedEdit(`zone:${inspectedZone.id}:${editKey}`, updater);
+    } else {
+      commitChange(updater);
+    }
   };
 
   return (
@@ -974,7 +1052,13 @@ export const NetworkDiagramDesigner: React.FC = () => {
                 <input
                   type="text"
                   value={doc.name}
-                  onChange={e => setDoc(prev => ({ ...prev, name: e.target.value }))}
+                  onChange={e =>
+                    commitCoalescedEdit('doc:name', prev => ({
+                      ...prev,
+                      name: e.target.value
+                    }))
+                  }
+                  onBlur={endEditSession}
                   aria-label="Topology diagram title"
                   className="text-base font-bold text-slate-900 dark:text-white bg-transparent border-b border-transparent hover:border-slate-300 dark:hover:border-slate-700 focus:border-blue-500 focus:outline-none min-w-[200px] max-w-md truncate"
                 />
@@ -1156,24 +1240,34 @@ export const NetworkDiagramDesigner: React.FC = () => {
             <div className="inline-flex items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
               <button
                 type="button"
-                disabled={undoStack.length === 0}
+                disabled={!canUndo}
                 onClick={handleUndo}
-                title="Undo (Ctrl+Z)"
-                aria-label="Undo"
-                className="p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white disabled:opacity-35 disabled:cursor-not-allowed"
+                title={`Undo (${history.past.length}) · Ctrl+Z`}
+                aria-label={`Undo (${history.past.length} steps available)`}
+                className="px-2 py-1.5 inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
               >
                 <Undo2 className="w-3.5 h-3.5" />
+                {history.past.length > 0 && (
+                  <span className="text-[10px] font-mono tabular-nums font-semibold">
+                    {history.past.length}
+                  </span>
+                )}
               </button>
               <span className="h-3.5 w-px bg-slate-200 dark:bg-slate-700" aria-hidden="true" />
               <button
                 type="button"
-                disabled={redoStack.length === 0}
+                disabled={!canRedo}
                 onClick={handleRedo}
-                title="Redo (Ctrl+Shift+Z)"
-                aria-label="Redo"
-                className="p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white disabled:opacity-35 disabled:cursor-not-allowed"
+                title={`Redo (${history.future.length}) · Ctrl+Shift+Z`}
+                aria-label={`Redo (${history.future.length} steps available)`}
+                className="px-2 py-1.5 inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
               >
                 <Redo2 className="w-3.5 h-3.5" />
+                {history.future.length > 0 && (
+                  <span className="text-[10px] font-mono tabular-nums font-semibold">
+                    {history.future.length}
+                  </span>
+                )}
               </button>
             </div>
 
@@ -1729,7 +1823,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
                       <input
                         type="text"
                         value={inspectedNode.label}
-                        onChange={e => updateInspectedNode({ label: e.target.value })}
+                        onChange={e => updateInspectedNode({ label: e.target.value }, 'label')}
+                        onBlur={endEditSession}
                         className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
@@ -1761,7 +1856,10 @@ export const NetworkDiagramDesigner: React.FC = () => {
                         <input
                           type="text"
                           value={inspectedNode.ipAddress}
-                          onChange={e => updateInspectedNode({ ipAddress: e.target.value })}
+                          onChange={e =>
+                            updateInspectedNode({ ipAddress: e.target.value }, 'ipAddress')
+                          }
+                          onBlur={endEditSession}
                           className="w-full px-2.5 py-1.5 rounded-lg font-mono bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
@@ -1772,7 +1870,10 @@ export const NetworkDiagramDesigner: React.FC = () => {
                         <input
                           type="text"
                           value={inspectedNode.subnetMask}
-                          onChange={e => updateInspectedNode({ subnetMask: e.target.value })}
+                          onChange={e =>
+                            updateInspectedNode({ subnetMask: e.target.value }, 'subnetMask')
+                          }
+                          onBlur={endEditSession}
                           className="w-full px-2.5 py-1.5 rounded-lg font-mono bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
@@ -1785,7 +1886,10 @@ export const NetworkDiagramDesigner: React.FC = () => {
                       <input
                         type="text"
                         value={inspectedNode.vlanOrAsn}
-                        onChange={e => updateInspectedNode({ vlanOrAsn: e.target.value })}
+                        onChange={e =>
+                          updateInspectedNode({ vlanOrAsn: e.target.value }, 'vlanOrAsn')
+                        }
+                        onBlur={endEditSession}
                         className="w-full px-2.5 py-1.5 rounded-lg font-mono bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
@@ -1797,7 +1901,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
                       <textarea
                         rows={2}
                         value={inspectedNode.notes}
-                        onChange={e => updateInspectedNode({ notes: e.target.value })}
+                        onChange={e => updateInspectedNode({ notes: e.target.value }, 'notes')}
+                        onBlur={endEditSession}
                         placeholder="Redundancy, routing protocol, PoE budget..."
                         className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                       />
@@ -1897,7 +2002,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
                       <input
                         type="text"
                         value={inspectedCable.label}
-                        onChange={e => updateInspectedCable({ label: e.target.value })}
+                        onChange={e => updateInspectedCable({ label: e.target.value }, 'label')}
+                        onBlur={endEditSession}
                         placeholder="e.g. LACP Trunk, eBGP, 10G"
                         className="w-full px-2.5 py-1.5 rounded-lg font-mono bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                       />
@@ -1912,8 +2018,12 @@ export const NetworkDiagramDesigner: React.FC = () => {
                           type="text"
                           value={inspectedCable.sourceInterface}
                           onChange={e =>
-                            updateInspectedCable({ sourceInterface: e.target.value })
+                            updateInspectedCable(
+                              { sourceInterface: e.target.value },
+                              'sourceInterface'
+                            )
                           }
+                          onBlur={endEditSession}
                           className="w-full px-2 py-1.5 rounded-lg font-mono bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                         />
                       </div>
@@ -1925,8 +2035,12 @@ export const NetworkDiagramDesigner: React.FC = () => {
                           type="text"
                           value={inspectedCable.targetInterface}
                           onChange={e =>
-                            updateInspectedCable({ targetInterface: e.target.value })
+                            updateInspectedCable(
+                              { targetInterface: e.target.value },
+                              'targetInterface'
+                            )
                           }
+                          onBlur={endEditSession}
                           className="w-full px-2 py-1.5 rounded-lg font-mono bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                         />
                       </div>
@@ -2013,7 +2127,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
                       <input
                         type="text"
                         value={inspectedZone.title}
-                        onChange={e => updateInspectedZone({ title: e.target.value })}
+                        onChange={e => updateInspectedZone({ title: e.target.value }, 'title')}
+                        onBlur={endEditSession}
                         className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                       />
                     </div>
@@ -2024,7 +2139,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
                       <input
                         type="text"
                         value={inspectedZone.subtitle}
-                        onChange={e => updateInspectedZone({ subtitle: e.target.value })}
+                        onChange={e => updateInspectedZone({ subtitle: e.target.value }, 'subtitle')}
+                        onBlur={endEditSession}
                         className="w-full px-2.5 py-1.5 rounded-lg font-mono bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                       />
                     </div>

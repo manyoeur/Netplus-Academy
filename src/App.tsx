@@ -7,6 +7,8 @@ import { CoursePlayer } from './components/Courses/CoursePlayer';
 import { MyClassManager } from './components/Courses/MyClassManager';
 import { StudentDashboard } from './components/Dashboard/StudentDashboard';
 import { NetworkTopologySimulator } from './components/Lab/NetworkTopologySimulator';
+import { SimulatorTopologyLaunchPayload } from './components/Lab/networkSimTypes';
+import { LabExercisesView } from './components/Lab/LabExercisesView';
 import { NetworkDiagramDesigner } from './components/Lab/NetworkDiagramDesigner';
 import { SubnettingCalculator } from './components/Lab/SubnettingCalculator';
 import { NumberBaseConverter } from './components/Lab/NumberBaseConverter';
@@ -55,6 +57,8 @@ const AcademyApp: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<string>('courses');
   const [managementSubTab, setManagementSubTab] = useState<ManagementSubTab>('courses');
   const [activeCourseId, setActiveCourseId] = useState<string | null>(null);
+  const [labLaunchTopology, setLabLaunchTopology] =
+    useState<SimulatorTopologyLaunchPayload | null>(null);
 
   // Left Sidebar Pin & Auto-Hide State (auto-hide active by default unless pinned)
   const [isSidebarPinned, setIsSidebarPinned] = useState<boolean>(() => {
@@ -116,6 +120,9 @@ const AcademyApp: React.FC = () => {
     if (tabId === 'pricing') {
       setIsPaymentOpen(true);
     } else {
+      if (tabId !== 'lab-sandbox') {
+        setLabLaunchTopology(null);
+      }
       setCurrentTab(tabId);
       setActiveCourseId(null);
     }
@@ -202,7 +209,9 @@ const AcademyApp: React.FC = () => {
     const studySource =
       currentTab === 'player'
         ? 'course'
-        : currentTab === 'lab-sandbox' || currentTab === 'network-designer'
+        : currentTab === 'lab-sandbox' ||
+          currentTab === 'lab-exercises' ||
+          currentTab === 'network-designer'
         ? 'lab'
         : currentTab === 'subnet-calc' ||
           currentTab === 'base-converter' ||
@@ -359,7 +368,26 @@ const AcademyApp: React.FC = () => {
 
         {/* Standalone Network Topology & Cisco Lab Simulator */}
         {currentTab === 'lab-sandbox' && (
-          <NetworkTopologySimulator key={currentUser.id} />
+          <NetworkTopologySimulator
+            key={currentUser.id}
+            initialTopologyLaunch={labLaunchTopology}
+            onTopologyLaunchConsumed={() => setLabLaunchTopology(null)}
+          />
+        )}
+
+        {/* Standalone Step-by-Step Networking Lab Exercises */}
+        {currentTab === 'lab-exercises' && (
+          <LabExercisesView
+            onOpenSimulator={() => {
+              setLabLaunchTopology(null);
+              handleNavigateTab('lab-sandbox');
+            }}
+            onOpenSimulatorWithTopology={payload => {
+              setLabLaunchTopology(payload);
+              setCurrentTab('lab-sandbox');
+              setActiveCourseId(null);
+            }}
+          />
         )}
 
         {/* Standalone Visio-style Network Diagram & Topology Designer */}

@@ -98,7 +98,8 @@ import {
   SimLink,
   SimShapeKind,
   SimShapeLineStyle,
-  SimTopologyShape
+  SimTopologyShape,
+  SimulatorTopologyLaunchPayload
 } from './networkSimTypes';
 import {
   computeCableGeometry,
@@ -636,7 +637,15 @@ function computeAutoLayoutPositions(
   });
 }
 
-export const NetworkTopologySimulator: React.FC = () => {
+interface NetworkTopologySimulatorProps {
+  initialTopologyLaunch?: SimulatorTopologyLaunchPayload | null;
+  onTopologyLaunchConsumed?: () => void;
+}
+
+export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> = ({
+  initialTopologyLaunch = null,
+  onTopologyLaunchConsumed
+}) => {
   const { currentUser, isOffline, recordStudyTime } = useAcademy();
 
   const initialPresetState = useMemo(() => {
@@ -682,6 +691,11 @@ export const NetworkTopologySimulator: React.FC = () => {
   const cloudDirtyRef = useRef<boolean>(false);
   const cloudSaveInFlightRef = useRef<boolean>(false);
   const lastCloudSignatureRef = useRef<string | null>(null);
+  const initialLaunchRef = useRef<SimulatorTopologyLaunchPayload | null>(initialTopologyLaunch);
+  initialLaunchRef.current = initialTopologyLaunch;
+  const onTopologyLaunchConsumedRef = useRef(onTopologyLaunchConsumed);
+  onTopologyLaunchConsumedRef.current = onTopologyLaunchConsumed;
+  const appliedLaunchNonceRef = useRef<number | null>(null);
 
   const [tool, setTool] = useState<CanvasTool>('select');
   const [autoLayoutMode, setAutoLayoutMode] = useState<AutoLayoutMode>('grid');
@@ -1318,7 +1332,64 @@ export const NetworkTopologySimulator: React.FC = () => {
         // Ignore storage read failures
       }
 
-      if (draft) {
+      const pendingLaunch = initialLaunchRef.current;
+      const shouldApplyPendingLaunch = Boolean(
+        pendingLaunch && appliedLaunchNonceRef.current !== pendingLaunch.nonce
+      );
+
+      if (shouldApplyPendingLaunch && pendingLaunch) {
+        const clonedDevices = sanitizeDevicesForStorage(
+          JSON.parse(JSON.stringify(pendingLaunch.devices || []))
+        );
+        const clonedLinks = sanitizeLinksForStorage(
+          JSON.parse(JSON.stringify(pendingLaunch.links || []))
+        );
+        const clonedShapes = sanitizeShapesForStorage(
+          JSON.parse(JSON.stringify(pendingLaunch.shapes || [])),
+          pendingLaunch.canvasWidth || DEFAULT_LAB_CANVAS_WIDTH,
+          pendingLaunch.canvasHeight || DEFAULT_LAB_CANVAS_HEIGHT
+        );
+        const clonedLabels = sanitizeLabelsForStorage(
+          JSON.parse(JSON.stringify(pendingLaunch.labels || [])),
+          pendingLaunch.canvasWidth || DEFAULT_LAB_CANVAS_WIDTH,
+          pendingLaunch.canvasHeight || DEFAULT_LAB_CANVAS_HEIGHT
+        );
+        const launchSize = computeRequiredCanvasSize(
+          clonedDevices,
+          clonedShapes,
+          clonedLabels,
+          pendingLaunch.canvasWidth,
+          pendingLaunch.canvasHeight
+        );
+
+        setWorkspaceView('editor');
+        setActivePresetId(sanitizeLabId(pendingLaunch.presetId || 'blank-sandbox'));
+        setCanvasSize(launchSize);
+        setShowCustomLabels(true);
+        setShowGrid(prefShowGrid);
+        setSnapToGrid(prefSnapToGrid);
+        setGridSize(prefGridSize);
+        setGridStyle(prefGridStyle);
+        setDevices(clonedDevices);
+        setLinks(clonedLinks);
+        setShapes(clonedShapes);
+        setDiagramLabels(clonedLabels);
+        setActiveSavedLabId(null);
+        setSaveTitleInput(pendingLaunch.title.slice(0, 120));
+        const firstId = clonedDevices[0]?.id || null;
+        setSelectedDeviceId(firstId);
+        setSelectedDeviceIds(firstId ? [firstId] : []);
+        setConsoleTabIds([]);
+        setConsoleDeviceId(null);
+        setSelectedLinkId(null);
+        setSelectedShapeId(null);
+        setSelectedDiagramLabelId(null);
+        setLastPingResult(null);
+        appliedLaunchNonceRef.current = pendingLaunch.nonce;
+        lastCloudSignatureRef.current = null;
+        cloudDirtyRef.current = Boolean(canUseCloud);
+        onTopologyLaunchConsumedRef.current?.();
+      } else if (draft) {
         const draftShapes = Array.isArray(draft.shapes) ? draft.shapes : [];
         const draftLabels = Array.isArray(draft.labels) ? draft.labels : [];
         const restoredSize = computeRequiredCanvasSize(
@@ -1470,6 +1541,58 @@ export const NetworkTopologySimulator: React.FC = () => {
       cancelled = true;
     };
   }, [ownerScopeId, isOffline, computeCloudDraftSignature]);
+
+  // Apply new launched lab exercise topology when simulator is already hydrated
+  useEffect(() => {
+    if (!initialTopologyLaunch) return;
+    if (draftHydratedForUserRef.current !== ownerScopeId) return;
+    if (appliedLaunchNonceRef.current === initialTopologyLaunch.nonce) return;
+
+    const clonedDevices = sanitizeDevicesForStorage(
+      JSON.parse(JSON.stringify(initialTopologyLaunch.devices || []))
+    );
+    const clonedLinks = sanitizeLinksForStorage(
+      JSON.parse(JSON.stringify(initialTopologyLaunch.links || []))
+    );
+    const clonedShapes = sanitizeShapesForStorage(
+      JSON.parse(JSON.stringify(initialTopologyLaunch.shapes || [])),
+      initialTopologyLaunch.canvasWidth || DEFAULT_LAB_CANVAS_WIDTH,
+      initialTopologyLaunch.canvasHeight || DEFAULT_LAB_CANVAS_HEIGHT
+    );
+    const clonedLabels = sanitizeLabelsForStorage(
+      JSON.parse(JSON.stringify(initialTopologyLaunch.labels || [])),
+      initialTopologyLaunch.canvasWidth || DEFAULT_LAB_CANVAS_WIDTH,
+      initialTopologyLaunch.canvasHeight || DEFAULT_LAB_CANVAS_HEIGHT
+    );
+    const launchSize = computeRequiredCanvasSize(
+      clonedDevices,
+      clonedShapes,
+      clonedLabels,
+      initialTopologyLaunch.canvasWidth,
+      initialTopologyLaunch.canvasHeight
+    );
+
+    setWorkspaceView('editor');
+    setActivePresetId(sanitizeLabId(initialTopologyLaunch.presetId || 'blank-sandbox'));
+    setCanvasSize(launchSize);
+    setDevices(clonedDevices);
+    setLinks(clonedLinks);
+    setShapes(clonedShapes);
+    setDiagramLabels(clonedLabels);
+    setActiveSavedLabId(null);
+    setSaveTitleInput(initialTopologyLaunch.title.slice(0, 120));
+    const firstId = clonedDevices[0]?.id || null;
+    setSelectedDeviceId(firstId);
+    setSelectedDeviceIds(firstId ? [firstId] : []);
+    setConsoleTabIds([]);
+    setConsoleDeviceId(null);
+    setSelectedLinkId(null);
+    setSelectedShapeId(null);
+    setSelectedDiagramLabelId(null);
+    setLastPingResult(null);
+    appliedLaunchNonceRef.current = initialTopologyLaunch.nonce;
+    onTopologyLaunchConsumedRef.current?.();
+  }, [initialTopologyLaunch, ownerScopeId]);
 
   // Persist user's grid & snap preferences in localStorage
   useEffect(() => {

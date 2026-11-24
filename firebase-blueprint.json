@@ -900,6 +900,98 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "LabExerciseTopology": {
+      "title": "LabExerciseTopology",
+      "description": "Admin and instructor authored or updated Lab Simulation-style network topologies for guided Lab Exercises.",
+      "type": "object",
+      "properties": {
+        "labId": {
+          "type": "string",
+          "description": "Target Lab Exercise identifier",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "canvasWidth": {
+          "type": "integer",
+          "description": "Logical topology diagram canvas width in pixels"
+        },
+        "canvasHeight": {
+          "type": "integer",
+          "description": "Logical topology diagram canvas height in pixels"
+        },
+        "devices": {
+          "type": "array",
+          "description": "Configured simulated routers, switches, PCs, and servers"
+        },
+        "links": {
+          "type": "array",
+          "description": "Configured Ethernet, Fiber, and Serial cable connections"
+        },
+        "shapes": {
+          "type": "array",
+          "description": "Zone boundary rectangles and circles"
+        },
+        "labels": {
+          "type": "array",
+          "description": "Diagram annotation badges and callout text"
+        },
+        "isPublished": {
+          "type": "boolean",
+          "description": "Whether the topology is published to learners"
+        },
+        "updatedByUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the admin or instructor who updated this topology",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedByName": {
+          "type": "string",
+          "description": "Display name of the admin or instructor who saved this topology",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "updatedByRole": {
+          "type": "string",
+          "enum": ["admin", "instructor"],
+          "description": "Role of the user who updated the topology"
+        },
+        "clientUpdatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Client ISO timestamp of the latest update",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "labId",
+        "canvasWidth",
+        "canvasHeight",
+        "devices",
+        "links",
+        "shapes",
+        "labels",
+        "isPublished",
+        "updatedByUid",
+        "updatedByName",
+        "updatedByRole",
+        "clientUpdatedAt",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -942,6 +1034,10 @@
     "/labDrafts/{userId}": {
       "schema": { "$ref": "#/entities/LabDraft" },
       "description": "Owner-isolated active working diagram draft periodically auto-saved by NetworkTopologySimulator."
+    },
+    "/labExerciseTopologies/{labId}": {
+      "schema": { "$ref": "#/entities/LabExerciseTopology" },
+      "description": "Published Lab Exercise network topologies authored and updated by admins and instructors."
     }
   }
 }

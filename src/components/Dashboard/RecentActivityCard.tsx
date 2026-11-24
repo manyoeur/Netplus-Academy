@@ -4,6 +4,7 @@ import {
   Binary,
   BookOpen,
   Calculator,
+  ClipboardList,
   Compass,
   Gamepad2,
   History,
@@ -35,6 +36,8 @@ function getLabIcon(tabId?: string) {
       return Gamepad2;
     case 'network-designer':
       return Workflow;
+    case 'lab-exercises':
+      return ClipboardList;
     case 'lab-sandbox':
     default:
       return Terminal;

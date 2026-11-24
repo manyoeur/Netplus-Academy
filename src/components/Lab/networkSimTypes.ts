@@ -241,3 +241,15 @@ export interface LabScenarioPreset {
   objectives: LabObjective[];
   buildInitialState: () => { devices: SimDevice[]; links: SimLink[] };
 }
+
+export interface SimulatorTopologyLaunchPayload {
+  nonce: number;
+  title: string;
+  presetId?: string;
+  canvasWidth: number;
+  canvasHeight: number;
+  devices: SimDevice[];
+  links: SimLink[];
+  shapes: SimTopologyShape[];
+  labels: SimDiagramLabel[];
+}

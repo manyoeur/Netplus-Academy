@@ -89,6 +89,16 @@ export const GLOBAL_KEYBOARD_SHORTCUTS: KeyboardShortcutDef[] = [
 
   // Hands-On Labs & Calculators
   {
+    id: 'tool-lab-exercises',
+    key: 'x',
+    displayKey: 'X',
+    label: 'Lab Exercises',
+    description: 'Open Networking Lab Exercises & Configuration Guides',
+    category: 'tools',
+    tabId: 'lab-exercises',
+    actionType: 'navigate'
+  },
+  {
     id: 'tool-network-designer',
     key: 't',
     displayKey: 'T',

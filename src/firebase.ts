@@ -62,6 +62,7 @@ import {
   normalizeCourseBookmark,
   sanitizeBookmarkIdPart
 } from './utils/courseBookmarks';
+import { LabExerciseTopology } from './data/labExerciseTopologies';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -1324,6 +1325,128 @@ export async function deleteCourseBookmarkFromFirestore(
   }
 }
 
+export async function fetchLabExerciseTopologiesFromFirestore(): Promise<
+  LabExerciseTopology[] | null
+> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return null;
+  const path = 'labExerciseTopologies';
+  try {
+    const q = query(collection(db, path), where('isPublished', '==', true));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => {
+      const data = d.data() as Record<string, any>;
+      const { width, height } = normalizeCanvasDimensions(data.canvasWidth, data.canvasHeight);
+      const updatedAtIso =
+        typeof data.clientUpdatedAt === 'string' && data.clientUpdatedAt
+          ? data.clientUpdatedAt
+          : data.updatedAt && typeof data.updatedAt.toDate === 'function'
+          ? data.updatedAt.toDate().toISOString()
+          : new Date().toISOString();
 
+      return {
+        labId: String(data.labId || d.id),
+        canvasWidth: width,
+        canvasHeight: height,
+        devices: Array.isArray(data.devices) ? data.devices : [],
+        links: Array.isArray(data.links) ? data.links : [],
+        shapes: Array.isArray(data.shapes) ? data.shapes : [],
+        labels: Array.isArray(data.labels) ? data.labels : [],
+        updatedAt: updatedAtIso,
+        updatedByName: typeof data.updatedByName === 'string' ? data.updatedByName : undefined,
+        updatedByRole:
+          data.updatedByRole === 'admin' || data.updatedByRole === 'instructor'
+            ? data.updatedByRole
+            : undefined,
+        isCustomized: true
+      };
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+    return null;
+  }
+}
 
+export async function saveLabExerciseTopologyToFirestore(
+  topology: LabExerciseTopology,
+  actor: { name: string; role: 'admin' | 'instructor' }
+): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const uid = auth.currentUser.uid;
+  const safeLabId = sanitizeLabId(topology.labId);
+  const path = `labExerciseTopologies/${safeLabId}`;
+  const ref = doc(db, 'labExerciseTopologies', safeLabId);
+  const { width, height } = normalizeCanvasDimensions(
+    topology.canvasWidth,
+    topology.canvasHeight
+  );
 
+  const safeDevices = sanitizeDevicesForStorage(topology.devices);
+  const safeLinks = sanitizeLinksForStorage(topology.links);
+  const safeShapes = sanitizeShapesForStorage(topology.shapes, width, height);
+  const safeLabels = sanitizeLabelsForStorage(topology.labels, width, height);
+  const safeName = (actor.name || 'Instructor').trim().slice(0, 120) || 'Instructor';
+  const safeRole = actor.role === 'admin' ? 'admin' : 'instructor';
+  const clientUpdatedAt = (topology.updatedAt || new Date().toISOString()).slice(0, 64);
+
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, {
+        canvasWidth: width,
+        canvasHeight: height,
+        devices: safeDevices,
+        links: safeLinks,
+        shapes: safeShapes,
+        labels: safeLabels,
+        isPublished: true,
+        updatedByUid: uid,
+        updatedByName: safeName,
+        updatedByRole: safeRole,
+        clientUpdatedAt,
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      await setDoc(ref, {
+        labId: safeLabId,
+        canvasWidth: width,
+        canvasHeight: height,
+        devices: safeDevices,
+        links: safeLinks,
+        shapes: safeShapes,
+        labels: safeLabels,
+        isPublished: true,
+        updatedByUid: uid,
+        updatedByName: safeName,
+        updatedByRole: safeRole,
+        clientUpdatedAt,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+    return false;
+  }
+}
+
+export async function deleteLabExerciseTopologyFromFirestore(
+  labId: string
+): Promise<boolean> {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) return false;
+  const safeLabId = sanitizeLabId(labId);
+  const path = `labExerciseTopologies/${safeLabId}`;
+  try {
+    await deleteDoc(doc(db, 'labExerciseTopologies', safeLabId));
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('permission')) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    }
+    return false;
+  }
+}

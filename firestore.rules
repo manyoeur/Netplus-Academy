@@ -38,6 +38,14 @@ service cloud.firestore {
       );
     }
 
+    function isInstructorOrAdmin() {
+      return isAdmin() || (
+        isVerified() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'instructor']
+      );
+    }
+
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'name', 'email', 'role', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly(['uid', 'name', 'email', 'role', 'avatar', 'inviteCode', 'createdAt', 'updatedAt'])
@@ -651,6 +659,67 @@ service cloud.firestore {
       allow delete: if isValidId(userId)
         && isVerified()
         && isOwner(userId);
+    }
+
+    function isValidLabExerciseTopology(data) {
+      return data.keys().hasAll([
+          'labId', 'canvasWidth', 'canvasHeight', 'devices', 'links',
+          'shapes', 'labels', 'isPublished', 'updatedByUid', 'updatedByName',
+          'updatedByRole', 'clientUpdatedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'labId', 'canvasWidth', 'canvasHeight', 'devices', 'links',
+          'shapes', 'labels', 'isPublished', 'updatedByUid', 'updatedByName',
+          'updatedByRole', 'clientUpdatedAt', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.labId)
+        && data.canvasWidth is int && data.canvasWidth >= 600 && data.canvasWidth <= 4000
+        && data.canvasHeight is int && data.canvasHeight >= 400 && data.canvasHeight <= 2500
+        && data.devices is list && data.devices.size() <= 80
+        && (data.devices.size() == 0 || data.devices[0] is map)
+        && data.links is list && data.links.size() <= 160
+        && (data.links.size() == 0 || data.links[0] is map)
+        && data.shapes is list && data.shapes.size() <= 60
+        && (data.shapes.size() == 0 || data.shapes[0] is map)
+        && data.labels is list && data.labels.size() <= 80
+        && (data.labels.size() == 0 || data.labels[0] is map)
+        && data.isPublished is bool
+        && data.isPublished == true
+        && isValidId(data.updatedByUid)
+        && data.updatedByUid == request.auth.uid
+        && data.updatedByName is string && data.updatedByName.size() >= 1 && data.updatedByName.size() <= 120
+        && data.updatedByRole is string && data.updatedByRole in ['admin', 'instructor']
+        && data.clientUpdatedAt is string && data.clientUpdatedAt.size() >= 10 && data.clientUpdatedAt.size() <= 64
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /labExerciseTopologies/{labId} {
+      allow get: if isValidId(labId) && isVerified();
+
+      allow list: if isVerified() && resource.data.isPublished == true;
+
+      allow create: if isValidId(labId)
+        && isValidLabExerciseTopology(incoming())
+        && isInstructorOrAdmin()
+        && incoming().labId == labId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(labId)
+        && isValidLabExerciseTopology(incoming())
+        && isInstructorOrAdmin()
+        && incoming().labId == existing().labId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'canvasWidth', 'canvasHeight', 'devices', 'links',
+          'shapes', 'labels', 'isPublished', 'updatedByUid',
+          'updatedByName', 'updatedByRole', 'clientUpdatedAt', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(labId)
+        && isInstructorOrAdmin();
     }
   }
 }
