@@ -7,6 +7,7 @@ import { CoursePlayer } from './components/Courses/CoursePlayer';
 import { MyClassManager } from './components/Courses/MyClassManager';
 import { StudentDashboard } from './components/Dashboard/StudentDashboard';
 import { NetworkTopologySimulator } from './components/Lab/NetworkTopologySimulator';
+import { NetworkDiagramDesigner } from './components/Lab/NetworkDiagramDesigner';
 import { SubnettingCalculator } from './components/Lab/SubnettingCalculator';
 import { NumberBaseConverter } from './components/Lab/NumberBaseConverter';
 import { BinaryGame } from './components/Lab/BinaryGame';
@@ -201,7 +202,7 @@ const AcademyApp: React.FC = () => {
     const studySource =
       currentTab === 'player'
         ? 'course'
-        : currentTab === 'lab-sandbox'
+        : currentTab === 'lab-sandbox' || currentTab === 'network-designer'
         ? 'lab'
         : currentTab === 'subnet-calc' ||
           currentTab === 'base-converter' ||
@@ -359,6 +360,11 @@ const AcademyApp: React.FC = () => {
         {/* Standalone Network Topology & Cisco Lab Simulator */}
         {currentTab === 'lab-sandbox' && (
           <NetworkTopologySimulator key={currentUser.id} />
+        )}
+
+        {/* Standalone Visio-style Network Diagram & Topology Designer */}
+        {currentTab === 'network-designer' && (
+          <NetworkDiagramDesigner />
         )}
 
         {/* Subnetting & VLSM Calculator */}

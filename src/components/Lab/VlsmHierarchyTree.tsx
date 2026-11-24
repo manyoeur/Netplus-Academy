@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDownUp,
@@ -7,9 +7,13 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  Download,
+  FileSpreadsheet,
   GitBranch,
   GitMerge,
   Layers,
+  Loader2,
+  Maximize2,
   Plus,
   RefreshCw,
   Scissors,
@@ -17,6 +21,8 @@ import {
   ZoomIn,
   ZoomOut
 } from 'lucide-react';
+import { exportVlsmTreeToCsv } from '../../utils/exportVlsmCsv';
+import { exportVlsmTreeToPng } from '../../utils/exportVlsmImage';
 import {
   assignVlsmLeafNode,
   buildVlsmTreeFromDemands,
@@ -107,6 +113,9 @@ const VLSM_PRESETS: TreePreset[] = [
 
 const CARD_W = 196;
 const CARD_H = 104;
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 2.0;
+const ZOOM_STEP = 0.1;
 
 function computeBinaryTreeLayout(
   root: VlsmTreeNode | null,
@@ -310,6 +319,7 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
 
   const [orientation, setOrientation] = useState<TreeOrientation>('vertical');
   const [zoom, setZoom] = useState<number>(1);
+  const [isPanning, setIsPanning] = useState<boolean>(false);
   const [isCustomTree, setIsCustomTree] = useState<boolean>(false);
   const [customResult, setCustomResult] = useState<{
     root: VlsmTreeNode | null;
@@ -320,6 +330,21 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
   const [assigningNodeId, setAssigningNodeId] = useState<string | null>(null);
   const [assignLabelInput, setAssignLabelInput] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [exportStatus, setExportStatus] = useState<'idle' | 'done' | 'error'>('idle');
+  const [csvExportDone, setCsvExportDone] = useState<boolean>(false);
+
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const zoomRef = useRef<number>(zoom);
+  zoomRef.current = zoom;
+  const suppressNodeClickRef = useRef<boolean>(false);
+  const panDragRef = useRef<{
+    startX: number;
+    startY: number;
+    scrollLeft: number;
+    scrollTop: number;
+    moved: boolean;
+  } | null>(null);
 
   const autoResult = useMemo(
     () => buildVlsmTreeFromDemands(baseCidrInput, departments),
@@ -338,6 +363,126 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
     () => computeBinaryTreeLayout(activeTree.root, orientation),
     [activeTree.root, orientation]
   );
+
+  const applyZoom = useCallback((nextZoomRaw: number, anchorX?: number, anchorY?: number) => {
+    const clamped = Math.max(
+      MIN_ZOOM,
+      Math.min(MAX_ZOOM, Math.round(nextZoomRaw * 100) / 100)
+    );
+    const el = viewportRef.current;
+    const prevZoom = zoomRef.current;
+
+    if (!el || prevZoom <= 0 || clamped === prevZoom) {
+      zoomRef.current = clamped;
+      setZoom(clamped);
+      return;
+    }
+
+    const ax = anchorX ?? el.clientWidth / 2;
+    const ay = anchorY ?? el.clientHeight / 2;
+    const contentX = (el.scrollLeft + ax) / prevZoom;
+    const contentY = (el.scrollTop + ay) / prevZoom;
+
+    zoomRef.current = clamped;
+    setZoom(clamped);
+
+    window.requestAnimationFrame(() => {
+      const targetEl = viewportRef.current;
+      if (!targetEl) return;
+      targetEl.scrollLeft = Math.max(0, contentX * clamped - ax);
+      targetEl.scrollTop = Math.max(0, contentY * clamped - ay);
+    });
+  }, []);
+
+  const handleFitToView = useCallback(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const availableW = Math.max(200, el.clientWidth - 24);
+    const availableH = Math.max(200, el.clientHeight - 24);
+    const fitScale = Math.min(availableW / layout.width, availableH / layout.height);
+    const clampedFit = Math.max(
+      MIN_ZOOM,
+      Math.min(1, Math.floor(fitScale * 100) / 100)
+    );
+    zoomRef.current = clampedFit;
+    setZoom(clampedFit);
+    window.requestAnimationFrame(() => {
+      const targetEl = viewportRef.current;
+      if (!targetEl) return;
+      targetEl.scrollLeft = 0;
+      targetEl.scrollTop = 0;
+    });
+  }, [layout.width, layout.height]);
+
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const anchorX = e.clientX - rect.left;
+      const anchorY = e.clientY - rect.top;
+      const step = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
+      applyZoom(zoomRef.current + step, anchorX, anchorY);
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [applyZoom, activeTree.root]);
+
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('button, input, a, select, textarea')) return;
+
+    const el = viewportRef.current;
+    if (!el) return;
+
+    panDragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      scrollLeft: el.scrollLeft,
+      scrollTop: el.scrollTop,
+      moved: false
+    };
+
+    const handleMouseMove = (moveEvt: MouseEvent) => {
+      const drag = panDragRef.current;
+      const scroller = viewportRef.current;
+      if (!drag || !scroller) return;
+
+      const dx = moveEvt.clientX - drag.startX;
+      const dy = moveEvt.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) > 4) {
+        drag.moved = true;
+        setIsPanning(true);
+      }
+
+      if (drag.moved) {
+        scroller.scrollLeft = drag.scrollLeft - dx;
+        scroller.scrollTop = drag.scrollTop - dy;
+      }
+    };
+
+    const handleMouseUp = () => {
+      const drag = panDragRef.current;
+      panDragRef.current = null;
+      setIsPanning(false);
+      if (drag?.moved) {
+        suppressNodeClickRef.current = true;
+        window.setTimeout(() => {
+          suppressNodeClickRef.current = false;
+        }, 0);
+      }
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
 
   useEffect(() => {
     if (!activeTree.root) {
@@ -475,14 +620,55 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
     window.setTimeout(() => setCopiedId(null), 1800);
   };
 
+  const handleExportImage = async () => {
+    if (!activeTree.root || !summary || isExporting) return;
+    setIsExporting(true);
+    setExportStatus('idle');
+    try {
+      const isDark = document.documentElement.classList.contains('dark');
+      await exportVlsmTreeToPng({
+        nodes: layout.nodes.map(n => ({ node: n.node, x: n.x, y: n.y })),
+        edges: layout.edges.map(e => ({
+          id: e.id,
+          bit: e.bit,
+          pathD: e.pathD,
+          labelX: e.labelX,
+          labelY: e.labelY,
+          isAllocatedBranch: e.isAllocatedBranch
+        })),
+        treeWidth: layout.width,
+        treeHeight: layout.height,
+        cardWidth: CARD_W,
+        cardHeight: CARD_H,
+        summary,
+        modeLabel: isCustomTree ? 'Interactive Manual Tree' : 'Largest-First Auto VLSM',
+        isDarkTheme: isDark
+      });
+      setExportStatus('done');
+      window.setTimeout(() => setExportStatus('idle'), 2200);
+    } catch {
+      setExportStatus('error');
+      window.setTimeout(() => setExportStatus('idle'), 2600);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportCsv = () => {
+    if (!activeTree.root || !summary) return;
+    exportVlsmTreeToCsv(activeTree.root, summary);
+    setCsvExportDone(true);
+    window.setTimeout(() => setCsvExportDone(false), 2200);
+  };
+
   return (
     <section
       aria-label="VLSM Hierarchy Tree Visualizer"
-      className="p-5 sm:p-6 rounded-2xl bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 shadow-sm space-y-5"
+      className="p-4 sm:p-6 rounded-2xl bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-800 shadow-sm space-y-5 min-w-0 overflow-hidden"
     >
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-start sm:items-center gap-3 min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-3 min-w-0">
+        <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
           <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200/70 dark:border-blue-800/60 flex items-center justify-center text-blue-600 dark:text-cyan-400 shrink-0">
             <GitBranch className="w-4 h-4" />
           </div>
@@ -505,7 +691,7 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
         </div>
 
         {/* Presets & Mode Reset */}
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
           {VLSM_PRESETS.map(preset => (
             <button
               key={preset.id}
@@ -524,11 +710,11 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
       </div>
 
       {/* Supernet Input & Department Planner */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 min-w-0">
         {/* Left: Supernet Config + Department Demands */}
-        <div className="xl:col-span-4 space-y-4 p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800">
+        <div className="xl:col-span-4 min-w-0 space-y-4 p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800">
           <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <label
                 htmlFor="vlsm-base-cidr"
                 className="text-xs font-semibold text-slate-800 dark:text-slate-200"
@@ -622,9 +808,9 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
                       value={dept.hostsRequired}
                       onChange={e => handleUpdateDepartmentHosts(dept.id, e.target.value)}
                       aria-label={`Required hosts for ${dept.name}`}
-                      className="w-20 px-2 py-1 rounded-md font-mono tabular-nums text-right bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-16 sm:w-20 px-2 py-1 rounded-md font-mono tabular-nums text-right bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
-                    <span className="text-[11px] text-slate-400 shrink-0">hosts</span>
+                    <span className="text-[10px] sm:text-[11px] text-slate-400 shrink-0">hosts</span>
                     <button
                       type="button"
                       onClick={() => handleRemoveDepartment(dept.id)}
@@ -638,32 +824,34 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
               })}
             </div>
 
-            <form onSubmit={handleAddDepartment} className="flex items-center gap-2 pt-1">
+            <form onSubmit={handleAddDepartment} className="flex flex-wrap sm:flex-nowrap items-center gap-2 pt-1">
               <input
                 type="text"
                 value={newDeptName}
                 onChange={e => setNewDeptName(e.target.value)}
                 placeholder="New segment (e.g. VoIP)"
                 aria-label="New segment name"
-                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full sm:w-auto sm:flex-1 min-w-0 px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <input
-                type="number"
-                min={1}
-                max={16777214}
-                value={newDeptHosts}
-                onChange={e => setNewDeptHosts(e.target.value)}
-                aria-label="Hosts needed for new segment"
-                className="w-16 px-2 py-1.5 rounded-lg text-xs font-mono tabular-nums text-right bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <button
-                type="submit"
-                disabled={!newDeptName.trim()}
-                className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold inline-flex items-center gap-1 whitespace-nowrap shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add</span>
-              </button>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <input
+                  type="number"
+                  min={1}
+                  max={16777214}
+                  value={newDeptHosts}
+                  onChange={e => setNewDeptHosts(e.target.value)}
+                  aria-label="Hosts needed for new segment"
+                  className="flex-1 sm:flex-none sm:w-16 px-2 py-1.5 rounded-lg text-xs font-mono tabular-nums text-right bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="submit"
+                  disabled={!newDeptName.trim()}
+                  className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold inline-flex items-center gap-1 whitespace-nowrap shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add</span>
+                </button>
+              </div>
             </form>
           </div>
         </div>
@@ -671,9 +859,9 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
         {/* Right: Utilization Summary + Interactive Binary Tree Canvas */}
         <div className="xl:col-span-8 space-y-4 min-w-0">
           {/* Address Utilization Strip & Tree Controls */}
-          <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 space-y-3">
+          <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 space-y-3 min-w-0">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono tabular-nums">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono tabular-nums min-w-0">
                 <span className="text-slate-600 dark:text-slate-300">
                   Mode:{' '}
                   <strong className="text-slate-900 dark:text-white font-sans">
@@ -694,7 +882,7 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2">
                 {/* Orientation Toggle */}
                 <div
                   role="group"
@@ -733,29 +921,98 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
                 <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-mono tabular-nums">
                   <button
                     type="button"
-                    onClick={() => setZoom(z => Math.max(0.6, Math.round((z - 0.1) * 10) / 10))}
+                    disabled={zoom <= MIN_ZOOM}
+                    onClick={() => applyZoom(zoom - ZOOM_STEP)}
                     aria-label="Zoom out VLSM tree"
-                    className="p-1 text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                    title="Zoom out (Ctrl + Scroll down)"
+                    className="p-1 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white disabled:opacity-35 disabled:cursor-not-allowed"
                   >
                     <ZoomOut className="w-3.5 h-3.5" />
                   </button>
                   <button
                     type="button"
-                    onClick={() => setZoom(1)}
-                    className="px-1 text-slate-700 dark:text-slate-200 font-semibold"
+                    onClick={() => applyZoom(1)}
+                    className="px-1.5 text-slate-700 dark:text-slate-200 font-semibold hover:text-blue-600 dark:hover:text-cyan-400"
                     title="Reset zoom to 100%"
                   >
                     {Math.round(zoom * 100)}%
                   </button>
                   <button
                     type="button"
-                    onClick={() => setZoom(z => Math.min(1.25, Math.round((z + 0.1) * 10) / 10))}
+                    disabled={zoom >= MAX_ZOOM}
+                    onClick={() => applyZoom(zoom + ZOOM_STEP)}
                     aria-label="Zoom in VLSM tree"
-                    className="p-1 text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                    title="Zoom in (Ctrl + Scroll up)"
+                    className="p-1 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white disabled:opacity-35 disabled:cursor-not-allowed"
                   >
                     <ZoomIn className="w-3.5 h-3.5" />
                   </button>
+                  <span className="h-3.5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={handleFitToView}
+                    aria-label="Fit VLSM tree to viewport"
+                    title="Fit entire tree to view"
+                    className="px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-cyan-400 font-sans font-semibold inline-flex items-center gap-1 whitespace-nowrap shrink-0"
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                    <span>Fit</span>
+                  </button>
                 </div>
+
+                {/* Export to PNG Image */}
+                <button
+                  type="button"
+                  disabled={!activeTree.root || !summary || isExporting}
+                  onClick={handleExportImage}
+                  aria-label="Export VLSM hierarchy tree as PNG image"
+                  title="Download full VLSM hierarchy tree as a high-resolution PNG"
+                  className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-cyan-500 disabled:opacity-45 disabled:cursor-not-allowed text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-cyan-400 transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                >
+                  {isExporting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Exporting...</span>
+                    </>
+                  ) : exportStatus === 'done' ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-500" />
+                      <span className="text-emerald-600 dark:text-emerald-400">Exported PNG</span>
+                    </>
+                  ) : exportStatus === 'error' ? (
+                    <>
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Retry Export</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Export Image</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Export to CSV */}
+                <button
+                  type="button"
+                  disabled={!activeTree.root || !summary}
+                  onClick={handleExportCsv}
+                  aria-label="Export VLSM hierarchy as CSV file"
+                  title="Download VLSM hierarchy table as CSV (Subnet Address, CIDR, Broadcast, Host Range)"
+                  className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-cyan-500 disabled:opacity-45 disabled:cursor-not-allowed text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-cyan-400 transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                >
+                  {csvExportDone ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-500" />
+                      <span className="text-emerald-600 dark:text-emerald-400">Exported CSV</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                      <span>Export CSV</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 
@@ -812,30 +1069,39 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
 
           {/* Interactive Tree Viewport */}
           {activeTree.root ? (
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-[#070b14] overflow-auto max-h-[540px]">
+            <div className="relative w-full max-w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-[#070b14] overflow-hidden">
               <div
-                style={{
-                  width: Math.ceil(layout.width * zoom),
-                  height: Math.ceil(layout.height * zoom),
-                  position: 'relative'
-                }}
+                ref={viewportRef}
+                onMouseDown={handleCanvasMouseDown}
+                className={`w-full overflow-auto max-h-[540px] min-h-[340px] select-none ${
+                  isPanning ? 'cursor-grabbing' : 'cursor-grab'
+                }`}
               >
-                <div
-                  style={{
-                    width: layout.width,
-                    height: layout.height,
-                    transform: `scale(${zoom})`,
-                    transformOrigin: 'top left',
-                    position: 'relative'
-                  }}
-                >
-                  {/* SVG Edges & Binary Bit Labels */}
-                  <svg
-                    width={layout.width}
-                    height={layout.height}
-                    className="absolute inset-0 pointer-events-none"
-                    aria-hidden="true"
+                <div className="min-w-full w-max p-3 pb-14">
+                  <div
+                    className="mx-auto"
+                    style={{
+                      width: Math.ceil(layout.width * zoom),
+                      height: Math.ceil(layout.height * zoom),
+                      position: 'relative'
+                    }}
                   >
+                    <div
+                      style={{
+                        width: layout.width,
+                        height: layout.height,
+                        transform: `scale(${zoom})`,
+                        transformOrigin: 'top left',
+                        position: 'relative'
+                      }}
+                    >
+                      {/* SVG Edges & Binary Bit Labels */}
+                      <svg
+                        width={layout.width}
+                        height={layout.height}
+                        className="absolute inset-0 pointer-events-none"
+                        aria-hidden="true"
+                      >
                     {layout.edges.map(edge => {
                       const strokeClass = edge.isAllocatedBranch
                         ? 'stroke-blue-500/75 dark:stroke-cyan-400/70'
@@ -896,7 +1162,10 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
                         key={node.id}
                         role="button"
                         tabIndex={0}
-                        onClick={() => setSelectedNodeId(node.id)}
+                        onClick={() => {
+                          if (suppressNodeClickRef.current) return;
+                          setSelectedNodeId(node.id);
+                        }}
                         onKeyDown={e => {
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
@@ -1044,6 +1313,57 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
                       </div>
                     );
                   })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Pinned Canvas Zoom & Pan HUD */}
+              <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center justify-between gap-2 z-10">
+                <span className="hidden sm:inline-flex items-center px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm border border-slate-200/80 dark:border-slate-700/80 text-[11px] text-slate-500 dark:text-slate-400 shadow-xs">
+                  Drag canvas to pan · Ctrl + Scroll to zoom
+                </span>
+
+                <div className="pointer-events-auto ml-auto inline-flex items-center gap-1 px-1.5 py-1 rounded-xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border border-slate-200 dark:border-slate-700 shadow-md text-[11px] font-mono tabular-nums">
+                  <button
+                    type="button"
+                    disabled={zoom <= MIN_ZOOM}
+                    onClick={() => applyZoom(zoom - ZOOM_STEP)}
+                    aria-label="Canvas zoom out"
+                    title="Zoom out"
+                    className="p-1 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white disabled:opacity-35 disabled:cursor-not-allowed"
+                  >
+                    <ZoomOut className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyZoom(1)}
+                    title="Reset zoom to 100%"
+                    className="px-1.5 py-0.5 rounded-lg text-slate-700 dark:text-slate-200 font-semibold hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    {Math.round(zoom * 100)}%
+                  </button>
+                  <button
+                    type="button"
+                    disabled={zoom >= MAX_ZOOM}
+                    onClick={() => applyZoom(zoom + ZOOM_STEP)}
+                    aria-label="Canvas zoom in"
+                    title="Zoom in"
+                    className="p-1 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white disabled:opacity-35 disabled:cursor-not-allowed"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="h-3.5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={handleFitToView}
+                    aria-label="Fit tree to canvas"
+                    title="Fit entire tree to view"
+                    className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-950/60 text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-cyan-400 font-sans font-semibold inline-flex items-center gap-1 whitespace-nowrap shrink-0"
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                    <span>Fit</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1059,15 +1379,15 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
 
       {/* Selected Node Inspector + Allocation Table */}
       {selectedNode && summary && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-2 border-t border-slate-100 dark:border-slate-800">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-2 border-t border-slate-100 dark:border-slate-800 min-w-0">
           {/* Selected Subnet Block Details */}
-          <div className="lg:col-span-5 p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
+          <div className="lg:col-span-5 min-w-0 p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+              <div className="min-w-0">
                 <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 block">
                   Selected Tree Node
                 </span>
-                <h3 className="text-sm font-bold font-mono tabular-nums text-slate-900 dark:text-white">
+                <h3 className="text-sm font-bold font-mono tabular-nums text-slate-900 dark:text-white break-words">
                   {selectedNode.cidrLabel}
                   {selectedNode.assignedName ? ` · ${selectedNode.assignedName}` : ''}
                 </h3>
@@ -1087,43 +1407,43 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs border-t border-slate-200/70 dark:border-slate-800 pt-2.5">
-              <div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2.5 text-xs border-t border-slate-200/70 dark:border-slate-800 pt-2.5 min-w-0">
+              <div className="min-w-0">
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
                   Subnet Mask
                 </span>
-                <span className="font-mono font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                <span className="font-mono font-semibold tabular-nums text-slate-900 dark:text-slate-100 break-words">
                   {selectedNode.stats.maskStr}
                 </span>
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
                   Wildcard Mask
                 </span>
-                <span className="font-mono font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+                <span className="font-mono font-semibold tabular-nums text-amber-600 dark:text-amber-400 break-words">
                   {selectedNode.stats.wildcardStr}
                 </span>
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
                   Usable Range
                 </span>
-                <span className="font-mono font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                <span className="font-mono font-semibold tabular-nums text-slate-900 dark:text-slate-100 break-words">
                   {selectedNode.stats.firstHost} – {selectedNode.stats.lastHost}
                 </span>
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
                   Broadcast Address
                 </span>
-                <span className="font-mono font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                <span className="font-mono font-semibold tabular-nums text-slate-900 dark:text-slate-100 break-words">
                   {selectedNode.stats.broadcastStr}
                 </span>
               </div>
             </div>
 
             <div className="pt-2 border-t border-slate-200/70 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-              <span>
+              <span className="break-words">
                 Binary Split Path:{' '}
                 <strong className="text-slate-800 dark:text-slate-200">
                   {selectedNode.binaryPath ? `Root → ${selectedNode.binaryPath.split('').join(' → ')}` : 'Root Supernet'}
@@ -1134,8 +1454,8 @@ export const VlsmHierarchyTree: React.FC<VlsmHierarchyTreeProps> = ({
           </div>
 
           {/* Allocated Subnets Allocation Schedule Table */}
-          <div className="lg:col-span-7 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-            <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-900/70 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+          <div className="lg:col-span-7 min-w-0 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-900/70 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
                 Allocated VLSM Subnet Table ({summary.allocatedLeaves.length})
               </span>

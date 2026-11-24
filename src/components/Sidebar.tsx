@@ -27,6 +27,7 @@ import {
   Gamepad2,
   SquareStack,
   Keyboard,
+  Workflow,
   LucideIcon
 } from 'lucide-react';
 import { useAcademy } from '../context/AcademyContext';
@@ -331,6 +332,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
           tag: 'SIM'
         },
         {
+          id: 'network-designer',
+          label: 'Network Designer',
+          icon: Workflow,
+          accentText: 'text-blue-600 dark:text-blue-400',
+          accentBg: 'bg-blue-50 dark:bg-blue-950/60',
+          accentBar: 'bg-blue-500',
+          tag: 'DRAW'
+        },
+        {
           id: 'subnet-calc',
           label: 'Subnet & VLSM',
           icon: Calculator,
@@ -455,6 +465,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'dashboard', label: 'My Enrolled Courses & Progress', category: 'Learning', icon: UserCheck },
     { id: 'flashcard', label: 'Flashcard · AI Terminology, Protocols & Ports Deck', category: 'Curriculum', icon: SquareStack },
     { id: 'lab-sandbox', label: 'Lab Simulation · Network Topology & Cisco Lab', category: 'Hands-on Labs', icon: Network },
+    { id: 'network-designer', label: 'Network Designer · Topology & Cable Diagram Studio', category: 'Hands-on Labs', icon: Workflow },
     { id: 'subnet-calc', label: 'Subnetting & VLSM Architecture Calculator', category: 'Hands-on Labs', icon: Calculator },
     { id: 'base-converter', label: 'Binary, Decimal & Hexadecimal Converter', category: 'Hands-on Labs', icon: Binary },
     { id: 'binary-game', label: 'Binary Conversion Practice Game', category: 'Hands-on Labs', icon: Gamepad2 },

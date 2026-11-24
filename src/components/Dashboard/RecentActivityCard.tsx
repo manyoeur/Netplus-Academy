@@ -7,7 +7,8 @@ import {
   Compass,
   Gamepad2,
   History,
-  Terminal
+  Terminal,
+  Workflow
 } from 'lucide-react';
 import {
   HydratedRecentActivityItem,
@@ -32,6 +33,8 @@ function getLabIcon(tabId?: string) {
       return Binary;
     case 'binary-game':
       return Gamepad2;
+    case 'network-designer':
+      return Workflow;
     case 'lab-sandbox':
     default:
       return Terminal;

@@ -89,6 +89,16 @@ export const GLOBAL_KEYBOARD_SHORTCUTS: KeyboardShortcutDef[] = [
 
   // Hands-On Labs & Calculators
   {
+    id: 'tool-network-designer',
+    key: 't',
+    displayKey: 'T',
+    label: 'Network Designer',
+    description: 'Open Visio-style Network Diagram & Topology Studio',
+    category: 'tools',
+    tabId: 'network-designer',
+    actionType: 'navigate'
+  },
+  {
     id: 'tool-subnet',
     key: 's',
     displayKey: 'S',
