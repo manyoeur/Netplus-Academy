@@ -31,9 +31,11 @@ export type ConcretePortSide = 'top' | 'right' | 'bottom' | 'left';
 
 export type CableType = 'ethernet' | 'fiber' | 'serial' | 'wireless' | 'console';
 export type CableRoutingStyle = 'orthogonal' | 'curved' | 'straight';
-export type DiagramToolMode = 'select' | 'connect' | 'zone' | 'label';
+export type DiagramToolMode = 'select' | 'pan' | 'connect' | 'zone' | 'label';
 
 export type ZoneColorTheme = 'blue' | 'emerald' | 'amber' | 'violet' | 'slate';
+export type RackColorTheme = 'slate' | 'blue' | 'cyan' | 'emerald' | 'amber' | 'violet';
+export type RackContainerStyle = 'rack' | 'group';
 export type LabelColorTheme = 'slate' | 'blue' | 'cyan' | 'emerald' | 'amber' | 'violet' | 'red';
 export type LabelSizePreset = 'sm' | 'md' | 'lg' | 'title';
 
@@ -84,12 +86,26 @@ export interface NetworkDiagramLabel {
   bold: boolean;
 }
 
+export interface NetworkDiagramRack {
+  id: string;
+  title: string;
+  subtitle: string;
+  style: RackContainerStyle;
+  color: RackColorTheme;
+  nodeIds: string[];
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface NetworkDiagramDocument {
   name: string;
   nodes: NetworkDiagramNode[];
   cables: NetworkDiagramCable[];
   zones: NetworkDiagramZone[];
   labels: NetworkDiagramLabel[];
+  racks?: NetworkDiagramRack[];
 }
 
 export const LABEL_SIZE_CONFIG: Record<
@@ -1456,6 +1472,36 @@ function escapeSvgXml(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
+export function computeRackBoundsForNodes(
+  memberNodes: NetworkDiagramNode[],
+  style: RackContainerStyle = 'rack'
+): { x: number; y: number; width: number; height: number } {
+  if (memberNodes.length === 0) {
+    return { x: 180, y: 140, width: 240, height: 220 };
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  memberNodes.forEach(n => {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + NODE_WIDTH);
+    maxY = Math.max(maxY, n.y + NODE_HEIGHT);
+  });
+
+  const padLeft = style === 'rack' ? 30 : 24;
+  const padRight = style === 'rack' ? 30 : 24;
+  const padTop = 48;
+  const padBottom = 22;
+
+  const x = Math.max(8, minX - padLeft);
+  const y = Math.max(8, minY - padTop);
+  const width = Math.max(180, maxX - x + padRight);
+  const height = Math.max(140, maxY - y + padBottom);
+  return { x, y, width, height };
+}
+
 function computeDiagramExportBounds(doc: NetworkDiagramDocument) {
   let minX = Infinity;
   let minY = Infinity;
@@ -1467,6 +1513,13 @@ function computeDiagramExportBounds(doc: NetworkDiagramDocument) {
     minY = Math.min(minY, z.y);
     maxX = Math.max(maxX, z.x + z.width);
     maxY = Math.max(maxY, z.y + z.height);
+  });
+
+  (doc.racks || []).forEach(r => {
+    minX = Math.min(minX, r.x);
+    minY = Math.min(minY, r.y);
+    maxX = Math.max(maxX, r.x + r.width);
+    maxY = Math.max(maxY, r.y + r.height);
   });
 
   doc.nodes.forEach(n => {
@@ -1626,11 +1679,82 @@ export function buildNetworkDiagramSvgString(
     })
     .join('\n');
 
+  const rackPalettes: Record<
+    RackColorTheme,
+    { fill: string; headerFill: string; stroke: string; rail: string; title: string }
+  > = {
+    slate: {
+      fill: isDarkTheme ? 'rgba(15,23,42,0.72)' : 'rgba(241,245,249,0.88)',
+      headerFill: isDarkTheme ? '#1e293b' : '#334155',
+      stroke: isDarkTheme ? '#475569' : '#94a3b8',
+      rail: isDarkTheme ? 'rgba(100,116,139,0.35)' : 'rgba(148,163,184,0.38)',
+      title: '#f8fafc'
+    },
+    blue: {
+      fill: isDarkTheme ? 'rgba(23,37,84,0.48)' : 'rgba(239,246,255,0.88)',
+      headerFill: isDarkTheme ? '#1e3a8a' : '#1d4ed8',
+      stroke: isDarkTheme ? '#3b82f6' : '#60a5fa',
+      rail: isDarkTheme ? 'rgba(59,130,246,0.28)' : 'rgba(96,165,250,0.28)',
+      title: '#ffffff'
+    },
+    cyan: {
+      fill: isDarkTheme ? 'rgba(8,51,68,0.48)' : 'rgba(236,254,255,0.88)',
+      headerFill: isDarkTheme ? '#155e75' : '#0284c7',
+      stroke: isDarkTheme ? '#22d3ee' : '#38bdf8',
+      rail: isDarkTheme ? 'rgba(34,211,238,0.28)' : 'rgba(56,189,248,0.28)',
+      title: '#ffffff'
+    },
+    emerald: {
+      fill: isDarkTheme ? 'rgba(6,78,59,0.45)' : 'rgba(236,253,245,0.88)',
+      headerFill: isDarkTheme ? '#065f46' : '#059669',
+      stroke: isDarkTheme ? '#34d399' : '#10b981',
+      rail: isDarkTheme ? 'rgba(52,211,153,0.28)' : 'rgba(16,185,129,0.26)',
+      title: '#ffffff'
+    },
+    amber: {
+      fill: isDarkTheme ? 'rgba(69,26,3,0.45)' : 'rgba(255,251,235,0.88)',
+      headerFill: isDarkTheme ? '#92400e' : '#d97706',
+      stroke: isDarkTheme ? '#fbbf24' : '#f59e0b',
+      rail: isDarkTheme ? 'rgba(251,191,36,0.26)' : 'rgba(245,158,11,0.26)',
+      title: '#ffffff'
+    },
+    violet: {
+      fill: isDarkTheme ? 'rgba(46,16,101,0.45)' : 'rgba(245,243,255,0.88)',
+      headerFill: isDarkTheme ? '#5b21b6' : '#7c3aed',
+      stroke: isDarkTheme ? '#a78bfa' : '#8b5cf6',
+      rail: isDarkTheme ? 'rgba(167,139,250,0.28)' : 'rgba(139,92,246,0.26)',
+      title: '#ffffff'
+    }
+  };
+
+  const racksSvg = (doc.racks || [])
+    .map(rack => {
+      const rp = rackPalettes[rack.color] || rackPalettes.slate;
+      const isRackStyle = rack.style !== 'group';
+      const headerH2 = 30;
+      const railsSvg = isRackStyle
+        ? `<rect x="${rack.x + 2}" y="${rack.y + headerH2}" width="12" height="${Math.max(20, rack.height - headerH2 - 2)}" fill="${rp.rail}"/>
+           <rect x="${rack.x + rack.width - 14}" y="${rack.y + headerH2}" width="12" height="${Math.max(20, rack.height - headerH2 - 2)}" fill="${rp.rail}"/>`
+        : '';
+      const dashAttr = isRackStyle ? '' : ' stroke-dasharray="5 3"';
+      const badgeLabel = isRackStyle ? 'RACK' : 'GROUP';
+      const subtitlePart = rack.subtitle ? ` · ${rack.subtitle}` : '';
+      return `<g>
+        <rect x="${rack.x}" y="${rack.y}" width="${rack.width}" height="${rack.height}" rx="12" fill="${rp.fill}" stroke="${rp.stroke}" stroke-width="1.8"${dashAttr}/>
+        ${railsSvg}
+        <path d="M ${rack.x + 12} ${rack.y} H ${rack.x + rack.width - 12} Q ${rack.x + rack.width} ${rack.y} ${rack.x + rack.width} ${rack.y + 12} V ${rack.y + headerH2} H ${rack.x} V ${rack.y + 12} Q ${rack.x} ${rack.y} ${rack.x + 12} ${rack.y} Z" fill="${rp.headerFill}"/>
+        <text x="${rack.x + 12}" y="${rack.y + 19}" fill="${rp.title}" font-family="${sansFont}" font-size="11" font-weight="700">${escapeSvgXml(rack.title)}${escapeSvgXml(subtitlePart)}</text>
+        <text x="${rack.x + rack.width - 12}" y="${rack.y + 19}" text-anchor="end" fill="${rp.title}" fill-opacity="0.85" font-family="${monoFont}" font-size="9" font-weight="700">${badgeLabel} · ${rack.nodeIds.length}</text>
+      </g>`;
+    })
+    .join('\n');
+
   const tx = pad - minX;
   const ty = headerH + pad - minY;
   const titleText = doc.name || 'Network Topology Diagram';
   const labelCount = (doc.labels || []).length;
-  const summaryText = `${doc.nodes.length} Devices  ·  ${doc.cables.length} Cables  ·  ${doc.zones.length} Zones${labelCount > 0 ? `  ·  ${labelCount} Labels` : ''}`;
+  const rackCount = (doc.racks || []).length;
+  const summaryText = `${doc.nodes.length} Devices  ·  ${doc.cables.length} Cables  ·  ${doc.zones.length} Zones${rackCount > 0 ? `  ·  ${rackCount} Racks` : ''}${labelCount > 0 ? `  ·  ${labelCount} Labels` : ''}`;
   const outW = Math.round(canvasW * pixelScale);
   const outH = Math.round(canvasH * pixelScale);
 
@@ -1649,6 +1773,7 @@ export function buildNetworkDiagramSvgString(
   <text x="28" y="53" fill="${textMuted}" font-family="${monoFont}" font-size="11" font-weight="500">${escapeSvgXml(summaryText)}</text>
   <g transform="translate(${tx}, ${ty})">
     ${zonesSvg}
+    ${racksSvg}
     ${cablesSvg}
     ${nodesSvg}
     ${labelsSvg}
