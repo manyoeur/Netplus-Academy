@@ -927,11 +927,24 @@ function drawRoundedRect(
   ctx.closePath();
 }
 
-export async function exportNetworkDiagramToPng(
-  doc: NetworkDiagramDocument,
-  isDarkTheme: boolean
-): Promise<void> {
-  // Compute tight bounding box across zones & nodes
+export function getDiagramSlug(name?: string): string {
+  const slug = (name || 'network-topology')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'network-topology';
+}
+
+function escapeSvgXml(value: string): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function computeDiagramExportBounds(doc: NetworkDiagramDocument) {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -962,8 +975,199 @@ export async function exportNetworkDiagramToPng(
   const headerH = 74;
   const contentW = Math.max(760, maxX - minX + pad * 2);
   const contentH = Math.max(420, maxY - minY + pad * 2);
-  const canvasW = contentW;
-  const canvasH = headerH + contentH;
+
+  return {
+    minX,
+    minY,
+    pad,
+    headerH,
+    canvasW: contentW,
+    canvasH: headerH + contentH
+  };
+}
+
+function getDeviceGlyphSvgMarkup(type: NetworkDeviceType, accentHex: string): string {
+  switch (type) {
+    case 'core-router':
+    case 'edge-router':
+      return `<circle cx="18" cy="18" r="14" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M12 12L16 16M16 16H12.5M16 16V12.5M24 24L20 20M20 20H23.5M20 20V23.5M24 12L20 16M20 16H23.5M20 16V12.5M12 24L16 20M16 20H12.5M16 20V23.5" stroke="${accentHex}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;
+    case 'l3-switch':
+      return `<rect x="4" y="6" width="28" height="24" rx="5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><circle cx="18" cy="18" r="6.5" stroke="${accentHex}" stroke-width="1.6"/><path d="M8 18H11.5M24.5 18H28M18 8V11.5M18 24.5V28M15.5 18H20.5M18 15.5V20.5" stroke="${accentHex}" stroke-width="1.6" stroke-linecap="round"/>`;
+    case 'l2-switch':
+      return `<rect x="4" y="9" width="28" height="18" rx="4" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M9 14H24M21 11.5L24.5 14L21 16.5M27 22H12M15 19.5L11.5 22L15 24.5" stroke="${accentHex}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>`;
+    case 'firewall':
+      return `<rect x="5" y="7" width="26" height="22" rx="3.5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M5 14H31M5 21.5H31M14 7V14M22 14V21.5M14 21.5V29" stroke="${accentHex}" stroke-width="1.6"/>`;
+    case 'load-balancer':
+      return `<rect x="4" y="7" width="28" height="22" rx="5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M9 18H16M16 18L24 12M16 18L24 24M21.5 11.5H24.5V14.5M21.5 24.5H24.5V21.5" stroke="${accentHex}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>`;
+    case 'vpn-gateway':
+      return `<path d="M18 4L30 9.5V17.5C30 24.8 24.8 30.2 18 32C11.2 30.2 6 24.8 6 17.5V9.5L18 4Z" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2" stroke-linejoin="round"/><rect x="13" y="16" width="10" height="7" rx="1.5" stroke="${accentHex}" stroke-width="1.6"/><path d="M15 16V13.5A3 3 0 0 1 21 13.5V16" stroke="${accentHex}" stroke-width="1.6"/>`;
+    case 'wan-cloud':
+      return `<path d="M11.5 27H25.5C28.5 27 31 24.6 31 21.6C31 18.9 29 16.7 26.4 16.3C25.5 11.6 21.4 8.2 16.5 8.5C11.7 8.8 8 12.6 7.8 17.3C5.6 18.1 4 20.1 4 22.5C4 25 6.2 27 8.8 27H11.5Z" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2" stroke-linejoin="round"/>`;
+    case 'wlc':
+      return `<rect x="4" y="10" width="28" height="16" rx="4" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M12 20.5C13.6 18.9 15.7 18 18 18C20.3 18 22.4 18.9 24 20.5M14.8 22.5C15.7 21.6 16.8 21.1 18 21.1C19.2 21.1 20.3 21.6 21.2 22.5M9.5 17.5C11.8 15.2 14.8 14 18 14C21.2 14 24.2 15.2 26.5 17.5" stroke="${accentHex}" stroke-width="1.6" stroke-linecap="round"/>`;
+    case 'access-point':
+      return `<circle cx="18" cy="22" r="4" fill="${accentHex}" fill-opacity="0.2" stroke="${accentHex}" stroke-width="2"/><path d="M11.5 17.5C13.3 15.7 15.5 14.8 18 14.8C20.5 14.8 22.7 15.7 24.5 17.5M7.5 13.5C10.3 10.7 14 9.2 18 9.2C22 9.2 25.7 10.7 28.5 13.5M18 26V31" stroke="${accentHex}" stroke-width="1.8" stroke-linecap="round"/>`;
+    case 'server':
+      return `<rect x="7" y="5" width="22" height="11" rx="2.5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="1.9"/><rect x="7" y="20" width="22" height="11" rx="2.5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="1.9"/><circle cx="12" cy="10.5" r="1.4" fill="${accentHex}"/><circle cx="12" cy="25.5" r="1.4" fill="${accentHex}"/><path d="M17 10.5H25M17 25.5H25" stroke="${accentHex}" stroke-width="1.75" stroke-linecap="round"/>`;
+    case 'workstation':
+      return `<rect x="5" y="7" width="26" height="17" rx="2.5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M14 24V29M22 24V29M10.5 29H25.5" stroke="${accentHex}" stroke-width="2" stroke-linecap="round"/>`;
+  }
+}
+
+export function buildNetworkDiagramSvgString(
+  doc: NetworkDiagramDocument,
+  isDarkTheme: boolean
+): string {
+  const { minX, minY, pad, headerH, canvasW, canvasH } = computeDiagramExportBounds(doc);
+  const bg = isDarkTheme ? '#070b14' : '#f8fafc';
+  const headerBg = isDarkTheme ? '#0c1220' : '#ffffff';
+  const borderCol = isDarkTheme ? '#1e293b' : '#e2e8f0';
+  const cardBorder = isDarkTheme ? '#334155' : '#cbd5e1';
+  const textPrimary = isDarkTheme ? '#f8fafc' : '#0f172a';
+  const textMuted = isDarkTheme ? '#94a3b8' : '#64748b';
+  const dotCol = isDarkTheme ? 'rgba(148,163,184,0.16)' : 'rgba(100,116,139,0.22)';
+
+  const sansFont = 'Plus Jakarta Sans, ui-sans-serif, system-ui, -apple-system, sans-serif';
+  const monoFont = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+
+  const zonePalettes: Record<ZoneColorTheme, { fill: string; stroke: string; title: string }> = {
+    blue: {
+      fill: isDarkTheme ? 'rgba(37,99,235,0.08)' : 'rgba(219,234,254,0.45)',
+      stroke: isDarkTheme ? 'rgba(56,189,248,0.45)' : 'rgba(59,130,246,0.5)',
+      title: isDarkTheme ? '#67e8f9' : '#1d4ed8'
+    },
+    emerald: {
+      fill: isDarkTheme ? 'rgba(16,185,129,0.08)' : 'rgba(209,250,229,0.45)',
+      stroke: isDarkTheme ? 'rgba(52,211,153,0.45)' : 'rgba(16,185,129,0.5)',
+      title: isDarkTheme ? '#6ee7b7' : '#047857'
+    },
+    amber: {
+      fill: isDarkTheme ? 'rgba(245,158,11,0.08)' : 'rgba(254,243,199,0.45)',
+      stroke: isDarkTheme ? 'rgba(251,191,36,0.45)' : 'rgba(245,158,11,0.5)',
+      title: isDarkTheme ? '#fcd34d' : '#b45309'
+    },
+    violet: {
+      fill: isDarkTheme ? 'rgba(139,92,246,0.08)' : 'rgba(237,233,254,0.45)',
+      stroke: isDarkTheme ? 'rgba(167,139,250,0.45)' : 'rgba(139,92,246,0.5)',
+      title: isDarkTheme ? '#c4b5fd' : '#6d28d9'
+    },
+    slate: {
+      fill: isDarkTheme ? 'rgba(100,116,139,0.12)' : 'rgba(241,245,249,0.7)',
+      stroke: isDarkTheme ? 'rgba(148,163,184,0.4)' : 'rgba(100,116,139,0.45)',
+      title: isDarkTheme ? '#cbd5e1' : '#334155'
+    }
+  };
+
+  const zonesSvg = doc.zones
+    .map(z => {
+      const zp = zonePalettes[z.color] || zonePalettes.blue;
+      const subtitleSvg = z.subtitle
+        ? `<text x="${z.x + 12}" y="${z.y + 35}" fill="${textMuted}" font-family="${monoFont}" font-size="10" font-weight="500">${escapeSvgXml(z.subtitle)}</text>`
+        : '';
+      return `<g>
+        <rect x="${z.x}" y="${z.y}" width="${z.width}" height="${z.height}" rx="14" fill="${zp.fill}" stroke="${zp.stroke}" stroke-width="1.5" stroke-dasharray="6 4"/>
+        <text x="${z.x + 12}" y="${z.y + 21}" fill="${zp.title}" font-family="${sansFont}" font-size="11" font-weight="700">${escapeSvgXml(z.title)}</text>
+        ${subtitleSvg}
+      </g>`;
+    })
+    .join('\n');
+
+  const nodeMap = new Map(doc.nodes.map(n => [n.id, n]));
+  const cablesSvg = doc.cables
+    .map(cable => {
+      const src = nodeMap.get(cable.sourceId);
+      const dst = nodeMap.get(cable.targetId);
+      if (!src || !dst) return '';
+      const geom = computeCableGeometry(src, dst, cable);
+      const spec = CABLE_SPECS[cable.cableType];
+      const stroke = isDarkTheme ? spec.darkStroke : spec.lightStroke;
+      const dashAttr = spec.dashArray ? ` stroke-dasharray="${spec.dashArray}"` : '';
+      const badgeText = cable.label || cable.bandwidth || spec.shortLabel;
+      const badgeW = Math.max(34, badgeText.length * 6.2 + 14);
+      const badgeSvg = badgeText
+        ? `<g transform="translate(${geom.midX}, ${geom.midY})">
+            <rect x="${-badgeW / 2}" y="-9" width="${badgeW}" height="18" rx="5" fill="${headerBg}" stroke="${cardBorder}" stroke-width="1"/>
+            <text x="0" y="3.5" text-anchor="middle" fill="${textPrimary}" font-family="${monoFont}" font-size="9.5" font-weight="600">${escapeSvgXml(badgeText)}</text>
+          </g>`
+        : '';
+
+      return `<g>
+        <path d="${escapeSvgXml(geom.pathD)}" fill="none" stroke="${stroke}" stroke-width="${spec.strokeWidth}"${dashAttr} stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="${geom.startX}" cy="${geom.startY}" r="3.5" fill="${stroke}"/>
+        <circle cx="${geom.endX}" cy="${geom.endY}" r="3.5" fill="${stroke}"/>
+        ${badgeSvg}
+      </g>`;
+    })
+    .join('\n');
+
+  const nodesSvg = doc.nodes
+    .map(node => {
+      const meta = STENCIL_MAP[node.type];
+      const glyphColor = isDarkTheme && meta.type === 'wan-cloud' ? '#cbd5e1' : meta.accentHex;
+      const ipText = `${node.ipAddress}${node.subnetMask || ''}`.slice(0, 20);
+      const roleText = meta.name.slice(0, 14);
+      const labelText = node.label.slice(0, 18);
+
+      return `<g transform="translate(${node.x}, ${node.y})">
+        <rect x="0" y="0" width="${NODE_WIDTH}" height="${NODE_HEIGHT}" rx="12" fill="${headerBg}" stroke="${cardBorder}" stroke-width="1.5"/>
+        <rect x="10" y="10" width="26" height="26" rx="7" fill="${meta.accentHex}" fill-opacity="0.12"/>
+        <svg x="12" y="12" width="22" height="22" viewBox="0 0 36 36" fill="none">
+          ${getDeviceGlyphSvgMarkup(node.type, glyphColor)}
+        </svg>
+        <text x="42" y="26" fill="${textMuted}" font-family="${monoFont}" font-size="9.5" font-weight="600">${escapeSvgXml(roleText)}</text>
+        <text x="10" y="56" fill="${textPrimary}" font-family="${sansFont}" font-size="11" font-weight="700">${escapeSvgXml(labelText)}</text>
+        <text x="10" y="73" fill="${textMuted}" font-family="${monoFont}" font-size="9.5" font-weight="500">${escapeSvgXml(ipText)}</text>
+      </g>`;
+    })
+    .join('\n');
+
+  const tx = pad - minX;
+  const ty = headerH + pad - minY;
+  const titleText = doc.name || 'Network Topology Diagram';
+  const summaryText = `${doc.nodes.length} Network Devices  ·  ${doc.cables.length} Cables  ·  ${doc.zones.length} Zones`;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}">
+  <defs>
+    <pattern id="netdiag-grid" width="20" height="20" patternUnits="userSpaceOnUse">
+      <circle cx="10" cy="10" r="1" fill="${dotCol}"/>
+    </pattern>
+  </defs>
+  <rect x="0" y="0" width="${canvasW}" height="${canvasH}" fill="${bg}"/>
+  <rect x="0" y="${headerH}" width="${canvasW}" height="${canvasH - headerH}" fill="url(#netdiag-grid)"/>
+  <rect x="0" y="0" width="${canvasW}" height="${headerH}" fill="${headerBg}"/>
+  <line x1="0" y1="${headerH - 0.5}" x2="${canvasW}" y2="${headerH - 0.5}" stroke="${borderCol}" stroke-width="1"/>
+  <text x="28" y="32" fill="${textPrimary}" font-family="${sansFont}" font-size="16" font-weight="700">${escapeSvgXml(titleText)}</text>
+  <text x="28" y="53" fill="${textMuted}" font-family="${monoFont}" font-size="11" font-weight="500">${escapeSvgXml(summaryText)}</text>
+  <g transform="translate(${tx}, ${ty})">
+    ${zonesSvg}
+    ${cablesSvg}
+    ${nodesSvg}
+  </g>
+</svg>`;
+}
+
+export function exportNetworkDiagramToSvg(
+  doc: NetworkDiagramDocument,
+  isDarkTheme: boolean
+): void {
+  const svgString = buildNetworkDiagramSvgString(doc, isDarkTheme);
+  const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${getDiagramSlug(doc.name)}.svg`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export async function exportNetworkDiagramToPng(
+  doc: NetworkDiagramDocument,
+  isDarkTheme: boolean
+): Promise<void> {
+  const { minX, minY, pad, headerH, canvasW, canvasH } = computeDiagramExportBounds(doc);
 
   const dpr = Math.max(canvasW, canvasH) * 2 <= 9000 ? 2 : 1.5;
   const canvas = document.createElement('canvas');
@@ -1158,11 +1362,7 @@ export async function exportNetworkDiagramToPng(
 
   ctx.restore();
 
-  const slug = (doc.name || 'network-topology')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  const filename = `${slug || 'network-topology'}.png`;
+  const filename = `${getDiagramSlug(doc.name)}.png`;
 
   const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/png'));
   if (blob) {

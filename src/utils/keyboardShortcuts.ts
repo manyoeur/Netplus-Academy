@@ -144,7 +144,7 @@ export const GLOBAL_KEYBOARD_SHORTCUTS: KeyboardShortcutDef[] = [
     id: 'admin-my-class',
     key: 'y',
     displayKey: 'Y',
-    label: 'My Class',
+    label: 'My Classes',
     description: 'Open Classes, Attendance & Enrollment Workspace',
     category: 'admin',
     tabId: 'my-class',

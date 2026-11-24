@@ -275,13 +275,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const isNavItemActive = (itemId: string) => {
     if (itemId === 'accounts') {
-      return currentTab === 'management' && managementSubTab === 'accounts';
-    }
-    if (itemId === 'invite-instructors') {
-      return currentTab === 'management' && managementSubTab === 'invite-instructors';
-    }
-    if (itemId === 'invite-students') {
-      return currentTab === 'management' && managementSubTab === 'invite-students';
+      return (
+        currentTab === 'management' &&
+        (managementSubTab === 'accounts' ||
+          managementSubTab === 'invite-instructors' ||
+          managementSubTab === 'invite-students')
+      );
     }
     if (itemId === 'management') {
       return currentTab === 'management' && (managementSubTab === 'courses' || managementSubTab === 'progress');
@@ -291,16 +290,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const navSections: NavSectionConfig[] = [
     {
-      title: 'Curriculum',
+      title: 'Learning',
       items: [
-        {
-          id: 'courses',
-          label: 'Courses',
-          icon: Layers,
-          accentText: 'text-blue-600 dark:text-cyan-400',
-          accentBg: 'bg-blue-50 dark:bg-blue-950/60',
-          accentBar: 'bg-blue-600 dark:bg-cyan-400'
-        },
         {
           id: 'dashboard',
           label: 'My Learning',
@@ -310,28 +301,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
           accentBar: 'bg-indigo-600 dark:bg-indigo-400'
         },
         {
-          id: 'flashcard',
-          label: 'Flashcard',
-          icon: SquareStack,
-          accentText: 'text-cyan-600 dark:text-cyan-400',
-          accentBg: 'bg-cyan-50 dark:bg-cyan-950/60',
-          accentBar: 'bg-cyan-500',
-          tag: 'AI'
+          id: 'courses',
+          label: 'Courses',
+          icon: Layers,
+          accentText: 'text-blue-600 dark:text-cyan-400',
+          accentBg: 'bg-blue-50 dark:bg-blue-950/60',
+          accentBar: 'bg-blue-600 dark:bg-cyan-400'
+        },
+        {
+          id: 'certificates',
+          label: 'Certificates',
+          icon: Award,
+          accentText: 'text-amber-600 dark:text-amber-400',
+          accentBg: 'bg-amber-50 dark:bg-amber-950/50',
+          accentBar: 'bg-amber-500'
+        },
+        {
+          id: 'forum',
+          label: 'Discussion Forum',
+          icon: MessageSquare,
+          accentText: 'text-violet-600 dark:text-violet-400',
+          accentBg: 'bg-violet-50 dark:bg-violet-950/50',
+          accentBar: 'bg-violet-500'
         }
       ]
     },
     {
-      title: 'Hands-on Labs',
+      title: 'Networking Labs',
       items: [
-        {
-          id: 'lab-sandbox',
-          label: 'Lab Simulation',
-          icon: Network,
-          accentText: 'text-cyan-600 dark:text-cyan-400',
-          accentBg: 'bg-cyan-50 dark:bg-cyan-950/60',
-          accentBar: 'bg-cyan-500',
-          tag: 'SIM'
-        },
         {
           id: 'lab-exercises',
           label: 'Lab Exercises',
@@ -342,6 +339,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
           tag: 'LABS'
         },
         {
+          id: 'lab-sandbox',
+          label: 'Lab Simulation',
+          icon: Network,
+          accentText: 'text-cyan-600 dark:text-cyan-400',
+          accentBg: 'bg-cyan-50 dark:bg-cyan-950/60',
+          accentBar: 'bg-cyan-500',
+          tag: 'SIM'
+        },
+        {
           id: 'network-designer',
           label: 'Network Designer',
           icon: Workflow,
@@ -349,7 +355,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           accentBg: 'bg-blue-50 dark:bg-blue-950/60',
           accentBar: 'bg-blue-500',
           tag: 'DRAW'
-        },
+        }
+      ]
+    },
+    {
+      title: 'Calculators & Practice',
+      items: [
         {
           id: 'subnet-calc',
           label: 'Subnet & VLSM',
@@ -373,66 +384,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
           accentText: 'text-emerald-600 dark:text-emerald-400',
           accentBg: 'bg-emerald-50 dark:bg-emerald-950/60',
           accentBar: 'bg-emerald-500'
-        }
-      ]
-    },
-    {
-      title: 'Community & Credentials',
-      items: [
-        {
-          id: 'certificates',
-          label: 'Certificates',
-          icon: Award,
-          accentText: 'text-amber-600 dark:text-amber-400',
-          accentBg: 'bg-amber-50 dark:bg-amber-950/50',
-          accentBar: 'bg-amber-500'
         },
         {
-          id: 'forum',
-          label: 'Discussion Forum',
-          icon: MessageSquare,
-          accentText: 'text-violet-600 dark:text-violet-400',
-          accentBg: 'bg-violet-50 dark:bg-violet-950/50',
-          accentBar: 'bg-violet-500'
+          id: 'flashcard',
+          label: 'Flashcards',
+          icon: SquareStack,
+          accentText: 'text-cyan-600 dark:text-cyan-400',
+          accentBg: 'bg-cyan-50 dark:bg-cyan-950/60',
+          accentBar: 'bg-cyan-500',
+          tag: 'AI'
         }
       ]
     },
     ...(isAdminOrInstructor
       ? [
           {
-            title: 'Administration',
+            title: 'Teaching & Analytics',
             items: [
-              ...(isAdminOnly
-                ? [
-                    {
-                      id: 'accounts',
-                      label: 'User Accounts',
-                      icon: UserCog,
-                      accentText: 'text-blue-600 dark:text-cyan-400',
-                      accentBg: 'bg-blue-50 dark:bg-blue-950/60',
-                      accentBar: 'bg-blue-600 dark:bg-cyan-400'
-                    },
-                    {
-                      id: 'invite-instructors',
-                      label: 'Invite Instructors',
-                      icon: UserPlus,
-                      accentText: 'text-indigo-600 dark:text-indigo-400',
-                      accentBg: 'bg-indigo-50 dark:bg-indigo-950/60',
-                      accentBar: 'bg-indigo-500'
-                    },
-                    {
-                      id: 'invite-students',
-                      label: 'Invite Students',
-                      icon: Users,
-                      accentText: 'text-emerald-600 dark:text-emerald-400',
-                      accentBg: 'bg-emerald-50 dark:bg-emerald-950/60',
-                      accentBar: 'bg-emerald-500'
-                    }
-                  ]
-                : []),
               {
                 id: 'my-class',
-                label: 'My Class',
+                label: 'My Classes',
                 icon: GraduationCap,
                 accentText: 'text-cyan-600 dark:text-cyan-400',
                 accentBg: 'bg-cyan-50 dark:bg-cyan-950/60',
@@ -453,7 +424,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 accentText: 'text-emerald-600 dark:text-emerald-400',
                 accentBg: 'bg-emerald-50 dark:bg-emerald-950/60',
                 accentBar: 'bg-emerald-500'
-              },
+              }
+            ]
+          },
+          {
+            title: 'Users & Platform',
+            items: [
+              ...(isAdminOnly
+                ? [
+                    {
+                      id: 'accounts',
+                      label: 'Users & Invites',
+                      icon: UserCog,
+                      accentText: 'text-blue-600 dark:text-cyan-400',
+                      accentBg: 'bg-blue-50 dark:bg-blue-950/60',
+                      accentBar: 'bg-blue-600 dark:bg-cyan-400'
+                    }
+                  ]
+                : []),
               {
                 id: 'lms',
                 label: 'LMS & SCORM API',
@@ -468,34 +456,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
       : [])
   ];
 
-  const railNavItems = navSections.flatMap(section => section.items);
-
   const quickJumpItems = [
-    { id: 'courses', label: 'Course Catalog & Syllabus', category: 'Curriculum', icon: Layers },
-    { id: 'dashboard', label: 'My Enrolled Courses & Progress', category: 'Learning', icon: UserCheck },
-    { id: 'flashcard', label: 'Flashcard · AI Terminology, Protocols & Ports Deck', category: 'Curriculum', icon: SquareStack },
-    { id: 'lab-sandbox', label: 'Lab Simulation · Network Topology & Cisco Lab', category: 'Hands-on Labs', icon: Network },
-    { id: 'lab-exercises', label: 'Lab Exercises · Step-by-Step Networking Lab Guidelines', category: 'Hands-on Labs', icon: ClipboardList },
-    { id: 'network-designer', label: 'Network Designer · Topology & Cable Diagram Studio', category: 'Hands-on Labs', icon: Workflow },
-    { id: 'subnet-calc', label: 'Subnetting & VLSM Architecture Calculator', category: 'Hands-on Labs', icon: Calculator },
-    { id: 'base-converter', label: 'Binary, Decimal & Hexadecimal Converter', category: 'Hands-on Labs', icon: Binary },
-    { id: 'binary-game', label: 'Binary Conversion Practice Game', category: 'Hands-on Labs', icon: Gamepad2 },
-    { id: 'certificates', label: 'Verifiable Digital Credentials & Registry', category: 'Certificates', icon: Award },
-    { id: 'forum', label: 'Network Engineers Discussion Forum', category: 'Community', icon: MessageSquare },
+    { id: 'dashboard', label: 'My Learning · Enrolled Courses & Progress', category: 'Learning', icon: UserCheck },
+    { id: 'courses', label: 'Course Catalog & Syllabus', category: 'Learning', icon: Layers },
+    { id: 'certificates', label: 'Verifiable Digital Credentials & Registry', category: 'Learning', icon: Award },
+    { id: 'forum', label: 'Network Engineers Discussion Forum', category: 'Learning', icon: MessageSquare },
+    { id: 'lab-exercises', label: 'Lab Exercises · Step-by-Step Networking Lab Guidelines', category: 'Networking Labs', icon: ClipboardList },
+    { id: 'lab-sandbox', label: 'Lab Simulation · Network Topology & Cisco Lab', category: 'Networking Labs', icon: Network },
+    { id: 'network-designer', label: 'Network Designer · Topology & Cable Diagram Studio', category: 'Networking Labs', icon: Workflow },
+    { id: 'subnet-calc', label: 'Subnetting & VLSM Architecture Calculator', category: 'Calculators & Practice', icon: Calculator },
+    { id: 'base-converter', label: 'Binary, Decimal & Hexadecimal Converter', category: 'Calculators & Practice', icon: Binary },
+    { id: 'binary-game', label: 'Binary Conversion Practice Game', category: 'Calculators & Practice', icon: Gamepad2 },
+    { id: 'flashcard', label: 'Flashcards · AI Terminology, Protocols & Ports Deck', category: 'Calculators & Practice', icon: SquareStack },
     { id: 'pricing', label: 'Subscription Tiers & Pro Checkout', category: 'Account', icon: CreditCard },
     ...(isAdminOnly
       ? [
-          { id: 'accounts', label: 'Manage Instructor & Student Accounts', category: 'Administration', icon: UserCog },
-          { id: 'invite-instructors', label: 'Invite Instructors & Faculty Onboarding', category: 'Administration', icon: UserPlus },
-          { id: 'invite-students', label: 'Invite Students & Cohort Registration', category: 'Administration', icon: Users }
+          { id: 'accounts', label: 'Users & Invites · Manage Instructor & Student Accounts', category: 'Users & Platform', icon: UserCog },
+          { id: 'invite-instructors', label: 'Invite Instructors & Faculty Onboarding', category: 'Users & Platform', icon: UserPlus },
+          { id: 'invite-students', label: 'Invite Students & Cohort Registration', category: 'Users & Platform', icon: Users }
         ]
       : []),
     ...(isAdminOrInstructor
       ? [
-          { id: 'my-class', label: 'My Class · Classes, Attendance & Enrollment', category: 'Administration', icon: GraduationCap },
-          { id: 'management', label: 'Admin Course Manager & Enrollment Telemetry', category: 'Administration', icon: Settings },
-          { id: 'analytics', label: 'Real-Time Learner Activity Stream', category: 'Administration', icon: BarChart3 },
-          { id: 'lms', label: 'External LMS (Canvas / Blackboard / SCORM)', category: 'Administration', icon: Globe }
+          { id: 'my-class', label: 'My Classes · Classes, Attendance & Enrollment', category: 'Teaching & Analytics', icon: GraduationCap },
+          { id: 'management', label: 'Admin Course Manager & Enrollment Telemetry', category: 'Teaching & Analytics', icon: Settings },
+          { id: 'analytics', label: 'Real-Time Learner Activity Stream', category: 'Teaching & Analytics', icon: BarChart3 },
+          { id: 'lms', label: 'External LMS (Canvas / Blackboard / SCORM)', category: 'Users & Platform', icon: Globe }
         ]
       : [])
   ];
@@ -761,34 +747,44 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             </div>
 
-            {/* Menu Symbol Icons Column */}
+            {/* Menu Symbol Icons Column with subtle section dividers */}
             <div className="flex-1 w-full overflow-y-auto py-3.5 flex flex-col items-center gap-1.5">
-              {railNavItems.map(item => {
-                const Icon = item.icon;
-                const isActive = isNavItemActive(item.id);
-                const shortcutHint = getTabShortcutHint(item.id, currentUser.role);
-                const tooltipText = shortcutHint ? `${item.label} (${shortcutHint})` : item.label;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => handleNavClick(item.id)}
-                    onMouseEnter={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      setRailTooltip({ label: tooltipText, top: rect.top + rect.height / 2 });
-                    }}
-                    onMouseLeave={() => setRailTooltip(null)}
-                    aria-label={tooltipText}
-                    className={`group/rail relative flex items-center justify-center w-11 h-11 rounded-xl border transition-[transform,background-color,border-color,color,box-shadow] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                      isActive
-                        ? 'bg-slate-900 dark:bg-gradient-to-tr dark:from-indigo-600 dark:to-blue-600 text-white border-slate-900 dark:border-indigo-400/30 shadow-md shadow-slate-900/15 dark:shadow-indigo-500/30'
-                        : 'border-transparent text-slate-500 dark:text-slate-400 hover:scale-105 hover:text-slate-950 dark:hover:text-white hover:bg-slate-100/95 dark:hover:bg-slate-800/80 hover:border-slate-200/80 dark:hover:border-slate-700/70 hover:shadow-xs'
-                    }`}
-                  >
-                    <Icon className="w-[18px] h-[18px] transition-transform duration-150 group-hover/rail:scale-110" />
-                  </button>
-                );
-              })}
+              {navSections.map((section, sectionIdx) => (
+                <React.Fragment key={section.title}>
+                  {sectionIdx > 0 && (
+                    <div
+                      aria-hidden="true"
+                      className="w-6 h-px bg-slate-200/90 dark:bg-slate-800/90 my-1 shrink-0"
+                    />
+                  )}
+                  {section.items.map(item => {
+                    const Icon = item.icon;
+                    const isActive = isNavItemActive(item.id);
+                    const shortcutHint = getTabShortcutHint(item.id, currentUser.role);
+                    const tooltipText = shortcutHint ? `${item.label} (${shortcutHint})` : item.label;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleNavClick(item.id)}
+                        onMouseEnter={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setRailTooltip({ label: tooltipText, top: rect.top + rect.height / 2 });
+                        }}
+                        onMouseLeave={() => setRailTooltip(null)}
+                        aria-label={tooltipText}
+                        className={`group/rail relative flex items-center justify-center w-11 h-11 rounded-xl border transition-[transform,background-color,border-color,color,box-shadow] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                          isActive
+                            ? 'bg-slate-900 dark:bg-gradient-to-tr dark:from-indigo-600 dark:to-blue-600 text-white border-slate-900 dark:border-indigo-400/30 shadow-md shadow-slate-900/15 dark:shadow-indigo-500/30'
+                            : 'border-transparent text-slate-500 dark:text-slate-400 hover:scale-105 hover:text-slate-950 dark:hover:text-white hover:bg-slate-100/95 dark:hover:bg-slate-800/80 hover:border-slate-200/80 dark:hover:border-slate-700/70 hover:shadow-xs'
+                        }`}
+                      >
+                        <Icon className="w-[18px] h-[18px] transition-transform duration-150 group-hover/rail:scale-110" />
+                      </button>
+                    );
+                  })}
+                </React.Fragment>
+              ))}
             </div>
 
             {/* Bottom Rail Controls (Expand & Pin) */}

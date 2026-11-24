@@ -2,10 +2,13 @@ import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } 
 import {
   Cable,
   Check,
+  ChevronDown,
   Copy,
   Download,
+  FileCode,
   FileJson,
   Grid3x3,
+  Image as ImageIcon,
   Layers,
   Loader2,
   Maximize2,
@@ -34,6 +37,7 @@ import {
   DeviceCategory,
   DiagramToolMode,
   exportNetworkDiagramToPng,
+  exportNetworkDiagramToSvg,
   GRID_SNAP_SIZE,
   NETWORK_DEVICE_STENCILS,
   NetworkDeviceType,
@@ -169,7 +173,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 
   const [isExportingPng, setIsExportingPng] = useState<boolean>(false);
-  const [pngExported, setPngExported] = useState<boolean>(false);
+  const [exportedImageFormat, setExportedImageFormat] = useState<'png' | 'svg' | null>(null);
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
 
   // Live rubber-band cable preview when dragging from a device port
@@ -184,6 +189,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
   const docRef = useRef(doc);
   docRef.current = doc;
   const zoomRef = useRef(zoom);
@@ -205,6 +211,26 @@ export const NetworkDiagramDesigner: React.FC = () => {
     setSelection(prev => reconcileTarget(prev, doc));
     setInspectorTarget(prev => reconcileTarget(prev, doc));
   }, [doc]);
+
+  useEffect(() => {
+    if (!isExportMenuOpen) return;
+    const handlePointerDown = (evt: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(evt.target as Node)) {
+        setIsExportMenuOpen(false);
+      }
+    };
+    const handleKey = (evt: KeyboardEvent) => {
+      if (evt.key === 'Escape') {
+        setIsExportMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, [isExportMenuOpen]);
 
   const showNotice = useCallback((msg: string) => {
     setStatusNotice(msg);
@@ -894,16 +920,35 @@ export const NetworkDiagramDesigner: React.FC = () => {
 
   const handleExportPng = async () => {
     if (isExportingPng) return;
+    setIsExportMenuOpen(false);
     setIsExportingPng(true);
     try {
       const isDark = document.documentElement.classList.contains('dark');
       await exportNetworkDiagramToPng(doc, isDark);
-      setPngExported(true);
-      window.setTimeout(() => setPngExported(false), 2200);
+      setExportedImageFormat('png');
+      showNotice('Exported topology diagram as PNG image.');
+      window.setTimeout(() => {
+        setExportedImageFormat(prev => (prev === 'png' ? null : prev));
+      }, 2200);
     } catch {
       showNotice('Failed to export PNG image.');
     } finally {
       setIsExportingPng(false);
+    }
+  };
+
+  const handleExportSvg = () => {
+    setIsExportMenuOpen(false);
+    try {
+      const isDark = document.documentElement.classList.contains('dark');
+      exportNetworkDiagramToSvg(doc, isDark);
+      setExportedImageFormat('svg');
+      showNotice('Exported topology diagram as SVG vector.');
+      window.setTimeout(() => {
+        setExportedImageFormat(prev => (prev === 'svg' ? null : prev));
+      }, 2200);
+    } catch {
+      showNotice('Failed to export SVG vector.');
     }
   };
 
@@ -1119,30 +1164,77 @@ export const NetworkDiagramDesigner: React.FC = () => {
               <span>Save JSON</span>
             </button>
 
-            <button
-              type="button"
-              disabled={isExportingPng}
-              onClick={handleExportPng}
-              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
-              title="Export full diagram as high-DPI PNG image"
-            >
-              {isExportingPng ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Exporting...</span>
-                </>
-              ) : pngExported ? (
-                <>
-                  <Check className="w-3.5 h-3.5" />
-                  <span>Exported PNG</span>
-                </>
-              ) : (
-                <>
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Export PNG</span>
-                </>
+            <div ref={exportMenuRef} className="relative">
+              <button
+                type="button"
+                disabled={isExportingPng}
+                aria-haspopup="menu"
+                aria-expanded={isExportMenuOpen}
+                onClick={() => setIsExportMenuOpen(prev => !prev)}
+                className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+                title="Export topology drawing as PNG image or SVG vector"
+              >
+                {isExportingPng ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Exporting...</span>
+                  </>
+                ) : exportedImageFormat ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Exported {exportedImageFormat.toUpperCase()}</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export PNG / SVG</span>
+                    <ChevronDown className="w-3.5 h-3.5 opacity-85" />
+                  </>
+                )}
+              </button>
+
+              {isExportMenuOpen && (
+                <div
+                  role="menu"
+                  aria-label="Export diagram image formats"
+                  className="absolute right-0 mt-1.5 w-52 rounded-xl bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-slate-700 shadow-xl py-1.5 z-40"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={handleExportPng}
+                    className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-start gap-2.5 transition-colors"
+                  >
+                    <ImageIcon className="w-4 h-4 text-blue-600 dark:text-cyan-400 mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-900 dark:text-white">
+                        Export PNG Image
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        High-DPI raster snapshot (.png)
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={handleExportSvg}
+                    className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-start gap-2.5 transition-colors"
+                  >
+                    <FileCode className="w-4 h-4 text-indigo-600 dark:text-indigo-400 mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-900 dark:text-white">
+                        Export SVG Vector
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        Crisp scalable vector (.svg)
+                      </p>
+                    </div>
+                  </button>
+                </div>
               )}
-            </button>
+            </div>
           </div>
         </div>
 

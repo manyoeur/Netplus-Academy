@@ -284,7 +284,7 @@ export const MyClassManager: React.FC<MyClassManagerProps> = ({ onOpenCoursePlay
           Instructor or Admin Access Required
         </h2>
         <p className="text-sm text-slate-600 dark:text-slate-400">
-          The My Class workspace is restricted to administrators and instructors for creating classes, tracking attendance, posting announcements, and enrolling students.
+          The My Classes workspace is restricted to administrators and instructors for creating classes, tracking attendance, posting announcements, and enrolling students.
         </p>
       </div>
     );
@@ -719,7 +719,7 @@ export const MyClassManager: React.FC<MyClassManagerProps> = ({ onOpenCoursePlay
             </span>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-            My Class
+            My Classes
           </h1>
           <p className="text-sm text-slate-600 dark:text-slate-400 mt-0.5">
             {isAdmin

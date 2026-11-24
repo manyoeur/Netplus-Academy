@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react';
 import {
   Network,
   MousePointer2,
@@ -116,7 +116,6 @@ import {
 } from './networkSimEngine';
 import { NETWORK_LAB_PRESETS } from './networkLabPresets';
 import { CiscoDeviceIcon, getCiscoDeviceInnerSvg } from './CiscoDeviceIcon';
-import { TopologyMiniMap } from './TopologyMiniMap';
 import {
   LabReplayControls,
   LabReplayHeaderButtons,
@@ -870,16 +869,31 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
   const terminalEndRef = useRef<HTMLDivElement>(null);
   const cliInputRef = useRef<HTMLInputElement>(null);
 
-  // Viewport & logical canvas refs (zoom/pan wrapper + 1000x580 stage)
+  // Viewport & logical canvas refs (scrollable zoom wrapper + logical canvas stage)
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageBoxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState<number>(1);
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const zoomRef = useRef<number>(zoom);
   zoomRef.current = zoom;
-  const panRef = useRef<{ x: number; y: number }>(pan);
-  panRef.current = pan;
+  const pendingScrollSyncRef = useRef<
+    | {
+        mode: 'anchor';
+        canvasX: number;
+        canvasY: number;
+        vpOffsetX: number;
+        vpOffsetY: number;
+        zoom: number;
+      }
+    | {
+        mode: 'center';
+        canvasX: number;
+        canvasY: number;
+        zoom: number;
+      }
+    | { mode: 'origin' }
+    | null
+  >(null);
   const [isSpacePanning, setIsSpacePanning] = useState<boolean>(false);
   const isSpacePanningRef = useRef<boolean>(isSpacePanning);
   isSpacePanningRef.current = isSpacePanning;
@@ -887,33 +901,10 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
   const panStateRef = useRef<{
     startClientX: number;
     startClientY: number;
-    initPanX: number;
-    initPanY: number;
+    initScrollLeft: number;
+    initScrollTop: number;
     moved: boolean;
   } | null>(null);
-  const [isMiniMapOpen, setIsMiniMapOpen] = useState<boolean>(true);
-  const [isMiniMapDragging, setIsMiniMapDragging] = useState<boolean>(false);
-  const miniMapSvgRef = useRef<SVGSVGElement>(null);
-  const miniMapDragRef = useRef<{
-    svgRect: DOMRect;
-    grabOffsetX: number;
-    grabOffsetY: number;
-  } | null>(null);
-  const [viewportMetrics, setViewportMetrics] = useState<{
-    vpWidth: number;
-    vpHeight: number;
-    stageWidth: number;
-    stageHeight: number;
-    stageOffsetX: number;
-    stageOffsetY: number;
-  }>({
-    vpWidth: DEFAULT_LAB_CANVAS_WIDTH,
-    vpHeight: DEFAULT_LAB_CANVAS_HEIGHT,
-    stageWidth: DEFAULT_LAB_CANVAS_WIDTH,
-    stageHeight: DEFAULT_LAB_CANVAS_HEIGHT,
-    stageOffsetX: 0,
-    stageOffsetY: 0
-  });
   const devicesRef = useRef<SimDevice[]>(devices);
   devicesRef.current = devices;
   const linksRef = useRef<SimLink[]>(links);
@@ -1848,19 +1839,56 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
     return () => window.clearInterval(timer);
   }, [lastPingResult]);
 
-  // Native non-passive mouse-wheel zoom anchored at cursor position
+  // Synchronize viewport scrollbars after zoom/fit changes before paint
+  useLayoutEffect(() => {
+    const pending = pendingScrollSyncRef.current;
+    if (!pending) return;
+    pendingScrollSyncRef.current = null;
+
+    const vp = viewportRef.current;
+    const canvas = canvasRef.current;
+    if (!vp) return;
+
+    if (pending.mode === 'origin') {
+      vp.scrollLeft = 0;
+      vp.scrollTop = 0;
+      return;
+    }
+
+    if (!canvas) return;
+    const vpRect = vp.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+
+    if (pending.mode === 'anchor') {
+      const curVpX = canvasRect.left - vpRect.left + pending.canvasX * pending.zoom;
+      const curVpY = canvasRect.top - vpRect.top + pending.canvasY * pending.zoom;
+      vp.scrollLeft = Math.max(0, vp.scrollLeft + (curVpX - pending.vpOffsetX));
+      vp.scrollTop = Math.max(0, vp.scrollTop + (curVpY - pending.vpOffsetY));
+      return;
+    }
+
+    if (pending.mode === 'center') {
+      const curVpX = canvasRect.left - vpRect.left + pending.canvasX * pending.zoom;
+      const curVpY = canvasRect.top - vpRect.top + pending.canvasY * pending.zoom;
+      vp.scrollLeft = Math.max(0, vp.scrollLeft + (curVpX - vp.clientWidth / 2));
+      vp.scrollTop = Math.max(0, vp.scrollTop + (curVpY - vp.clientHeight / 2));
+    }
+  }, [zoom, canvasSize.width, canvasSize.height]);
+
+  // Ctrl/Cmd + mouse-wheel zoom anchored at cursor position; regular wheel scrolls scrollbars
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || workspaceView !== 'editor') return;
 
     const handleWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
       if ((e.target as HTMLElement | null)?.closest('[data-console-overlay="true"]')) {
         return;
       }
       e.preventDefault();
-      const measureEl = stageBoxRef.current || viewport;
-      const vRect = measureEl.getBoundingClientRect();
-      if (vRect.width <= 0 || vRect.height <= 0) return;
+      const vpRect = viewport.getBoundingClientRect();
+      const canvasEl = canvasRef.current;
+      if (vpRect.width <= 0 || vpRect.height <= 0) return;
 
       const rawDeltaY =
         e.deltaMode === 1
@@ -1872,30 +1900,28 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
 
       const clampedDelta = Math.max(-180, Math.min(180, rawDeltaY));
       const curZoom = zoomRef.current;
-      const curPan = panRef.current;
-      const sensitivity = e.ctrlKey ? 0.008 : 0.0016;
       const nextZoom = Math.min(
         2.75,
-        Math.max(0.2, Number((curZoom * Math.exp(-clampedDelta * sensitivity)).toFixed(4)))
+        Math.max(0.2, Number((curZoom * Math.exp(-clampedDelta * 0.0045)).toFixed(4)))
       );
       if (nextZoom === curZoom) return;
 
-      const isOverMiniMap = Boolean(
-        (e.target as HTMLElement | null)?.closest('[data-minimap-hud="true"]')
-      );
-      const mouseX = isOverMiniMap ? vRect.width / 2 : e.clientX - vRect.left;
-      const mouseY = isOverMiniMap ? vRect.height / 2 : e.clientY - vRect.top;
-      const stageX = (mouseX - curPan.x) / curZoom;
-      const stageY = (mouseY - curPan.y) / curZoom;
-      const nextPan = {
-        x: mouseX - stageX * nextZoom,
-        y: mouseY - stageY * nextZoom
-      };
+      const vpOffsetX = e.clientX - vpRect.left;
+      const vpOffsetY = e.clientY - vpRect.top;
+      if (canvasEl) {
+        const cRect = canvasEl.getBoundingClientRect();
+        pendingScrollSyncRef.current = {
+          mode: 'anchor',
+          canvasX: (e.clientX - cRect.left) / curZoom,
+          canvasY: (e.clientY - cRect.top) / curZoom,
+          vpOffsetX,
+          vpOffsetY,
+          zoom: nextZoom
+        };
+      }
 
       zoomRef.current = nextZoom;
-      panRef.current = nextPan;
       setZoom(nextZoom);
-      setPan(nextPan);
     };
 
     viewport.addEventListener('wheel', handleWheel, { passive: false });
@@ -1903,144 +1929,6 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
       viewport.removeEventListener('wheel', handleWheel);
     };
   }, [workspaceView]);
-
-  // Keep viewport/stage box measurements fresh so the mini-map viewport rectangle stays exact
-  useEffect(() => {
-    if (workspaceView !== 'editor') return;
-    const vpEl = viewportRef.current;
-    const stageEl = stageBoxRef.current;
-    if (!vpEl || !stageEl) return;
-
-    const measure = () => {
-      const vpRect = vpEl.getBoundingClientRect();
-      const stageRect = stageEl.getBoundingClientRect();
-      if (
-        vpRect.width <= 0 ||
-        vpRect.height <= 0 ||
-        stageRect.width <= 0 ||
-        stageRect.height <= 0
-      ) {
-        return;
-      }
-      const next = {
-        vpWidth: vpRect.width,
-        vpHeight: vpRect.height,
-        stageWidth: stageRect.width,
-        stageHeight: stageRect.height,
-        stageOffsetX: stageRect.left - vpRect.left,
-        stageOffsetY: stageRect.top - vpRect.top
-      };
-      setViewportMetrics(prev =>
-        Math.abs(prev.vpWidth - next.vpWidth) < 0.5 &&
-        Math.abs(prev.vpHeight - next.vpHeight) < 0.5 &&
-        Math.abs(prev.stageWidth - next.stageWidth) < 0.5 &&
-        Math.abs(prev.stageHeight - next.stageHeight) < 0.5 &&
-        Math.abs(prev.stageOffsetX - next.stageOffsetX) < 0.5 &&
-        Math.abs(prev.stageOffsetY - next.stageOffsetY) < 0.5
-          ? prev
-          : next
-      );
-    };
-
-    measure();
-    const rafId = window.requestAnimationFrame(measure);
-    const observer =
-      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
-    observer?.observe(vpEl);
-    observer?.observe(stageEl);
-    window.addEventListener('resize', measure);
-
-    return () => {
-      window.cancelAnimationFrame(rafId);
-      observer?.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, [workspaceView, isWorkspaceFullscreen, canvasSize.width, canvasSize.height, isMiniMapOpen]);
-
-  const miniMapViewportBox = useMemo(() => {
-    const baseScaleX = viewportMetrics.stageWidth / DEFAULT_LAB_CANVAS_WIDTH;
-    const baseScaleY = viewportMetrics.stageHeight / DEFAULT_LAB_CANVAS_HEIGHT;
-    const effScaleX = Math.max(0.0001, baseScaleX * zoom);
-    const effScaleY = Math.max(0.0001, baseScaleY * zoom);
-
-    return {
-      x: -(viewportMetrics.stageOffsetX + pan.x) / effScaleX,
-      y: -(viewportMetrics.stageOffsetY + pan.y) / effScaleY,
-      width: viewportMetrics.vpWidth / effScaleX,
-      height: viewportMetrics.vpHeight / effScaleY
-    };
-  }, [pan.x, pan.y, viewportMetrics, zoom]);
-
-  const panViewportToCanvasCenter = useCallback((targetX: number, targetY: number) => {
-    const vpEl = viewportRef.current;
-    const stageEl = stageBoxRef.current;
-    if (!vpEl || !stageEl) return;
-    const vpRect = vpEl.getBoundingClientRect();
-    const stageRect = stageEl.getBoundingClientRect();
-    if (
-      vpRect.width <= 0 ||
-      vpRect.height <= 0 ||
-      stageRect.width <= 0 ||
-      stageRect.height <= 0
-    ) {
-      return;
-    }
-
-    const { width: canvasW, height: canvasH } = canvasSizeRef.current;
-    const curZoom = zoomRef.current;
-    const clampedX = Math.max(0, Math.min(canvasW, targetX));
-    const clampedY = Math.max(0, Math.min(canvasH, targetY));
-
-    const baseScaleX = stageRect.width / DEFAULT_LAB_CANVAS_WIDTH;
-    const baseScaleY = stageRect.height / DEFAULT_LAB_CANVAS_HEIGHT;
-    const vpCenterInStageX = vpRect.left + vpRect.width / 2 - stageRect.left;
-    const vpCenterInStageY = vpRect.top + vpRect.height / 2 - stageRect.top;
-
-    const nextPan = {
-      x: vpCenterInStageX - clampedX * baseScaleX * curZoom,
-      y: vpCenterInStageY - clampedY * baseScaleY * curZoom
-    };
-
-    panRef.current = nextPan;
-    setPan(nextPan);
-  }, []);
-
-  const handleMiniMapPointerDown = useCallback(
-    (e: React.PointerEvent<SVGSVGElement>, svgRect: DOMRect) => {
-      if (e.button !== 0 || svgRect.width <= 0 || svgRect.height <= 0) return;
-      const { width: canvasW, height: canvasH } = canvasSizeRef.current;
-      const clickX = Math.max(
-        0,
-        Math.min(canvasW, ((e.clientX - svgRect.left) / svgRect.width) * canvasW)
-      );
-      const clickY = Math.max(
-        0,
-        Math.min(canvasH, ((e.clientY - svgRect.top) / svgRect.height) * canvasH)
-      );
-
-      const curVp = miniMapViewportBox;
-      const insideVpBox =
-        clickX >= curVp.x &&
-        clickX <= curVp.x + curVp.width &&
-        clickY >= curVp.y &&
-        clickY <= curVp.y + curVp.height;
-
-      const vpCenterX = curVp.x + curVp.width / 2;
-      const vpCenterY = curVp.y + curVp.height / 2;
-
-      miniMapDragRef.current = {
-        svgRect,
-        grabOffsetX: insideVpBox ? clickX - vpCenterX : 0,
-        grabOffsetY: insideVpBox ? clickY - vpCenterY : 0
-      };
-      setIsMiniMapDragging(true);
-
-      if (!insideVpBox) {
-        panViewportToCanvasCenter(clickX, clickY);
-      }
-    },
-    [miniMapViewportBox, panViewportToCanvasCenter]
-  );
 
   // Pointer drag, viewport pan, & marquee selection box handling for topology canvas nodes
   useEffect(() => {
@@ -2103,19 +1991,6 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
         return;
       }
 
-      const mmDrag = miniMapDragRef.current;
-      if (mmDrag) {
-        const svgEl = miniMapSvgRef.current;
-        const rect = svgEl ? svgEl.getBoundingClientRect() : mmDrag.svgRect;
-        if (rect.width > 0 && rect.height > 0) {
-          const { width: canvasW, height: canvasH } = canvasSizeRef.current;
-          const currX = ((e.clientX - rect.left) / rect.width) * canvasW;
-          const currY = ((e.clientY - rect.top) / rect.height) * canvasH;
-          panViewportToCanvasCenter(currX - mmDrag.grabOffsetX, currY - mmDrag.grabOffsetY);
-        }
-        return;
-      }
-
       const pDrag = panStateRef.current;
       if (pDrag) {
         const dx = e.clientX - pDrag.startClientX;
@@ -2123,12 +1998,11 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
         if (Math.hypot(dx, dy) > 2) {
           pDrag.moved = true;
         }
-        const nextPan = {
-          x: pDrag.initPanX + dx,
-          y: pDrag.initPanY + dy
-        };
-        panRef.current = nextPan;
-        setPan(nextPan);
+        const vp = viewportRef.current;
+        if (vp) {
+          vp.scrollLeft = Math.max(0, pDrag.initScrollLeft - dx);
+          vp.scrollTop = Math.max(0, pDrag.initScrollTop - dy);
+        }
         return;
       }
 
@@ -2585,7 +2459,6 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
       }
       consoleDragRef.current = null;
       consoleResizeRef.current = null;
-      miniMapDragRef.current = null;
       panStateRef.current = null;
       dragStateRef.current = null;
       marqueeStateRef.current = null;
@@ -2595,7 +2468,6 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
       labelDragStateRef.current = null;
       diagramLabelDragStateRef.current = null;
       setIsDraggingConsole(false);
-      setIsMiniMapDragging(false);
       setIsPanningActive(false);
       setLongPressMoveDeviceId(null);
       setDraggingLabelDeviceId(null);
@@ -2753,68 +2625,74 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
   const zoomAtViewportCenter = useCallback((targetZoom: number) => {
     const nextZoom = Math.min(2.75, Math.max(0.2, Number(targetZoom.toFixed(4))));
     const curZoom = zoomRef.current;
-    const curPan = panRef.current;
-    const viewport = stageBoxRef.current || viewportRef.current;
-    if (!viewport) {
+    const viewport = viewportRef.current;
+    const canvasEl = canvasRef.current;
+    if (!viewport || !canvasEl || nextZoom === curZoom) {
       zoomRef.current = nextZoom;
       setZoom(nextZoom);
       return;
     }
     const vRect = viewport.getBoundingClientRect();
-    const cx = vRect.width > 0 ? vRect.width / 2 : 500;
-    const cy = vRect.height > 0 ? vRect.height / 2 : 290;
-    const stageX = (cx - curPan.x) / curZoom;
-    const stageY = (cy - curPan.y) / curZoom;
-    const nextPan = {
-      x: cx - stageX * nextZoom,
-      y: cy - stageY * nextZoom
+    const cRect = canvasEl.getBoundingClientRect();
+    const vpOffsetX = viewport.clientWidth > 0 ? viewport.clientWidth / 2 : 500;
+    const vpOffsetY = viewport.clientHeight > 0 ? viewport.clientHeight / 2 : 290;
+    pendingScrollSyncRef.current = {
+      mode: 'anchor',
+      canvasX: (vRect.left + vpOffsetX - cRect.left) / curZoom,
+      canvasY: (vRect.top + vpOffsetY - cRect.top) / curZoom,
+      vpOffsetX,
+      vpOffsetY,
+      zoom: nextZoom
     };
     zoomRef.current = nextZoom;
-    panRef.current = nextPan;
     setZoom(nextZoom);
-    setPan(nextPan);
   }, []);
 
   const handleResetZoomPan = useCallback(() => {
+    pendingScrollSyncRef.current = { mode: 'origin' };
     zoomRef.current = 1;
-    panRef.current = { x: 0, y: 0 };
     setZoom(1);
-    setPan({ x: 0, y: 0 });
+    const vp = viewportRef.current;
+    if (vp) {
+      vp.scrollLeft = 0;
+      vp.scrollTop = 0;
+    }
   }, []);
 
   const fitSheetToViewport = useCallback((targetWidth: number, targetHeight: number) => {
+    const vp = viewportRef.current;
+    const availW = vp && vp.clientWidth > 120 ? vp.clientWidth - 48 : DEFAULT_LAB_CANVAS_WIDTH;
+    const availH = vp && vp.clientHeight > 120 ? vp.clientHeight - 48 : DEFAULT_LAB_CANVAS_HEIGHT;
     const fitZoom = Math.max(
       0.2,
       Math.min(
         1,
-        Number(
-          Math.min(
-            DEFAULT_LAB_CANVAS_WIDTH / targetWidth,
-            DEFAULT_LAB_CANVAS_HEIGHT / targetHeight
-          ).toFixed(4)
-        )
+        Number(Math.min(availW / targetWidth, availH / targetHeight).toFixed(4))
       )
     );
-    const nextPan = { x: 0, y: 0 };
+    pendingScrollSyncRef.current = { mode: 'origin' };
     zoomRef.current = fitZoom;
-    panRef.current = nextPan;
     setZoom(fitZoom);
-    setPan(nextPan);
+    if (vp) {
+      vp.scrollLeft = 0;
+      vp.scrollTop = 0;
+    }
   }, []);
 
   const handleFitToView = useCallback(() => {
-    const viewport = stageBoxRef.current || viewportRef.current;
+    const viewport = viewportRef.current;
     if (!viewport) {
       handleResetZoomPan();
       return;
     }
-    const vRect = viewport.getBoundingClientRect();
-    if (vRect.width <= 0 || vRect.height <= 0) {
+    const vpW = viewport.clientWidth;
+    const vpH = viewport.clientHeight;
+    if (vpW <= 0 || vpH <= 0) {
       handleResetZoomPan();
       return;
     }
     if (devices.length === 0 && shapes.length === 0 && diagramLabels.length === 0) {
-      if (canvasSize.width > DEFAULT_LAB_CANVAS_WIDTH || canvasSize.height > DEFAULT_LAB_CANVAS_HEIGHT) {
+      if (canvasSize.width > vpW - 48 || canvasSize.height > vpH - 48) {
         fitSheetToViewport(canvasSize.width, canvasSize.height);
       } else {
         handleResetZoomPan();
@@ -2851,32 +2729,27 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
       return;
     }
 
-    const baseScaleX = vRect.width / DEFAULT_LAB_CANVAS_WIDTH;
-    const baseScaleY = vRect.height / DEFAULT_LAB_CANVAS_HEIGHT;
-    const contentPxW = Math.max(60, (maxX - minX) * baseScaleX);
-    const contentPxH = Math.max(60, (maxY - minY) * baseScaleY);
+    const contentPxW = Math.max(80, maxX - minX);
+    const contentPxH = Math.max(80, maxY - minY);
 
     const fitZoom = Math.min(
       2.0,
       Math.max(
         0.2,
         Number(
-          Math.min((vRect.width * 0.88) / contentPxW, (vRect.height * 0.88) / contentPxH).toFixed(4)
+          Math.min((vpW * 0.86) / contentPxW, (vpH * 0.86) / contentPxH).toFixed(4)
         )
       )
     );
 
-    const stageCxPx = ((minX + maxX) / 2) * baseScaleX;
-    const stageCyPx = ((minY + maxY) / 2) * baseScaleY;
-    const nextPan = {
-      x: vRect.width / 2 - stageCxPx * fitZoom,
-      y: vRect.height / 2 - stageCyPx * fitZoom
+    pendingScrollSyncRef.current = {
+      mode: 'center',
+      canvasX: (minX + maxX) / 2,
+      canvasY: (minY + maxY) / 2,
+      zoom: fitZoom
     };
-
     zoomRef.current = fitZoom;
-    panRef.current = nextPan;
     setZoom(fitZoom);
-    setPan(nextPan);
   }, [devices, shapes, diagramLabels, canvasSize, fitSheetToViewport, handleResetZoomPan]);
 
   const handleChangeWorkspaceSize = useCallback(
@@ -2911,7 +2784,7 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
 
       if (clampedW > DEFAULT_LAB_CANVAS_WIDTH || clampedH > DEFAULT_LAB_CANVAS_HEIGHT) {
         flashBanner(
-          `Workspace set to ${clampedW}×${clampedH} — hold Space+drag or use Pan to navigate, or Zoom in for 1:1 editing`
+          `Workspace set to ${clampedW}×${clampedH} — use scrollbars or Space+drag to navigate, Ctrl+Scroll to zoom`
         );
       } else {
         flashBanner('Workspace reset to Standard (1000×580)');
@@ -6252,7 +6125,7 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
                   <>
                     <span aria-hidden="true">·</span>
                     <span className="text-[11px] font-medium text-blue-600 dark:text-cyan-400">
-                      Drag canvas to pan · Scroll mouse wheel to zoom
+                      Drag canvas or scrollbars to pan · Ctrl+Scroll to zoom
                     </span>
                   </>
                 )}
@@ -6499,224 +6372,9 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
               </div>
             </div>
 
-            {/* Interactive Viewport & Zoom/Pan Blueprint Stage */}
+            {/* Interactive Scrollable Viewport & Blueprint Stage */}
             <div
-              ref={viewportRef}
-              onAuxClick={(e) => {
-                if (e.button === 1) e.preventDefault();
-              }}
-              onDragOver={(e) => {
-                const transferType = e.dataTransfer.getData('application/x-netlab-device') as SimDeviceType;
-                const activeType = draggedPaletteTypeRef.current || transferType;
-                if (
-                  activeType === 'router' ||
-                  activeType === 'switch' ||
-                  activeType === 'pc' ||
-                  activeType === 'server'
-                ) {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = 'copy';
-                  setIsJsonFileDragOver(false);
-                  const canvas = canvasRef.current;
-                  if (!canvas) return;
-                  const rect = canvas.getBoundingClientRect();
-                  if (rect.width <= 0 || rect.height <= 0) return;
-                  const rawX = ((e.clientX - rect.left) / rect.width) * canvasSize.width;
-                  const rawY = ((e.clientY - rect.top) / rect.height) * canvasSize.height;
-                  const x = snapClampedToGrid(rawX, 60, canvasSize.width - 60, gridSize, snapToGrid);
-                  const y = snapClampedToGrid(rawY, 60, canvasSize.height - 60, gridSize, snapToGrid);
-                  setPaletteDropPreview(prev =>
-                    prev && prev.type === activeType && prev.x === x && prev.y === y
-                      ? prev
-                      : { type: activeType, x, y }
-                  );
-                  return;
-                }
-
-                if (e.dataTransfer.types.includes('Files')) {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = 'copy';
-                  setIsJsonFileDragOver(true);
-                }
-              }}
-              onDragLeave={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                  setPaletteDropPreview(null);
-                  setIsJsonFileDragOver(false);
-                }
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                setIsJsonFileDragOver(false);
-                if (
-                  !draggedPaletteTypeRef.current &&
-                  e.dataTransfer.files &&
-                  e.dataTransfer.files.length > 0
-                ) {
-                  importTopologyFile(e.dataTransfer.files[0]);
-                  return;
-                }
-                const transferType = (e.dataTransfer.getData('application/x-netlab-device') ||
-                  e.dataTransfer.getData('text/plain')) as SimDeviceType;
-                const dropType = draggedPaletteTypeRef.current || transferType;
-                draggedPaletteTypeRef.current = null;
-                setPaletteDropPreview(null);
-                if (
-                  dropType !== 'router' &&
-                  dropType !== 'switch' &&
-                  dropType !== 'pc' &&
-                  dropType !== 'server'
-                ) {
-                  return;
-                }
-                const canvas = canvasRef.current;
-                if (!canvas) {
-                  handleAddDevice(dropType);
-                  return;
-                }
-                const rect = canvas.getBoundingClientRect();
-                if (rect.width <= 0 || rect.height <= 0) {
-                  handleAddDevice(dropType);
-                  return;
-                }
-                const rawX = ((e.clientX - rect.left) / rect.width) * canvasSize.width;
-                const rawY = ((e.clientY - rect.top) / rect.height) * canvasSize.height;
-                handleAddDevice(dropType, rawX, rawY);
-              }}
-              onPointerDownCapture={(e) => {
-                const targetEl = e.target as HTMLElement | null;
-                if (
-                  targetEl?.closest('[data-zoom-hud="true"]') ||
-                  targetEl?.closest('[data-minimap-hud="true"]') ||
-                  targetEl?.closest('[data-console-overlay="true"]')
-                ) {
-                  return;
-                }
-                const shouldStartPan =
-                  e.button === 1 ||
-                  (e.button === 0 && (tool === 'pan' || isSpacePanningRef.current));
-                if (shouldStartPan) {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  panStateRef.current = {
-                    startClientX: e.clientX,
-                    startClientY: e.clientY,
-                    initPanX: panRef.current.x,
-                    initPanY: panRef.current.y,
-                    moved: false
-                  };
-                  setIsPanningActive(true);
-                  return;
-                }
-
-                if (tool === 'marquee' && e.button === 0) {
-                  if (
-                    targetEl?.closest('[data-group-move="true"]') ||
-                    targetEl?.closest('[data-group-rotate="true"]')
-                  ) {
-                    return;
-                  }
-                  const devEl = targetEl?.closest('[data-device-id]') as HTMLElement | null;
-                  const devId = devEl?.getAttribute('data-device-id');
-                  const isModifier = e.ctrlKey || e.metaKey || e.shiftKey;
-                  if (devId && !isModifier && selectedDeviceIds.includes(devId)) {
-                    startGroupDrag(e, devId);
-                    return;
-                  }
-
-                  const canvas = canvasRef.current;
-                  if (!canvas) return;
-                  const rect = canvas.getBoundingClientRect();
-                  if (rect.width <= 0 || rect.height <= 0) return;
-
-                  e.stopPropagation();
-                  e.preventDefault();
-                  const startCanvasX = Math.min(
-                    canvasSize.width,
-                    Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasSize.width)
-                  );
-                  const startCanvasY = Math.min(
-                    canvasSize.height,
-                    Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasSize.height)
-                  );
-
-                  marqueeStateRef.current = {
-                    startClientX: e.clientX,
-                    startClientY: e.clientY,
-                    startCanvasX,
-                    startCanvasY,
-                    additive: isModifier,
-                    initialSelectedIds: selectedDeviceIds,
-                    moved: false
-                  };
-                }
-              }}
-              onPointerDown={(e) => {
-                if (tool === 'cable' && e.button === 0 && !isSpacePanningRef.current && liveCableDrawRef.current) {
-                  const isStageClick =
-                    e.target === viewportRef.current ||
-                    e.target === stageBoxRef.current ||
-                    e.target === canvasRef.current;
-                  if (isStageClick) {
-                    clearLiveCableDraw();
-                    suppressCanvasClickRef.current = true;
-                  }
-                  return;
-                }
-                if (tool !== 'select' || isSpacePanningRef.current || e.button !== 0) return;
-                if (
-                  e.target !== viewportRef.current &&
-                  e.target !== stageBoxRef.current &&
-                  e.target !== canvasRef.current
-                ) {
-                  return;
-                }
-                const canvas = canvasRef.current;
-                if (!canvas) return;
-                const rect = canvas.getBoundingClientRect();
-                if (rect.width <= 0 || rect.height <= 0) return;
-
-                const startCanvasX = Math.min(
-                  canvasSize.width,
-                  Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasSize.width)
-                );
-                const startCanvasY = Math.min(
-                  canvasSize.height,
-                  Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasSize.height)
-                );
-
-                marqueeStateRef.current = {
-                  startClientX: e.clientX,
-                  startClientY: e.clientY,
-                  startCanvasX,
-                  startCanvasY,
-                  additive: e.ctrlKey || e.metaKey || e.shiftKey,
-                  initialSelectedIds: selectedDeviceIds,
-                  moved: false
-                };
-              }}
-              onClick={(e) => {
-                if (suppressCanvasClickRef.current) {
-                  suppressCanvasClickRef.current = false;
-                  return;
-                }
-                if (tool === 'pan') return;
-                const clickedStage =
-                  e.target === viewportRef.current ||
-                  e.target === stageBoxRef.current ||
-                  e.target === canvasRef.current;
-                if (clickedStage || (tool === 'marquee' && !(e.target as HTMLElement | null)?.closest('[data-device-id]'))) {
-                  setSelectedLinkId(null);
-                  setSelectedShapeId(null);
-                  setSelectedDiagramLabelId(null);
-                  if ((tool === 'select' || tool === 'marquee') && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
-                    setSelectedDeviceIds([]);
-                    setSelectedDeviceId(null);
-                  }
-                }
-              }}
-              style={{ containerType: 'size' }}
-              className={`relative bg-slate-100/80 dark:bg-[#050914] select-none overflow-hidden flex items-center justify-center ${
+              className={`relative bg-slate-100/80 dark:bg-[#050914] select-none overflow-hidden ${
                 isWorkspaceFullscreen
                   ? 'flex-1 min-h-0 w-full'
                   : 'w-full h-[clamp(420px,64vh,680px)] min-h-[340px]'
@@ -6731,20 +6389,280 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
               }`}
             >
               <div
-                ref={stageBoxRef}
-                style={{ width: 'min(100cqw, calc(100cqh * 1000 / 580))' }}
-                className="relative aspect-[1000/580] shrink-0"
-              >
-              <div
-                ref={canvasRef}
-                style={{
-                  width: `${(canvasSize.width / DEFAULT_LAB_CANVAS_WIDTH) * 100}%`,
-                  height: `${(canvasSize.height / DEFAULT_LAB_CANVAS_HEIGHT) * 100}%`,
-                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                  transformOrigin: '0 0'
+                ref={viewportRef}
+                onAuxClick={(e) => {
+                  if (e.button === 1) e.preventDefault();
                 }}
-                className="relative bg-slate-50 dark:bg-[#090f1d] shadow-xs ring-1 ring-slate-200/70 dark:ring-slate-800/70"
+                onDragOver={(e) => {
+                  const transferType = e.dataTransfer.getData('application/x-netlab-device') as SimDeviceType;
+                  const activeType = draggedPaletteTypeRef.current || transferType;
+                  if (
+                    activeType === 'router' ||
+                    activeType === 'switch' ||
+                    activeType === 'pc' ||
+                    activeType === 'server'
+                  ) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'copy';
+                    setIsJsonFileDragOver(false);
+                    const canvas = canvasRef.current;
+                    if (!canvas) return;
+                    const rect = canvas.getBoundingClientRect();
+                    if (rect.width <= 0 || rect.height <= 0) return;
+                    const rawX = ((e.clientX - rect.left) / rect.width) * canvasSize.width;
+                    const rawY = ((e.clientY - rect.top) / rect.height) * canvasSize.height;
+                    const x = snapClampedToGrid(rawX, 60, canvasSize.width - 60, gridSize, snapToGrid);
+                    const y = snapClampedToGrid(rawY, 60, canvasSize.height - 60, gridSize, snapToGrid);
+                    setPaletteDropPreview(prev =>
+                      prev && prev.type === activeType && prev.x === x && prev.y === y
+                        ? prev
+                        : { type: activeType, x, y }
+                    );
+                    return;
+                  }
+
+                  if (e.dataTransfer.types.includes('Files')) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'copy';
+                    setIsJsonFileDragOver(true);
+                  }
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                    setPaletteDropPreview(null);
+                    setIsJsonFileDragOver(false);
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsJsonFileDragOver(false);
+                  if (
+                    !draggedPaletteTypeRef.current &&
+                    e.dataTransfer.files &&
+                    e.dataTransfer.files.length > 0
+                  ) {
+                    importTopologyFile(e.dataTransfer.files[0]);
+                    return;
+                  }
+                  const transferType = (e.dataTransfer.getData('application/x-netlab-device') ||
+                    e.dataTransfer.getData('text/plain')) as SimDeviceType;
+                  const dropType = draggedPaletteTypeRef.current || transferType;
+                  draggedPaletteTypeRef.current = null;
+                  setPaletteDropPreview(null);
+                  if (
+                    dropType !== 'router' &&
+                    dropType !== 'switch' &&
+                    dropType !== 'pc' &&
+                    dropType !== 'server'
+                  ) {
+                    return;
+                  }
+                  const canvas = canvasRef.current;
+                  if (!canvas) {
+                    handleAddDevice(dropType);
+                    return;
+                  }
+                  const rect = canvas.getBoundingClientRect();
+                  if (rect.width <= 0 || rect.height <= 0) {
+                    handleAddDevice(dropType);
+                    return;
+                  }
+                  const rawX = ((e.clientX - rect.left) / rect.width) * canvasSize.width;
+                  const rawY = ((e.clientY - rect.top) / rect.height) * canvasSize.height;
+                  handleAddDevice(dropType, rawX, rawY);
+                }}
+                onPointerDownCapture={(e) => {
+                  const vpEl = viewportRef.current;
+                  if (vpEl) {
+                    const vpRect = vpEl.getBoundingClientRect();
+                    if (
+                      e.clientX >= vpRect.left + vpEl.clientWidth ||
+                      e.clientY >= vpRect.top + vpEl.clientHeight
+                    ) {
+                      return;
+                    }
+                  }
+                  const targetEl = e.target as HTMLElement | null;
+                  if (
+                    targetEl?.closest('[data-zoom-hud="true"]') ||
+                    targetEl?.closest('[data-console-overlay="true"]')
+                  ) {
+                    return;
+                  }
+                  const shouldStartPan =
+                    e.button === 1 ||
+                    (e.button === 0 && (tool === 'pan' || isSpacePanningRef.current));
+                  if (shouldStartPan) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    panStateRef.current = {
+                      startClientX: e.clientX,
+                      startClientY: e.clientY,
+                      initScrollLeft: vpEl?.scrollLeft ?? 0,
+                      initScrollTop: vpEl?.scrollTop ?? 0,
+                      moved: false
+                    };
+                    setIsPanningActive(true);
+                    return;
+                  }
+
+                  if (tool === 'marquee' && e.button === 0) {
+                    if (
+                      targetEl?.closest('[data-group-move="true"]') ||
+                      targetEl?.closest('[data-group-rotate="true"]')
+                    ) {
+                      return;
+                    }
+                    const devEl = targetEl?.closest('[data-device-id]') as HTMLElement | null;
+                    const devId = devEl?.getAttribute('data-device-id');
+                    const isModifier = e.ctrlKey || e.metaKey || e.shiftKey;
+                    if (devId && !isModifier && selectedDeviceIds.includes(devId)) {
+                      startGroupDrag(e, devId);
+                      return;
+                    }
+
+                    const canvas = canvasRef.current;
+                    if (!canvas) return;
+                    const rect = canvas.getBoundingClientRect();
+                    if (rect.width <= 0 || rect.height <= 0) return;
+
+                    e.stopPropagation();
+                    e.preventDefault();
+                    const startCanvasX = Math.min(
+                      canvasSize.width,
+                      Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasSize.width)
+                    );
+                    const startCanvasY = Math.min(
+                      canvasSize.height,
+                      Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasSize.height)
+                    );
+
+                    marqueeStateRef.current = {
+                      startClientX: e.clientX,
+                      startClientY: e.clientY,
+                      startCanvasX,
+                      startCanvasY,
+                      additive: isModifier,
+                      initialSelectedIds: selectedDeviceIds,
+                      moved: false
+                    };
+                  }
+                }}
+                onPointerDown={(e) => {
+                  const vpEl = viewportRef.current;
+                  if (vpEl) {
+                    const vpRect = vpEl.getBoundingClientRect();
+                    if (
+                      e.clientX >= vpRect.left + vpEl.clientWidth ||
+                      e.clientY >= vpRect.top + vpEl.clientHeight
+                    ) {
+                      return;
+                    }
+                  }
+                  const isDeskClick =
+                    (e.target as HTMLElement | null)?.getAttribute('data-workspace-desk') === 'true';
+                  if (tool === 'cable' && e.button === 0 && !isSpacePanningRef.current && liveCableDrawRef.current) {
+                    const isStageClick =
+                      e.target === viewportRef.current ||
+                      isDeskClick ||
+                      e.target === stageBoxRef.current ||
+                      e.target === canvasRef.current;
+                    if (isStageClick) {
+                      clearLiveCableDraw();
+                      suppressCanvasClickRef.current = true;
+                    }
+                    return;
+                  }
+                  if (tool !== 'select' || isSpacePanningRef.current || e.button !== 0) return;
+                  if (
+                    e.target !== viewportRef.current &&
+                    !isDeskClick &&
+                    e.target !== stageBoxRef.current &&
+                    e.target !== canvasRef.current
+                  ) {
+                    return;
+                  }
+                  const canvas = canvasRef.current;
+                  if (!canvas) return;
+                  const rect = canvas.getBoundingClientRect();
+                  if (rect.width <= 0 || rect.height <= 0) return;
+
+                  const startCanvasX = Math.min(
+                    canvasSize.width,
+                    Math.max(0, ((e.clientX - rect.left) / rect.width) * canvasSize.width)
+                  );
+                  const startCanvasY = Math.min(
+                    canvasSize.height,
+                    Math.max(0, ((e.clientY - rect.top) / rect.height) * canvasSize.height)
+                  );
+
+                  marqueeStateRef.current = {
+                    startClientX: e.clientX,
+                    startClientY: e.clientY,
+                    startCanvasX,
+                    startCanvasY,
+                    additive: e.ctrlKey || e.metaKey || e.shiftKey,
+                    initialSelectedIds: selectedDeviceIds,
+                    moved: false
+                  };
+                }}
+                onClick={(e) => {
+                  const vpEl = viewportRef.current;
+                  if (vpEl) {
+                    const vpRect = vpEl.getBoundingClientRect();
+                    if (
+                      e.clientX >= vpRect.left + vpEl.clientWidth ||
+                      e.clientY >= vpRect.top + vpEl.clientHeight
+                    ) {
+                      return;
+                    }
+                  }
+                  if (suppressCanvasClickRef.current) {
+                    suppressCanvasClickRef.current = false;
+                    return;
+                  }
+                  if (tool === 'pan') return;
+                  const isDeskClick =
+                    (e.target as HTMLElement | null)?.getAttribute('data-workspace-desk') === 'true';
+                  const clickedStage =
+                    e.target === viewportRef.current ||
+                    isDeskClick ||
+                    e.target === stageBoxRef.current ||
+                    e.target === canvasRef.current;
+                  if (clickedStage || (tool === 'marquee' && !(e.target as HTMLElement | null)?.closest('[data-device-id]'))) {
+                    setSelectedLinkId(null);
+                    setSelectedShapeId(null);
+                    setSelectedDiagramLabelId(null);
+                    if ((tool === 'select' || tool === 'marquee') && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
+                      setSelectedDeviceIds([]);
+                      setSelectedDeviceId(null);
+                    }
+                  }
+                }}
+                className="w-full h-full overflow-scroll relative outline-none [&::-webkit-scrollbar]:w-2.5 [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-200/80 dark:[&::-webkit-scrollbar-track]:bg-slate-900/90 [&::-webkit-scrollbar-thumb]:bg-slate-400/80 dark:[&::-webkit-scrollbar-thumb]:bg-slate-600/85 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-500 dark:hover:[&::-webkit-scrollbar-thumb]:bg-cyan-500/80 [&::-webkit-scrollbar-corner]:bg-slate-200/80 dark:[&::-webkit-scrollbar-corner]:bg-slate-900/90"
               >
+                <div
+                  data-workspace-desk="true"
+                  className="min-w-full min-h-full w-max h-max flex p-5 sm:p-7"
+                >
+                  <div
+                    ref={stageBoxRef}
+                    style={{
+                      width: `${Math.round(canvasSize.width * zoom)}px`,
+                      height: `${Math.round(canvasSize.height * zoom)}px`
+                    }}
+                    className="relative m-auto shrink-0"
+                  >
+                    <div
+                      ref={canvasRef}
+                      style={{
+                        width: `${canvasSize.width}px`,
+                        height: `${canvasSize.height}px`,
+                        transform: `scale(${zoom})`,
+                        transformOrigin: '0 0'
+                      }}
+                      className="relative bg-slate-50 dark:bg-[#090f1d] shadow-xs ring-1 ring-slate-200/70 dark:ring-slate-800/70"
+                    >
               {/* True-Coordinate Logical SVG Grid Backdrop */}
               {(showGrid || activeSnapGuides?.x !== undefined || activeSnapGuides?.y !== undefined) && (
                 <svg
@@ -8217,6 +8135,8 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
               )}
               </div>
               </div>
+              </div>
+              </div>
 
               {/* JSON Topology File Drop Overlay */}
               {isJsonFileDragOver && (
@@ -8233,7 +8153,7 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
                 data-zoom-hud="true"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
-                className="absolute bottom-3 right-3 z-30 inline-flex items-center gap-0.5 p-1 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 shadow-lg backdrop-blur-xs"
+                className="absolute bottom-5 right-5 z-30 inline-flex items-center gap-0.5 p-1 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 shadow-lg backdrop-blur-xs"
               >
                 <button
                   type="button"
@@ -8301,29 +8221,6 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
                 </button>
               </div>
 
-              {/* Floating Workspace Mini-Map Overview */}
-              <TopologyMiniMap
-                canvasWidth={canvasSize.width}
-                canvasHeight={canvasSize.height}
-                devices={devices}
-                links={links}
-                shapes={shapes}
-                diagramLabels={diagramLabels}
-                selectedDeviceIds={selectedDeviceIds}
-                selectedLinkId={selectedLinkId}
-                linkStatuses={linkStatuses}
-                activeHopLinkId={
-                  animStepIndex !== null ? lastPingResult?.hops[animStepIndex]?.linkId : null
-                }
-                viewportBox={miniMapViewportBox}
-                zoom={zoom}
-                isOpen={isMiniMapOpen}
-                onToggleOpen={() => setIsMiniMapOpen(prev => !prev)}
-                isDragging={isMiniMapDragging}
-                svgRef={miniMapSvgRef}
-                onMiniMapPointerDown={handleMiniMapPointerDown}
-              />
-
               {/* Multi-Device Tabbed CLI Console Pop-up (opens on device double-click) */}
               {consoleTabs.length > 0 && consoleDevice && isConsoleMinimized && (
                 <div
@@ -8331,7 +8228,7 @@ export const NetworkTopologySimulator: React.FC<NetworkTopologySimulatorProps> =
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => e.stopPropagation()}
-                  className="absolute bottom-3 left-3 z-40 inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 shadow-xl backdrop-blur-xs max-w-[calc(100%-13rem)]"
+                  className="absolute bottom-5 left-4 z-40 inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 shadow-xl backdrop-blur-xs max-w-[calc(100%-13rem)]"
                 >
                   <CiscoDeviceIcon type={consoleDevice.type} className="w-6 h-5 shrink-0" />
                   <div className="min-w-0">
