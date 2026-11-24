@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
+  Bold,
   Cable,
   Check,
   ChevronDown,
@@ -14,11 +15,11 @@ import {
   Maximize2,
   MousePointer2,
   Network,
-  Plus,
   Redo2,
   Search,
   SquareDashed,
   Trash2,
+  Type,
   Undo2,
   Upload,
   X,
@@ -39,10 +40,15 @@ import {
   exportNetworkDiagramToPng,
   exportNetworkDiagramToSvg,
   GRID_SNAP_SIZE,
+  LABEL_COLOR_STYLES,
+  LABEL_SIZE_CONFIG,
+  LabelColorTheme,
+  LabelSizePreset,
   NETWORK_DEVICE_STENCILS,
   NetworkDeviceType,
   NetworkDiagramCable,
   NetworkDiagramDocument,
+  NetworkDiagramLabel,
   NetworkDiagramNode,
   NetworkDiagramZone,
   NODE_HEIGHT,
@@ -68,6 +74,7 @@ type SelectionState =
   | { kind: 'node'; id: string }
   | { kind: 'cable'; id: string }
   | { kind: 'zone'; id: string }
+  | { kind: 'label'; id: string }
   | null;
 
 const ZONE_STYLE_MAP: Record<
@@ -117,6 +124,9 @@ function reconcileTarget(
   if (target.kind === 'cable') {
     return doc.cables.some(c => c.id === target.id) ? target : null;
   }
+  if (target.kind === 'label') {
+    return (doc.labels || []).some(l => l.id === target.id) ? target : null;
+  }
   return doc.zones.some(z => z.id === target.id) ? target : null;
 }
 
@@ -136,7 +146,8 @@ function loadInitialDiagram(): NetworkDiagramDocument {
           name: typeof parsed.name === 'string' ? parsed.name : 'Network Topology Diagram',
           nodes: parsed.nodes,
           cables: parsed.cables,
-          zones: parsed.zones
+          zones: parsed.zones,
+          labels: Array.isArray(parsed.labels) ? parsed.labels : []
         };
       }
     }
@@ -190,6 +201,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const labelInputRef = useRef<HTMLTextAreaElement | null>(null);
   const docRef = useRef(doc);
   docRef.current = doc;
   const zoomRef = useRef(zoom);
@@ -374,6 +386,47 @@ export const NetworkDiagramDesigner: React.FC = () => {
     [commitChange, snapCoord]
   );
 
+  const addLabelAt = useCallback(
+    (rawX?: number, rawY?: number) => {
+      const el = viewportRef.current;
+      let x = rawX;
+      let y = rawY;
+      if (x === undefined || y === undefined) {
+        if (el) {
+          const cascade = ((docRef.current.labels || []).length % 5) * 20;
+          x = (el.scrollLeft + el.clientWidth / 2) / zoomRef.current - 55 + cascade;
+          y = (el.scrollTop + el.clientHeight / 2) / zoomRef.current - 16 + cascade;
+        } else {
+          x = 260;
+          y = 200;
+        }
+      }
+
+      const newLabel: NetworkDiagramLabel = {
+        id: `lbl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        text: 'Label',
+        x: Math.max(10, Math.min(DIAGRAM_CANVAS_WIDTH - 140, snapCoord(x))),
+        y: Math.max(10, Math.min(DIAGRAM_CANVAS_HEIGHT - 40, snapCoord(y))),
+        fontSize: 'sm',
+        color: 'slate',
+        bold: false
+      };
+
+      commitChange(prev => ({
+        ...prev,
+        labels: [...(prev.labels || []), newLabel]
+      }));
+      setSelection({ kind: 'label', id: newLabel.id });
+      setInspectorTarget({ kind: 'label', id: newLabel.id });
+      setToolMode('select');
+      window.requestAnimationFrame(() => {
+        labelInputRef.current?.focus();
+        labelInputRef.current?.select();
+      });
+    },
+    [commitChange, snapCoord]
+  );
+
   const createCableBetween = useCallback(
     (
       sourceId: string,
@@ -394,7 +447,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
         bandwidth: spec.defaultBandwidth,
         sourceInterface: 'Gi0/0',
         targetInterface: 'Gi0/1',
-        label: spec.shortLabel
+        label: ''
       };
 
       commitChange(prev => ({
@@ -428,35 +481,55 @@ export const NetworkDiagramDesigner: React.FC = () => {
         ...prev,
         zones: prev.zones.filter(z => z.id !== target.id)
       }));
+    } else if (target.kind === 'label') {
+      commitChange(prev => ({
+        ...prev,
+        labels: (prev.labels || []).filter(l => l.id !== target.id)
+      }));
     }
     setSelection(null);
     setInspectorTarget(null);
   }, [selection, inspectorTarget, commitChange]);
 
   const handleDuplicateSelectedNode = useCallback(() => {
-    const target =
-      selection?.kind === 'node'
-        ? selection
-        : inspectorTarget?.kind === 'node'
-        ? inspectorTarget
-        : null;
+    const target = selection || inspectorTarget;
     if (!target) return;
-    const orig = docRef.current.nodes.find(n => n.id === target.id);
-    if (!orig) return;
-    const clone: NetworkDiagramNode = {
-      ...orig,
-      id: `nd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      label: `${orig.label}-copy`,
-      x: Math.min(DIAGRAM_CANVAS_WIDTH - NODE_WIDTH - 20, orig.x + 40),
-      y: Math.min(DIAGRAM_CANVAS_HEIGHT - NODE_HEIGHT - 20, orig.y + 40)
-    };
-    commitChange(prev => ({
-      ...prev,
-      nodes: [...prev.nodes, clone]
-    }));
-    setSelection({ kind: 'node', id: clone.id });
-    if (inspectorTarget?.kind === 'node') {
-      setInspectorTarget({ kind: 'node', id: clone.id });
+
+    if (target.kind === 'node') {
+      const orig = docRef.current.nodes.find(n => n.id === target.id);
+      if (!orig) return;
+      const clone: NetworkDiagramNode = {
+        ...orig,
+        id: `nd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        label: `${orig.label}-copy`,
+        x: Math.min(DIAGRAM_CANVAS_WIDTH - NODE_WIDTH - 20, orig.x + 40),
+        y: Math.min(DIAGRAM_CANVAS_HEIGHT - NODE_HEIGHT - 20, orig.y + 40)
+      };
+      commitChange(prev => ({
+        ...prev,
+        nodes: [...prev.nodes, clone]
+      }));
+      setSelection({ kind: 'node', id: clone.id });
+      if (inspectorTarget?.kind === 'node') {
+        setInspectorTarget({ kind: 'node', id: clone.id });
+      }
+    } else if (target.kind === 'label') {
+      const orig = (docRef.current.labels || []).find(l => l.id === target.id);
+      if (!orig) return;
+      const clone: NetworkDiagramLabel = {
+        ...orig,
+        id: `lbl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        x: Math.min(DIAGRAM_CANVAS_WIDTH - 120, orig.x + 24),
+        y: Math.min(DIAGRAM_CANVAS_HEIGHT - 40, orig.y + 24)
+      };
+      commitChange(prev => ({
+        ...prev,
+        labels: [...(prev.labels || []), clone]
+      }));
+      setSelection({ kind: 'label', id: clone.id });
+      if (inspectorTarget?.kind === 'label') {
+        setInspectorTarget({ kind: 'label', id: clone.id });
+      }
     }
   }, [selection, inspectorTarget, commitChange]);
 
@@ -489,7 +562,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
-        if (selection?.kind === 'node') {
+        if (selection?.kind === 'node' || selection?.kind === 'label') {
           e.preventDefault();
           handleDuplicateSelectedNode();
         }
@@ -511,25 +584,40 @@ export const NetworkDiagramDesigner: React.FC = () => {
       }
 
       if (
-        selection?.kind === 'node' &&
+        (selection?.kind === 'node' || selection?.kind === 'label') &&
         ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)
       ) {
         e.preventDefault();
         const step = e.shiftKey ? GRID_SNAP_SIZE : 4;
         const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
         const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
-        commitCoalescedEdit(`nudge:${selection.id}`, prev => ({
-          ...prev,
-          nodes: prev.nodes.map(n =>
-            n.id === selection.id
-              ? {
-                  ...n,
-                  x: Math.max(0, Math.min(DIAGRAM_CANVAS_WIDTH - NODE_WIDTH, n.x + dx)),
-                  y: Math.max(0, Math.min(DIAGRAM_CANVAS_HEIGHT - NODE_HEIGHT, n.y + dy))
-                }
-              : n
-          )
-        }));
+        if (selection.kind === 'node') {
+          commitCoalescedEdit(`nudge:${selection.id}`, prev => ({
+            ...prev,
+            nodes: prev.nodes.map(n =>
+              n.id === selection.id
+                ? {
+                    ...n,
+                    x: Math.max(0, Math.min(DIAGRAM_CANVAS_WIDTH - NODE_WIDTH, n.x + dx)),
+                    y: Math.max(0, Math.min(DIAGRAM_CANVAS_HEIGHT - NODE_HEIGHT, n.y + dy))
+                  }
+                : n
+            )
+          }));
+        } else {
+          commitCoalescedEdit(`nudge-label:${selection.id}`, prev => ({
+            ...prev,
+            labels: (prev.labels || []).map(l =>
+              l.id === selection.id
+                ? {
+                    ...l,
+                    x: Math.max(0, Math.min(DIAGRAM_CANVAS_WIDTH - 40, l.x + dx)),
+                    y: Math.max(0, Math.min(DIAGRAM_CANVAS_HEIGHT - 24, l.y + dy))
+                  }
+                : l
+            )
+          }));
+        }
       }
     };
 
@@ -593,6 +681,12 @@ export const NetworkDiagramDesigner: React.FC = () => {
       minY = Math.min(minY, n.y);
       maxX = Math.max(maxX, n.x + NODE_WIDTH);
       maxY = Math.max(maxY, n.y + NODE_HEIGHT);
+    });
+    (docRef.current.labels || []).forEach(lbl => {
+      minX = Math.min(minX, lbl.x);
+      minY = Math.min(minY, lbl.y);
+      maxX = Math.max(maxX, lbl.x + Math.max(80, lbl.text.length * 9));
+      maxY = Math.max(maxY, lbl.y + 36);
     });
 
     if (!Number.isFinite(minX)) {
@@ -843,7 +937,68 @@ export const NetworkDiagramDesigner: React.FC = () => {
     window.addEventListener('mouseup', onUp);
   };
 
-  // Canvas background click (place zone / clear selection / pan)
+  // Dragging a standalone text label
+  const startLabelDrag = (e: React.MouseEvent, lbl: NetworkDiagramLabel) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    focusCanvas();
+    setSelection({ kind: 'label', id: lbl.id });
+    setInspectorTarget(prev => (prev && prev.kind === 'label' && prev.id === lbl.id ? prev : null));
+
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    const origX = lbl.x;
+    const origY = lbl.y;
+    let latestX = origX;
+    let latestY = origY;
+    const preDragDoc = cloneDiagramDocument(docRef.current);
+    let hasMoved = false;
+
+    const onMove = (moveEvt: MouseEvent) => {
+      const dx = (moveEvt.clientX - startClientX) / zoomRef.current;
+      const dy = (moveEvt.clientY - startClientY) / zoomRef.current;
+      if (!hasMoved && Math.hypot(dx, dy) > 3) {
+        hasMoved = true;
+      }
+      if (!hasMoved) return;
+
+      latestX = Math.max(0, Math.min(DIAGRAM_CANVAS_WIDTH - 40, snapCoord(origX + dx)));
+      latestY = Math.max(0, Math.min(DIAGRAM_CANVAS_HEIGHT - 24, snapCoord(origY + dy)));
+
+      dispatchHistory({
+        type: 'PREVIEW',
+        updater: prev => ({
+          ...prev,
+          labels: (prev.labels || []).map(item =>
+            item.id === lbl.id ? { ...item, x: latestX, y: latestY } : item
+          )
+        })
+      });
+    };
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      if (hasMoved) {
+        const finalDoc: NetworkDiagramDocument = {
+          ...preDragDoc,
+          labels: (preDragDoc.labels || []).map(item =>
+            item.id === lbl.id ? { ...item, x: latestX, y: latestY } : item
+          )
+        };
+        dispatchHistory({
+          type: 'COMMIT_DRAG',
+          preDragDoc,
+          nextDoc: finalDoc
+        });
+      }
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  // Canvas background click (place zone / place label / clear selection / pan)
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0 && e.button !== 1) return;
     const target = e.target as HTMLElement | null;
@@ -851,7 +1006,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
       target?.closest('[data-node-id]') ||
       target?.closest('[data-cable-id]') ||
       target?.closest('[data-zone-id]') ||
-      target?.closest('button, input, select')
+      target?.closest('[data-label-id]') ||
+      target?.closest('button, input, select, textarea')
     ) {
       return;
     }
@@ -861,6 +1017,12 @@ export const NetworkDiagramDesigner: React.FC = () => {
     if (toolMode === 'zone' && e.button === 0) {
       const pt = clientToCanvas(e.clientX, e.clientY);
       addZoneAt(pt.x - 160, pt.y - 100);
+      return;
+    }
+
+    if (toolMode === 'label' && e.button === 0) {
+      const pt = clientToCanvas(e.clientX, e.clientY);
+      addLabelAt(pt.x - 36, pt.y - 12);
       return;
     }
 
@@ -902,6 +1064,12 @@ export const NetworkDiagramDesigner: React.FC = () => {
 
   const handleCanvasDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
+    const isLabelDrop = e.dataTransfer.getData('application/x-network-label');
+    if (isLabelDrop) {
+      const pt = clientToCanvas(e.clientX, e.clientY);
+      addLabelAt(pt.x - 36, pt.y - 12);
+      return;
+    }
     const deviceType = e.dataTransfer.getData('application/x-network-device') as NetworkDeviceType;
     if (!deviceType || !STENCIL_MAP[deviceType]) return;
     const pt = clientToCanvas(e.clientX, e.clientY);
@@ -992,7 +1160,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
           name: typeof parsed.name === 'string' ? parsed.name : 'Imported Network Topology',
           nodes: parsed.nodes,
           cables: parsed.cables,
-          zones: Array.isArray(parsed.zones) ? parsed.zones : []
+          zones: Array.isArray(parsed.zones) ? parsed.zones : [],
+          labels: Array.isArray(parsed.labels) ? parsed.labels : []
         }));
         setSelection(null);
         setInspectorTarget(null);
@@ -1012,7 +1181,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
       return (
         item.name.toLowerCase().includes(q) ||
         item.shortPrefix.toLowerCase().includes(q) ||
-        item.category.toLowerCase().includes(q)
+        item.category.toLowerCase().includes(q) ||
+        Boolean(item.keywords && item.keywords.toLowerCase().includes(q))
       );
     });
   }, [stencilQuery, activeCategory]);
@@ -1030,6 +1200,10 @@ export const NetworkDiagramDesigner: React.FC = () => {
   const inspectedZone =
     inspectorTarget?.kind === 'zone'
       ? doc.zones.find(z => z.id === inspectorTarget.id) || null
+      : null;
+  const inspectedLabel =
+    inspectorTarget?.kind === 'label'
+      ? (doc.labels || []).find(l => l.id === inspectorTarget.id) || null
       : null;
 
   const updateInspectedNode = (
@@ -1080,6 +1254,24 @@ export const NetworkDiagramDesigner: React.FC = () => {
     }
   };
 
+  const updateInspectedLabel = (
+    patch: Partial<NetworkDiagramLabel>,
+    editKey?: string
+  ) => {
+    if (!inspectedLabel) return;
+    const updater = (prev: NetworkDiagramDocument): NetworkDiagramDocument => ({
+      ...prev,
+      labels: (prev.labels || []).map(l =>
+        l.id === inspectedLabel.id ? { ...l, ...patch } : l
+      )
+    });
+    if (editKey) {
+      commitCoalescedEdit(`label:${inspectedLabel.id}:${editKey}`, updater);
+    } else {
+      commitChange(updater);
+    }
+  };
+
   return (
     <div
       data-disable-global-shortcuts="true"
@@ -1108,7 +1300,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
                   className="text-base font-bold text-slate-900 dark:text-white bg-transparent border-b border-transparent hover:border-slate-300 dark:hover:border-slate-700 focus:border-blue-500 focus:outline-none min-w-[200px] max-w-md truncate"
                 />
                 <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
-                  {doc.nodes.length} devices · {doc.cables.length} cables · {doc.zones.length} zones
+                  {doc.nodes.length} devices · {doc.cables.length} cables · {(doc.labels || []).length} labels · {doc.zones.length} zones
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
@@ -1279,6 +1471,23 @@ export const NetworkDiagramDesigner: React.FC = () => {
               >
                 <Cable className="w-3.5 h-3.5" />
                 <span>Connect Cable</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setToolMode('label');
+                  setConnectSourceId(null);
+                }}
+                aria-pressed={toolMode === 'label'}
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all ${
+                  toolMode === 'label'
+                    ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-cyan-400 shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Type className="w-3.5 h-3.5" />
+                <span>Label</span>
               </button>
 
               <button
@@ -1464,7 +1673,15 @@ export const NetworkDiagramDesigner: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap gap-1">
-            {(['All', 'Routing & Switching', 'Security & WAN', 'Wireless & Endpoints'] as const).map(
+            {(
+              [
+                'All',
+                'Routing & Switching',
+                'Security & WAN',
+                'Wireless & Endpoints',
+                'CCTV & Surveillance'
+              ] as const
+            ).map(
               cat => (
                 <button
                   key={cat}
@@ -1482,13 +1699,15 @@ export const NetworkDiagramDesigner: React.FC = () => {
                     ? 'Routing/SW'
                     : cat === 'Security & WAN'
                     ? 'Security/WAN'
-                    : 'Wireless/Host'}
+                    : cat === 'Wireless & Endpoints'
+                    ? 'Wireless/Host'
+                    : 'CCTV / NVR'}
                 </button>
               )
             )}
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-1 gap-1.5 max-h-[460px] overflow-y-auto pr-0.5">
+          <div className="grid grid-cols-2 gap-2 max-h-[450px] overflow-y-auto pr-0.5">
             {filteredStencils.map(stencil => (
               <button
                 key={stencil.type}
@@ -1500,32 +1719,43 @@ export const NetworkDiagramDesigner: React.FC = () => {
                 }}
                 onClick={() => addDeviceAt(stencil.type)}
                 title={`Drag onto canvas or click to add ${stencil.name}`}
-                className="w-full p-2 rounded-xl bg-slate-50/80 dark:bg-slate-900/60 hover:bg-blue-50/80 dark:hover:bg-blue-950/40 border border-slate-200/80 dark:border-slate-800 hover:border-blue-400 dark:hover:border-cyan-500/60 text-left transition-all flex items-center gap-2.5 group cursor-grab active:cursor-grabbing"
+                className="p-2.5 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 hover:bg-blue-50/80 dark:hover:bg-blue-950/40 border border-slate-200/80 dark:border-slate-800 hover:border-blue-400 dark:hover:border-cyan-500/60 transition-all flex flex-col items-center justify-center gap-1.5 group cursor-grab active:cursor-grabbing"
               >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${stencil.badgeBgClass} ${stencil.badgeTextClass}`}>
-                  <NetworkDeviceGlyph type={stencil.type} className="w-5 h-5" />
+                <div className="w-14 h-12 flex items-center justify-center transition-transform duration-150 group-hover:scale-110">
+                  <NetworkDeviceGlyph type={stencil.type} className="w-12 h-11 drop-shadow-xs" />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">
-                    {stencil.name}
-                  </p>
-                  <p className="text-[10px] font-mono text-slate-400 truncate">
-                    {stencil.defaultIp}
-                  </p>
-                </div>
-                <Plus className="w-3.5 h-3.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                <span className="text-[10.5px] font-semibold text-slate-700 dark:text-slate-200 text-center leading-tight line-clamp-2">
+                  {stencil.name}
+                </span>
               </button>
             ))}
           </div>
 
-          <button
-            type="button"
-            onClick={() => addZoneAt()}
-            className="w-full px-3 py-2 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-cyan-400 inline-flex items-center justify-center gap-1.5"
-          >
-            <SquareDashed className="w-3.5 h-3.5" />
-            <span>Add Subnet Zone Frame</span>
-          </button>
+          <div className="space-y-1.5 pt-1 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              draggable
+              onDragStart={e => {
+                e.dataTransfer.setData('application/x-network-label', '1');
+                e.dataTransfer.effectAllowed = 'copy';
+              }}
+              onClick={() => addLabelAt()}
+              title="Drag onto canvas or click to place a text label mark"
+              className="w-full px-3 py-2 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-cyan-400 inline-flex items-center justify-center gap-1.5 cursor-grab active:cursor-grabbing"
+            >
+              <Type className="w-3.5 h-3.5" />
+              <span>Add Label</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => addZoneAt()}
+              className="w-full px-3 py-2 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-cyan-400 inline-flex items-center justify-center gap-1.5"
+            >
+              <SquareDashed className="w-3.5 h-3.5" />
+              <span>Add Subnet Zone Frame</span>
+            </button>
+          </div>
         </aside>
 
         {/* Interactive Drawing Canvas (Full Remaining Width) */}
@@ -1540,6 +1770,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
                   ? connectSourceId
                     ? `Select destination device to finish ${CABLE_SPECS[activeCableType].shortLabel} cable (Esc to cancel)`
                     : `Click source device, then target device to connect a ${CABLE_SPECS[activeCableType].shortLabel} cable`
+                  : toolMode === 'label'
+                  ? 'Click anywhere on the canvas to place a text label mark (Esc to cancel)'
                   : 'Click anywhere on the canvas to place a new Subnet / Security Zone frame'}
               </div>
             </div>
@@ -1560,6 +1792,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
                 ? 'cursor-grabbing'
                 : toolMode === 'zone'
                 ? 'cursor-crosshair'
+                : toolMode === 'label'
+                ? 'cursor-text'
                 : toolMode === 'connect'
                 ? 'cursor-cell'
                 : 'cursor-default'
@@ -1645,7 +1879,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
                     const spec = CABLE_SPECS[cable.cableType];
                     const isSelected =
                       selection?.kind === 'cable' && selection.id === cable.id;
-                    const badgeLabel = cable.label || cable.bandwidth || spec.shortLabel;
+                    const badgeLabel = cable.label;
 
                     return (
                       <g
@@ -1734,9 +1968,8 @@ export const NetworkDiagramDesigner: React.FC = () => {
                   )}
                 </svg>
 
-                {/* Layer 3: Network Device Nodes */}
+                {/* Layer 3: Enlarged Network Device Symbols (No Card Box, Label, or Role Clutter) */}
                 {doc.nodes.map(node => {
-                  const meta = STENCIL_MAP[node.type];
                   const isSelected =
                     selection?.kind === 'node' && selection.id === node.id;
                   const isConnectSource = connectSourceId === node.id;
@@ -1750,6 +1983,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
                     <div
                       key={node.id}
                       data-node-id={node.id}
+                      title={node.label}
                       onMouseDown={e => startNodeDrag(e, node)}
                       onDoubleClick={e => {
                         e.stopPropagation();
@@ -1769,36 +2003,20 @@ export const NetworkDiagramDesigner: React.FC = () => {
                         width: NODE_WIDTH,
                         height: NODE_HEIGHT
                       }}
-                      className={`group rounded-xl bg-white dark:bg-[#0c1220] border p-2.5 flex flex-col justify-between shadow-sm transition-shadow ${
+                      className={`group rounded-2xl flex items-center justify-center transition-all ${
                         toolMode === 'connect' ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'
                       } ${
                         isConnectSource
-                          ? 'border-emerald-500 ring-2 ring-emerald-500/40 shadow-md'
+                          ? 'ring-2 ring-emerald-500 bg-emerald-500/10'
                           : isSelected
-                          ? 'border-blue-600 dark:border-cyan-400 ring-2 ring-blue-500/30 dark:ring-cyan-400/30 shadow-md'
-                          : 'border-slate-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-cyan-500/70'
+                          ? 'ring-2 ring-blue-500 dark:ring-cyan-400 bg-blue-500/10'
+                          : 'hover:bg-blue-500/5 hover:ring-1 hover:ring-blue-400/50 dark:hover:ring-cyan-400/40'
                       }`}
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div
-                          className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${meta.badgeBgClass} ${meta.badgeTextClass}`}
-                        >
-                          <NetworkDeviceGlyph type={node.type} className="w-5 h-5" />
-                        </div>
-                        <span className="text-[10px] font-mono font-semibold text-slate-400 dark:text-slate-500 truncate">
-                          {meta.name}
-                        </span>
-                      </div>
-
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                          {node.label}
-                        </p>
-                        <p className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400 truncate">
-                          {node.ipAddress}
-                          {node.subnetMask}
-                        </p>
-                      </div>
+                      <NetworkDeviceGlyph
+                        type={node.type}
+                        className="w-[84px] h-[72px] drop-shadow-sm transition-transform duration-150 group-hover:scale-105 pointer-events-none"
+                      />
 
                       {/* 4 Drag-to-Connect Port Handles */}
                       {showPorts &&
@@ -1828,14 +2046,55 @@ export const NetworkDiagramDesigner: React.FC = () => {
                   );
                 })}
 
+                {/* Layer 4: Standalone Workspace Text Labels */}
+                {(doc.labels || []).map(lbl => {
+                  const isSelected =
+                    selection?.kind === 'label' && selection.id === lbl.id;
+                  const sizeCfg = LABEL_SIZE_CONFIG[lbl.fontSize] || LABEL_SIZE_CONFIG.sm;
+                  const colorCfg = LABEL_COLOR_STYLES[lbl.color] || LABEL_COLOR_STYLES.slate;
+
+                  return (
+                    <div
+                      key={lbl.id}
+                      data-label-id={lbl.id}
+                      onMouseDown={e => startLabelDrag(e, lbl)}
+                      onDoubleClick={e => {
+                        e.stopPropagation();
+                        focusCanvas();
+                        setSelection({ kind: 'label', id: lbl.id });
+                        setInspectorTarget({ kind: 'label', id: lbl.id });
+                        window.requestAnimationFrame(() => {
+                          labelInputRef.current?.focus();
+                          labelInputRef.current?.select();
+                        });
+                      }}
+                      style={{
+                        position: 'absolute',
+                        left: lbl.x,
+                        top: lbl.y
+                      }}
+                      title="Drag to move · Double-click to edit label"
+                      className={`px-1.5 py-0.5 rounded-md whitespace-pre-wrap select-none cursor-move transition-all ${sizeCfg.className} ${colorCfg.className} ${
+                        lbl.bold ? 'font-bold' : 'font-medium'
+                      } ${
+                        isSelected
+                          ? 'ring-1 ring-blue-500 dark:ring-cyan-400 bg-blue-500/10'
+                          : 'hover:bg-slate-900/5 dark:hover:bg-white/5'
+                      }`}
+                    >
+                      {lbl.text || 'Label'}
+                    </div>
+                  );
+                })}
+
                 {/* Empty Canvas Callout */}
-                {doc.nodes.length === 0 && doc.zones.length === 0 && (
+                {doc.nodes.length === 0 && doc.zones.length === 0 && (doc.labels || []).length === 0 && (
                   <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-center space-y-2 pointer-events-none max-w-xs">
                     <p className="text-sm font-bold text-slate-700 dark:text-slate-200">
                       Blank Network Topology Canvas
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Drag any router, switch, firewall, or server from the left stencil palette onto this grid, or load a starter template above.
+                      Drag any device symbol or Label from the left stencil palette onto this grid, or load a starter template above.
                     </p>
                   </div>
                 )}
@@ -1845,11 +2104,11 @@ export const NetworkDiagramDesigner: React.FC = () => {
 
           {/* Bottom-left Quick Hint */}
           <div className="pointer-events-none absolute left-3 bottom-3 hidden sm:flex items-center px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm border border-slate-200/80 dark:border-slate-700/80 text-[11px] text-slate-500 dark:text-slate-400 shadow-xs">
-            Double-click device, cable, or zone to edit properties · Drag ports to connect · Ctrl + Scroll to zoom
+            Double-click device, label, cable, or zone to edit · Drag ports to connect · Ctrl + Scroll to zoom
           </div>
 
-          {/* Floating Properties Box — appears ONLY when double-clicking a device, cable, or zone */}
-          {(inspectedNode || inspectedCable || inspectedZone) && (
+          {/* Floating Properties Box — appears ONLY when double-clicking or adding a label */}
+          {(inspectedNode || inspectedCable || inspectedZone || inspectedLabel) && (
             <aside
               role="dialog"
               aria-label="Diagram Element Properties"
@@ -2253,6 +2512,140 @@ export const NetworkDiagramDesigner: React.FC = () => {
                             }`}
                           >
                             {ZONE_STYLE_MAP[col].label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : inspectedLabel ? (
+                <div className="space-y-3.5">
+                  <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-cyan-400 flex items-center justify-center shrink-0">
+                        <Type className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-mono text-slate-400 block">
+                          Workspace Text Label
+                        </span>
+                        <h3 className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                          {inspectedLabel.text || 'Label'}
+                        </h3>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleDuplicateSelectedNode}
+                        title="Duplicate label (Ctrl+D)"
+                        aria-label="Duplicate label"
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDeleteSelection}
+                        title="Delete label (Del)"
+                        aria-label="Delete label"
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInspectorTarget(null)}
+                        title="Close properties (Esc)"
+                        aria-label="Close label properties"
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                        Label Text
+                      </label>
+                      <textarea
+                        ref={labelInputRef}
+                        rows={3}
+                        value={inspectedLabel.text}
+                        onChange={e => updateInspectedLabel({ text: e.target.value }, 'text')}
+                        onBlur={endEditSession}
+                        placeholder="e.g. Cisco 3620, Layer 3 switch, PSTN..."
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex-1">
+                        <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                          Text Size
+                        </label>
+                        <div className="grid grid-cols-4 gap-1">
+                          {(Object.keys(LABEL_SIZE_CONFIG) as LabelSizePreset[]).map(sz => (
+                            <button
+                              key={sz}
+                              type="button"
+                              onClick={() => updateInspectedLabel({ fontSize: sz })}
+                              className={`py-1 rounded-lg border text-[10px] font-semibold transition-colors ${
+                                inspectedLabel.fontSize === sz
+                                  ? 'border-blue-600 dark:border-cyan-400 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-cyan-300'
+                                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                              }`}
+                            >
+                              {LABEL_SIZE_CONFIG[sz].label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                          Weight
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => updateInspectedLabel({ bold: !inspectedLabel.bold })}
+                          aria-pressed={inspectedLabel.bold}
+                          title="Toggle bold text"
+                          className={`px-2.5 py-1 rounded-lg border text-[10px] font-semibold inline-flex items-center gap-1 transition-colors ${
+                            inspectedLabel.bold
+                              ? 'border-blue-600 dark:border-cyan-400 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-cyan-300'
+                              : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                          }`}
+                        >
+                          <Bold className="w-3 h-3" />
+                          <span>Bold</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                        Text Color
+                      </label>
+                      <div className="grid grid-cols-7 gap-1.5">
+                        {(Object.keys(LABEL_COLOR_STYLES) as LabelColorTheme[]).map(col => (
+                          <button
+                            key={col}
+                            type="button"
+                            onClick={() => updateInspectedLabel({ color: col })}
+                            title={LABEL_COLOR_STYLES[col].label}
+                            aria-label={`Set label color to ${LABEL_COLOR_STYLES[col].label}`}
+                            className={`h-7 rounded-lg border flex items-center justify-center transition-all ${
+                              inspectedLabel.color === col
+                                ? 'border-blue-600 dark:border-cyan-400 ring-2 ring-blue-500/30 scale-105'
+                                : 'border-slate-200 dark:border-slate-700 hover:scale-105'
+                            }`}
+                          >
+                            <span
+                              className={`w-4 h-4 rounded-full ${LABEL_COLOR_STYLES[col].swatchClass}`}
+                            />
                           </button>
                         ))}
                       </div>

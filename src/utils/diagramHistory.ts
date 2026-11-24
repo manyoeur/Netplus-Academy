@@ -40,7 +40,8 @@ export function cloneDiagramDocument(doc: NetworkDiagramDocument): NetworkDiagra
     name: doc.name,
     nodes: doc.nodes.map(n => ({ ...n })),
     cables: doc.cables.map(c => ({ ...c })),
-    zones: doc.zones.map(z => ({ ...z }))
+    zones: doc.zones.map(z => ({ ...z })),
+    labels: (doc.labels || []).map(l => ({ ...l }))
   };
 }
 

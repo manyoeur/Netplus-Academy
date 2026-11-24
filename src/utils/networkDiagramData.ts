@@ -1,3 +1,5 @@
+import { getDiagramDeviceInnerSvg } from '../components/Lab/NetworkDeviceGlyph';
+
 export type NetworkDeviceType =
   | 'core-router'
   | 'edge-router'
@@ -10,21 +12,30 @@ export type NetworkDeviceType =
   | 'wlc'
   | 'access-point'
   | 'server'
-  | 'workstation';
+  | 'ip-phone'
+  | 'workstation'
+  | 'analog-cctv'
+  | 'digital-cctv'
+  | 'smart-cctv'
+  | 'nvr'
+  | 'dvr';
 
 export type DeviceCategory =
   | 'Routing & Switching'
   | 'Security & WAN'
-  | 'Wireless & Endpoints';
+  | 'Wireless & Endpoints'
+  | 'CCTV & Surveillance';
 
 export type PortSide = 'auto' | 'top' | 'right' | 'bottom' | 'left';
 export type ConcretePortSide = 'top' | 'right' | 'bottom' | 'left';
 
 export type CableType = 'ethernet' | 'fiber' | 'serial' | 'wireless' | 'console';
 export type CableRoutingStyle = 'orthogonal' | 'curved' | 'straight';
-export type DiagramToolMode = 'select' | 'connect' | 'zone';
+export type DiagramToolMode = 'select' | 'connect' | 'zone' | 'label';
 
 export type ZoneColorTheme = 'blue' | 'emerald' | 'amber' | 'violet' | 'slate';
+export type LabelColorTheme = 'slate' | 'blue' | 'cyan' | 'emerald' | 'amber' | 'violet' | 'red';
+export type LabelSizePreset = 'sm' | 'md' | 'lg' | 'title';
 
 export interface NetworkDiagramNode {
   id: string;
@@ -63,12 +74,88 @@ export interface NetworkDiagramZone {
   height: number;
 }
 
+export interface NetworkDiagramLabel {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  fontSize: LabelSizePreset;
+  color: LabelColorTheme;
+  bold: boolean;
+}
+
 export interface NetworkDiagramDocument {
   name: string;
   nodes: NetworkDiagramNode[];
   cables: NetworkDiagramCable[];
   zones: NetworkDiagramZone[];
+  labels: NetworkDiagramLabel[];
 }
+
+export const LABEL_SIZE_CONFIG: Record<
+  LabelSizePreset,
+  { label: string; px: number; className: string }
+> = {
+  sm: { label: 'Small', px: 12, className: 'text-xs leading-snug' },
+  md: { label: 'Medium', px: 14, className: 'text-sm leading-snug' },
+  lg: { label: 'Large', px: 18, className: 'text-lg leading-snug' },
+  title: { label: 'Title', px: 24, className: 'text-2xl leading-tight' }
+};
+
+export const LABEL_COLOR_STYLES: Record<
+  LabelColorTheme,
+  { label: string; className: string; swatchClass: string; lightHex: string; darkHex: string }
+> = {
+  slate: {
+    label: 'Slate',
+    className: 'text-slate-900 dark:text-slate-100',
+    swatchClass: 'bg-slate-800 dark:bg-slate-200',
+    lightHex: '#0f172a',
+    darkHex: '#f1f5f9'
+  },
+  blue: {
+    label: 'Blue',
+    className: 'text-blue-700 dark:text-blue-300',
+    swatchClass: 'bg-blue-600',
+    lightHex: '#1d4ed8',
+    darkHex: '#93c5fd'
+  },
+  cyan: {
+    label: 'Cyan',
+    className: 'text-sky-600 dark:text-cyan-300',
+    swatchClass: 'bg-sky-500',
+    lightHex: '#0284c7',
+    darkHex: '#67e8f9'
+  },
+  emerald: {
+    label: 'Green',
+    className: 'text-emerald-700 dark:text-emerald-300',
+    swatchClass: 'bg-emerald-600',
+    lightHex: '#047857',
+    darkHex: '#6ee7b7'
+  },
+  amber: {
+    label: 'Amber',
+    className: 'text-amber-700 dark:text-amber-300',
+    swatchClass: 'bg-amber-500',
+    lightHex: '#b45309',
+    darkHex: '#fcd34d'
+  },
+  violet: {
+    label: 'Violet',
+    className: 'text-violet-700 dark:text-violet-300',
+    swatchClass: 'bg-violet-600',
+    lightHex: '#6d28d9',
+    darkHex: '#c4b5fd'
+  },
+  red: {
+    label: 'Red',
+    className: 'text-red-600 dark:text-red-400',
+    swatchClass: 'bg-red-600',
+    lightHex: '#dc2626',
+    darkHex: '#f87171'
+  }
+};
 
 export interface DeviceStencilMeta {
   type: NetworkDeviceType;
@@ -81,10 +168,11 @@ export interface DeviceStencilMeta {
   accentHex: string;
   badgeBgClass: string;
   badgeTextClass: string;
+  keywords?: string;
 }
 
-export const NODE_WIDTH = 132;
-export const NODE_HEIGHT = 86;
+export const NODE_WIDTH = 92;
+export const NODE_HEIGHT = 78;
 export const DIAGRAM_CANVAS_WIDTH = 2200;
 export const DIAGRAM_CANVAS_HEIGHT = 1400;
 export const GRID_SNAP_SIZE = 20;
@@ -223,6 +311,18 @@ export const NETWORK_DEVICE_STENCILS: DeviceStencilMeta[] = [
     badgeTextClass: 'text-slate-700 dark:text-slate-300'
   },
   {
+    type: 'ip-phone',
+    name: 'IP Phone',
+    shortPrefix: 'VOIP',
+    category: 'Wireless & Endpoints',
+    defaultIp: '10.10.40.25',
+    defaultMask: '/24',
+    defaultVlanOrAsn: 'Voice VLAN 40',
+    accentHex: '#0284c7',
+    badgeBgClass: 'bg-sky-50 dark:bg-sky-950/50',
+    badgeTextClass: 'text-sky-600 dark:text-sky-400'
+  },
+  {
     type: 'workstation',
     name: 'Workstation / PC',
     shortPrefix: 'PC',
@@ -233,6 +333,71 @@ export const NETWORK_DEVICE_STENCILS: DeviceStencilMeta[] = [
     accentHex: '#64748b',
     badgeBgClass: 'bg-slate-100 dark:bg-slate-800',
     badgeTextClass: 'text-slate-600 dark:text-slate-300'
+  },
+  {
+    type: 'analog-cctv',
+    name: 'Analog CCTV Camera',
+    shortPrefix: 'CAM-A',
+    category: 'CCTV & Surveillance',
+    defaultIp: 'Coax CH-1',
+    defaultMask: 'BNC',
+    defaultVlanOrAsn: 'CVBS / AHD',
+    accentHex: '#d97706',
+    badgeBgClass: 'bg-amber-50 dark:bg-amber-950/50',
+    badgeTextClass: 'text-amber-600 dark:text-amber-400',
+    keywords: 'analog analogy cctv camera security coax bnc surveillance'
+  },
+  {
+    type: 'digital-cctv',
+    name: 'Digital IP CCTV',
+    shortPrefix: 'CAM-IP',
+    category: 'CCTV & Surveillance',
+    defaultIp: '10.10.60.11',
+    defaultMask: '/24',
+    defaultVlanOrAsn: 'PoE VLAN 60',
+    accentHex: '#0284c7',
+    badgeBgClass: 'bg-sky-50 dark:bg-sky-950/50',
+    badgeTextClass: 'text-sky-600 dark:text-sky-400',
+    keywords: 'digital ip cctv camera security poe dome onvif surveillance'
+  },
+  {
+    type: 'smart-cctv',
+    name: 'Smart AI CCTV',
+    shortPrefix: 'CAM-AI',
+    category: 'CCTV & Surveillance',
+    defaultIp: '10.10.60.21',
+    defaultMask: '/24',
+    defaultVlanOrAsn: 'AI / Wi-Fi',
+    accentHex: '#059669',
+    badgeBgClass: 'bg-emerald-50 dark:bg-emerald-950/50',
+    badgeTextClass: 'text-emerald-600 dark:text-emerald-400',
+    keywords: 'smart ai cctv camera security ptz wifi analytics surveillance'
+  },
+  {
+    type: 'nvr',
+    name: 'NVR Recorder',
+    shortPrefix: 'NVR',
+    category: 'CCTV & Surveillance',
+    defaultIp: '10.10.60.5',
+    defaultMask: '/24',
+    defaultVlanOrAsn: 'PoE 16-Ch',
+    accentHex: '#2563eb',
+    badgeBgClass: 'bg-blue-50 dark:bg-blue-950/50',
+    badgeTextClass: 'text-blue-600 dark:text-cyan-400',
+    keywords: 'nvr network video recorder cctv security storage surveillance'
+  },
+  {
+    type: 'dvr',
+    name: 'DVR Recorder',
+    shortPrefix: 'DVR',
+    category: 'CCTV & Surveillance',
+    defaultIp: '10.10.60.6',
+    defaultMask: '/24',
+    defaultVlanOrAsn: 'BNC 8-Ch',
+    accentHex: '#4f46e5',
+    badgeBgClass: 'bg-indigo-50 dark:bg-indigo-950/50',
+    badgeTextClass: 'text-indigo-600 dark:text-indigo-400',
+    keywords: 'dvr digital video recorder analog bnc coax cctv security'
   }
 ];
 
@@ -601,6 +766,345 @@ export const DIAGRAM_TEMPLATES: DiagramTemplate[] = [
           targetInterface: 'wifi0',
           label: '802.11ax'
         }
+      ],
+      labels: [
+        { id: 'lbl-ent-1', text: 'Primary ISP', x: 268, y: 150, fontSize: 'sm', color: 'slate', bold: true },
+        { id: 'lbl-ent-2', text: 'NGFW-01', x: 530, y: 150, fontSize: 'sm', color: 'slate', bold: true },
+        { id: 'lbl-ent-3', text: 'CORE-SW-01', x: 266, y: 360, fontSize: 'sm', color: 'blue', bold: true },
+        { id: 'lbl-ent-4', text: 'CORE-SW-02', x: 526, y: 360, fontSize: 'sm', color: 'blue', bold: true },
+        { id: 'lbl-ent-5', text: 'DMZ-ADC-01', x: 794, y: 308, fontSize: 'sm', color: 'amber', bold: true },
+        { id: 'lbl-ent-6', text: 'APP-WEB-01', x: 794, y: 416, fontSize: 'sm', color: 'slate', bold: true },
+        { id: 'lbl-ent-7', text: 'ACC-SW01', x: 228, y: 598, fontSize: 'sm', color: 'cyan', bold: true },
+        { id: 'lbl-ent-8', text: 'Wi-Fi AP', x: 436, y: 598, fontSize: 'sm', color: 'emerald', bold: true },
+        { id: 'lbl-ent-9', text: 'Workstation', x: 626, y: 598, fontSize: 'sm', color: 'slate', bold: true },
+        { id: 'lbl-ent-10', text: 'Server Host', x: 806, y: 598, fontSize: 'sm', color: 'slate', bold: true }
+      ]
+    }
+  },
+  {
+    id: 'lan-fault-tolerance',
+    label: 'LAN Fault-Tolerance System',
+    document: {
+      name: 'LAN Fault-Tolerance System',
+      zones: [
+        {
+          id: 'zone-ft-left',
+          title: 'Department Pod A',
+          subtitle: '',
+          color: 'slate',
+          x: 60,
+          y: 340,
+          width: 340,
+          height: 300
+        },
+        {
+          id: 'zone-ft-right',
+          title: 'Department Pod B',
+          subtitle: '',
+          color: 'slate',
+          x: 780,
+          y: 340,
+          width: 340,
+          height: 300
+        },
+        {
+          id: 'zone-ft-bottom',
+          title: 'Department Pod C',
+          subtitle: '',
+          color: 'slate',
+          x: 380,
+          y: 580,
+          width: 420,
+          height: 240
+        }
+      ],
+      nodes: [
+        {
+          id: 'ft-pstn',
+          type: 'wan-cloud',
+          label: 'PSTN',
+          ipAddress: '198.51.100.0',
+          subnetMask: '/24',
+          vlanOrAsn: 'WAN',
+          notes: '',
+          x: 540,
+          y: 80
+        },
+        {
+          id: 'ft-rtr1',
+          type: 'core-router',
+          label: 'Cisco 3620-A',
+          ipAddress: '10.0.0.1',
+          subnetMask: '/30',
+          vlanOrAsn: 'Edge A',
+          notes: '',
+          x: 420,
+          y: 160
+        },
+        {
+          id: 'ft-rtr2',
+          type: 'core-router',
+          label: 'Cisco 3620-B',
+          ipAddress: '10.0.0.2',
+          subnetMask: '/30',
+          vlanOrAsn: 'Edge B',
+          notes: '',
+          x: 660,
+          y: 160
+        },
+        {
+          id: 'ft-bb1',
+          type: 'l3-switch',
+          label: 'Backbone L3-A',
+          ipAddress: '10.1.0.1',
+          subnetMask: '/24',
+          vlanOrAsn: 'Core',
+          notes: '',
+          x: 420,
+          y: 260
+        },
+        {
+          id: 'ft-bb2',
+          type: 'l3-switch',
+          label: 'Backbone L3-B',
+          ipAddress: '10.1.0.2',
+          subnetMask: '/24',
+          vlanOrAsn: 'Core',
+          notes: '',
+          x: 660,
+          y: 260
+        },
+        {
+          id: 'ft-l3-a1',
+          type: 'l3-switch',
+          label: 'Pod A L3-1',
+          ipAddress: '10.10.1.1',
+          subnetMask: '/24',
+          vlanOrAsn: 'Pod A',
+          notes: '',
+          x: 280,
+          y: 380
+        },
+        {
+          id: 'ft-l3-a2',
+          type: 'l3-switch',
+          label: 'Pod A L3-2',
+          ipAddress: '10.10.1.2',
+          subnetMask: '/24',
+          vlanOrAsn: 'Pod A',
+          notes: '',
+          x: 280,
+          y: 500
+        },
+        {
+          id: 'ft-l2-a1',
+          type: 'l2-switch',
+          label: 'Pod A L2-1',
+          ipAddress: '10.10.1.11',
+          subnetMask: '/24',
+          vlanOrAsn: 'Access',
+          notes: '',
+          x: 160,
+          y: 380
+        },
+        {
+          id: 'ft-l2-a2',
+          type: 'l2-switch',
+          label: 'Pod A L2-2',
+          ipAddress: '10.10.1.12',
+          subnetMask: '/24',
+          vlanOrAsn: 'Access',
+          notes: '',
+          x: 160,
+          y: 500
+        },
+        {
+          id: 'ft-ph-a',
+          type: 'ip-phone',
+          label: 'IP Phone A',
+          ipAddress: '10.10.40.11',
+          subnetMask: '/24',
+          vlanOrAsn: 'Voice',
+          notes: '',
+          x: 70,
+          y: 380
+        },
+        {
+          id: 'ft-ws-a',
+          type: 'workstation',
+          label: 'Workstation A',
+          ipAddress: '10.10.1.101',
+          subnetMask: '/24',
+          vlanOrAsn: 'Host',
+          notes: '',
+          x: 70,
+          y: 500
+        },
+        {
+          id: 'ft-l3-b1',
+          type: 'l3-switch',
+          label: 'Pod B L3-1',
+          ipAddress: '10.20.1.1',
+          subnetMask: '/24',
+          vlanOrAsn: 'Pod B',
+          notes: '',
+          x: 800,
+          y: 380
+        },
+        {
+          id: 'ft-l3-b2',
+          type: 'l3-switch',
+          label: 'Pod B L3-2',
+          ipAddress: '10.20.1.2',
+          subnetMask: '/24',
+          vlanOrAsn: 'Pod B',
+          notes: '',
+          x: 800,
+          y: 500
+        },
+        {
+          id: 'ft-l2-b1',
+          type: 'l2-switch',
+          label: 'Pod B L2-1',
+          ipAddress: '10.20.1.11',
+          subnetMask: '/24',
+          vlanOrAsn: 'Access',
+          notes: '',
+          x: 920,
+          y: 380
+        },
+        {
+          id: 'ft-l2-b2',
+          type: 'l2-switch',
+          label: 'Pod B L2-2',
+          ipAddress: '10.20.1.12',
+          subnetMask: '/24',
+          vlanOrAsn: 'Access',
+          notes: '',
+          x: 920,
+          y: 500
+        },
+        {
+          id: 'ft-ph-b',
+          type: 'ip-phone',
+          label: 'IP Phone B',
+          ipAddress: '10.20.40.11',
+          subnetMask: '/24',
+          vlanOrAsn: 'Voice',
+          notes: '',
+          x: 1020,
+          y: 380
+        },
+        {
+          id: 'ft-ws-b',
+          type: 'workstation',
+          label: 'Workstation B',
+          ipAddress: '10.20.1.101',
+          subnetMask: '/24',
+          vlanOrAsn: 'Host',
+          notes: '',
+          x: 1020,
+          y: 500
+        },
+        {
+          id: 'ft-l3-c1',
+          type: 'l3-switch',
+          label: 'Pod C L3-1',
+          ipAddress: '10.30.1.1',
+          subnetMask: '/24',
+          vlanOrAsn: 'Pod C',
+          notes: '',
+          x: 460,
+          y: 620
+        },
+        {
+          id: 'ft-l3-c2',
+          type: 'l3-switch',
+          label: 'Pod C L3-2',
+          ipAddress: '10.30.1.2',
+          subnetMask: '/24',
+          vlanOrAsn: 'Pod C',
+          notes: '',
+          x: 620,
+          y: 620
+        },
+        {
+          id: 'ft-l2-c1',
+          type: 'l2-switch',
+          label: 'Pod C L2-1',
+          ipAddress: '10.30.1.11',
+          subnetMask: '/24',
+          vlanOrAsn: 'Access',
+          notes: '',
+          x: 420,
+          y: 720
+        },
+        {
+          id: 'ft-l2-c2',
+          type: 'l2-switch',
+          label: 'Pod C L2-2',
+          ipAddress: '10.30.1.12',
+          subnetMask: '/24',
+          vlanOrAsn: 'Access',
+          notes: '',
+          x: 540,
+          y: 720
+        },
+        {
+          id: 'ft-l2-c3',
+          type: 'l2-switch',
+          label: 'Pod C L2-3',
+          ipAddress: '10.30.1.13',
+          subnetMask: '/24',
+          vlanOrAsn: 'Access',
+          notes: '',
+          x: 660,
+          y: 720
+        }
+      ],
+      cables: [
+        { id: 'ftc-1', sourceId: 'ft-pstn', targetId: 'ft-rtr1', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-2', sourceId: 'ft-pstn', targetId: 'ft-rtr2', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-3', sourceId: 'ft-rtr1', targetId: 'ft-bb1', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-4', sourceId: 'ft-rtr2', targetId: 'ft-bb2', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-5', sourceId: 'ft-bb1', targetId: 'ft-l3-a1', sourcePort: 'bottom', targetPort: 'right', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-6', sourceId: 'ft-bb1', targetId: 'ft-l3-a2', sourcePort: 'bottom', targetPort: 'right', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-7', sourceId: 'ft-bb2', targetId: 'ft-l3-a1', sourcePort: 'bottom', targetPort: 'right', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-8', sourceId: 'ft-bb2', targetId: 'ft-l3-a2', sourcePort: 'bottom', targetPort: 'right', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-9', sourceId: 'ft-bb1', targetId: 'ft-l3-b1', sourcePort: 'bottom', targetPort: 'left', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-10', sourceId: 'ft-bb1', targetId: 'ft-l3-b2', sourcePort: 'bottom', targetPort: 'left', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-11', sourceId: 'ft-bb2', targetId: 'ft-l3-b1', sourcePort: 'bottom', targetPort: 'left', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-12', sourceId: 'ft-bb2', targetId: 'ft-l3-b2', sourcePort: 'bottom', targetPort: 'left', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-13', sourceId: 'ft-bb1', targetId: 'ft-l3-c1', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-14', sourceId: 'ft-bb1', targetId: 'ft-l3-c2', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-15', sourceId: 'ft-bb2', targetId: 'ft-l3-c1', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-16', sourceId: 'ft-bb2', targetId: 'ft-l3-c2', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-17', sourceId: 'ft-l3-a1', targetId: 'ft-l2-a1', sourcePort: 'left', targetPort: 'right', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-18', sourceId: 'ft-l3-a1', targetId: 'ft-l2-a2', sourcePort: 'left', targetPort: 'right', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-19', sourceId: 'ft-l3-a2', targetId: 'ft-l2-a1', sourcePort: 'left', targetPort: 'right', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-20', sourceId: 'ft-l3-a2', targetId: 'ft-l2-a2', sourcePort: 'left', targetPort: 'right', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-21', sourceId: 'ft-l3-b1', targetId: 'ft-l2-b1', sourcePort: 'right', targetPort: 'left', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-22', sourceId: 'ft-l3-b1', targetId: 'ft-l2-b2', sourcePort: 'right', targetPort: 'left', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-23', sourceId: 'ft-l3-b2', targetId: 'ft-l2-b1', sourcePort: 'right', targetPort: 'left', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-24', sourceId: 'ft-l3-b2', targetId: 'ft-l2-b2', sourcePort: 'right', targetPort: 'left', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-25', sourceId: 'ft-l3-c1', targetId: 'ft-l2-c1', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-26', sourceId: 'ft-l3-c1', targetId: 'ft-l2-c2', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-27', sourceId: 'ft-l3-c1', targetId: 'ft-l2-c3', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-28', sourceId: 'ft-l3-c2', targetId: 'ft-l2-c1', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-29', sourceId: 'ft-l3-c2', targetId: 'ft-l2-c2', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' },
+        { id: 'ftc-30', sourceId: 'ft-l3-c2', targetId: 'ft-l2-c3', sourcePort: 'bottom', targetPort: 'top', cableType: 'ethernet', routingStyle: 'straight', bandwidth: '', sourceInterface: '', targetInterface: '', label: '' }
+      ],
+      labels: [
+        { id: 'ftl-title', text: 'LAN Fault-tolerance system', x: 430, y: 20, fontSize: 'title', color: 'cyan', bold: true },
+        { id: 'ftl-pstn', text: 'PSTN', x: 568, y: 112, fontSize: 'md', color: 'cyan', bold: true },
+        { id: 'ftl-r1', text: 'Cisco 3620', x: 340, y: 188, fontSize: 'sm', color: 'slate', bold: false },
+        { id: 'ftl-r2', text: 'Cisco 3620', x: 760, y: 188, fontSize: 'sm', color: 'slate', bold: false },
+        { id: 'ftl-bb1', text: 'Layer 3 switch backbone', x: 270, y: 288, fontSize: 'sm', color: 'slate', bold: false },
+        { id: 'ftl-bb2', text: 'Layer 3 switch backbone', x: 760, y: 288, fontSize: 'sm', color: 'slate', bold: false },
+        { id: 'ftl-a-ph', text: 'IP Phone', x: 90, y: 458, fontSize: 'sm', color: 'slate', bold: false },
+        { id: 'ftl-a-ws', text: 'Workstation', x: 82, y: 580, fontSize: 'sm', color: 'slate', bold: false },
+        { id: 'ftl-b-ph', text: 'IP Phone', x: 1038, y: 458, fontSize: 'sm', color: 'slate', bold: false },
+        { id: 'ftl-b-ws', text: 'Workstation', x: 1030, y: 580, fontSize: 'sm', color: 'slate', bold: false }
       ]
     }
   },
@@ -741,6 +1245,13 @@ export const DIAGRAM_TEMPLATES: DiagramTemplate[] = [
           targetInterface: 'Tu20',
           label: 'Tunnel 20'
         }
+      ],
+      labels: [
+        { id: 'lbl-vpn-1', text: 'HQ-VPN-HUB', x: 204, y: 248, fontSize: 'sm', color: 'violet', bold: true },
+        { id: 'lbl-vpn-2', text: 'HQ-CORE-L3', x: 206, y: 428, fontSize: 'sm', color: 'blue', bold: true },
+        { id: 'lbl-vpn-3', text: 'IPsec Internet Mesh', x: 466, y: 334, fontSize: 'sm', color: 'cyan', bold: true },
+        { id: 'lbl-vpn-4', text: 'BRANCH-EAST', x: 752, y: 248, fontSize: 'sm', color: 'emerald', bold: true },
+        { id: 'lbl-vpn-5', text: 'BRANCH-WEST', x: 752, y: 428, fontSize: 'sm', color: 'emerald', bold: true }
       ]
     }
   },
@@ -751,7 +1262,8 @@ export const DIAGRAM_TEMPLATES: DiagramTemplate[] = [
       name: 'Untitled Network Topology',
       zones: [],
       nodes: [],
-      cables: []
+      cables: [],
+      labels: []
     }
   }
 ];
@@ -964,6 +1476,18 @@ function computeDiagramExportBounds(doc: NetworkDiagramDocument) {
     maxY = Math.max(maxY, n.y + NODE_HEIGHT);
   });
 
+  (doc.labels || []).forEach(l => {
+    const lines = (l.text || '').split('\n');
+    const maxChars = lines.reduce((m, line) => Math.max(m, line.length), 4);
+    const fontPx = LABEL_SIZE_CONFIG[l.fontSize]?.px || 14;
+    const estW = Math.max(60, maxChars * fontPx * 0.62);
+    const estH = lines.length * fontPx * 1.35;
+    minX = Math.min(minX, l.x);
+    minY = Math.min(minY, l.y);
+    maxX = Math.max(maxX, l.x + estW);
+    maxY = Math.max(maxY, l.y + estH);
+  });
+
   if (!Number.isFinite(minX)) {
     minX = 0;
     minY = 0;
@@ -986,37 +1510,10 @@ function computeDiagramExportBounds(doc: NetworkDiagramDocument) {
   };
 }
 
-function getDeviceGlyphSvgMarkup(type: NetworkDeviceType, accentHex: string): string {
-  switch (type) {
-    case 'core-router':
-    case 'edge-router':
-      return `<circle cx="18" cy="18" r="14" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M12 12L16 16M16 16H12.5M16 16V12.5M24 24L20 20M20 20H23.5M20 20V23.5M24 12L20 16M20 16H23.5M20 16V12.5M12 24L16 20M16 20H12.5M16 20V23.5" stroke="${accentHex}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;
-    case 'l3-switch':
-      return `<rect x="4" y="6" width="28" height="24" rx="5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><circle cx="18" cy="18" r="6.5" stroke="${accentHex}" stroke-width="1.6"/><path d="M8 18H11.5M24.5 18H28M18 8V11.5M18 24.5V28M15.5 18H20.5M18 15.5V20.5" stroke="${accentHex}" stroke-width="1.6" stroke-linecap="round"/>`;
-    case 'l2-switch':
-      return `<rect x="4" y="9" width="28" height="18" rx="4" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M9 14H24M21 11.5L24.5 14L21 16.5M27 22H12M15 19.5L11.5 22L15 24.5" stroke="${accentHex}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>`;
-    case 'firewall':
-      return `<rect x="5" y="7" width="26" height="22" rx="3.5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M5 14H31M5 21.5H31M14 7V14M22 14V21.5M14 21.5V29" stroke="${accentHex}" stroke-width="1.6"/>`;
-    case 'load-balancer':
-      return `<rect x="4" y="7" width="28" height="22" rx="5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M9 18H16M16 18L24 12M16 18L24 24M21.5 11.5H24.5V14.5M21.5 24.5H24.5V21.5" stroke="${accentHex}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>`;
-    case 'vpn-gateway':
-      return `<path d="M18 4L30 9.5V17.5C30 24.8 24.8 30.2 18 32C11.2 30.2 6 24.8 6 17.5V9.5L18 4Z" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2" stroke-linejoin="round"/><rect x="13" y="16" width="10" height="7" rx="1.5" stroke="${accentHex}" stroke-width="1.6"/><path d="M15 16V13.5A3 3 0 0 1 21 13.5V16" stroke="${accentHex}" stroke-width="1.6"/>`;
-    case 'wan-cloud':
-      return `<path d="M11.5 27H25.5C28.5 27 31 24.6 31 21.6C31 18.9 29 16.7 26.4 16.3C25.5 11.6 21.4 8.2 16.5 8.5C11.7 8.8 8 12.6 7.8 17.3C5.6 18.1 4 20.1 4 22.5C4 25 6.2 27 8.8 27H11.5Z" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2" stroke-linejoin="round"/>`;
-    case 'wlc':
-      return `<rect x="4" y="10" width="28" height="16" rx="4" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M12 20.5C13.6 18.9 15.7 18 18 18C20.3 18 22.4 18.9 24 20.5M14.8 22.5C15.7 21.6 16.8 21.1 18 21.1C19.2 21.1 20.3 21.6 21.2 22.5M9.5 17.5C11.8 15.2 14.8 14 18 14C21.2 14 24.2 15.2 26.5 17.5" stroke="${accentHex}" stroke-width="1.6" stroke-linecap="round"/>`;
-    case 'access-point':
-      return `<circle cx="18" cy="22" r="4" fill="${accentHex}" fill-opacity="0.2" stroke="${accentHex}" stroke-width="2"/><path d="M11.5 17.5C13.3 15.7 15.5 14.8 18 14.8C20.5 14.8 22.7 15.7 24.5 17.5M7.5 13.5C10.3 10.7 14 9.2 18 9.2C22 9.2 25.7 10.7 28.5 13.5M18 26V31" stroke="${accentHex}" stroke-width="1.8" stroke-linecap="round"/>`;
-    case 'server':
-      return `<rect x="7" y="5" width="22" height="11" rx="2.5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="1.9"/><rect x="7" y="20" width="22" height="11" rx="2.5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="1.9"/><circle cx="12" cy="10.5" r="1.4" fill="${accentHex}"/><circle cx="12" cy="25.5" r="1.4" fill="${accentHex}"/><path d="M17 10.5H25M17 25.5H25" stroke="${accentHex}" stroke-width="1.75" stroke-linecap="round"/>`;
-    case 'workstation':
-      return `<rect x="5" y="7" width="26" height="17" rx="2.5" fill="${accentHex}" fill-opacity="0.16" stroke="${accentHex}" stroke-width="2"/><path d="M14 24V29M22 24V29M10.5 29H25.5" stroke="${accentHex}" stroke-width="2" stroke-linecap="round"/>`;
-  }
-}
-
 export function buildNetworkDiagramSvgString(
   doc: NetworkDiagramDocument,
-  isDarkTheme: boolean
+  isDarkTheme: boolean,
+  pixelScale: number = 1
 ): string {
   const { minX, minY, pad, headerH, canvasW, canvasH } = computeDiagramExportBounds(doc);
   const bg = isDarkTheme ? '#070b14' : '#f8fafc';
@@ -1082,7 +1579,7 @@ export function buildNetworkDiagramSvgString(
       const spec = CABLE_SPECS[cable.cableType];
       const stroke = isDarkTheme ? spec.darkStroke : spec.lightStroke;
       const dashAttr = spec.dashArray ? ` stroke-dasharray="${spec.dashArray}"` : '';
-      const badgeText = cable.label || cable.bandwidth || spec.shortLabel;
+      const badgeText = cable.label;
       const badgeW = Math.max(34, badgeText.length * 6.2 + 14);
       const badgeSvg = badgeText
         ? `<g transform="translate(${geom.midX}, ${geom.midY})">
@@ -1101,33 +1598,44 @@ export function buildNetworkDiagramSvgString(
     .join('\n');
 
   const nodesSvg = doc.nodes
-    .map(node => {
-      const meta = STENCIL_MAP[node.type];
-      const glyphColor = isDarkTheme && meta.type === 'wan-cloud' ? '#cbd5e1' : meta.accentHex;
-      const ipText = `${node.ipAddress}${node.subnetMask || ''}`.slice(0, 20);
-      const roleText = meta.name.slice(0, 14);
-      const labelText = node.label.slice(0, 18);
-
-      return `<g transform="translate(${node.x}, ${node.y})">
-        <rect x="0" y="0" width="${NODE_WIDTH}" height="${NODE_HEIGHT}" rx="12" fill="${headerBg}" stroke="${cardBorder}" stroke-width="1.5"/>
-        <rect x="10" y="10" width="26" height="26" rx="7" fill="${meta.accentHex}" fill-opacity="0.12"/>
-        <svg x="12" y="12" width="22" height="22" viewBox="0 0 36 36" fill="none">
-          ${getDeviceGlyphSvgMarkup(node.type, glyphColor)}
+    .map((node, idx) => {
+      const symbolW = NODE_WIDTH - 6;
+      const symbolH = NODE_HEIGHT - 6;
+      return `<g transform="translate(${node.x + 3}, ${node.y + 3})">
+        <svg x="0" y="0" width="${symbolW}" height="${symbolH}" viewBox="0 0 64 56">
+          ${getDiagramDeviceInnerSvg(node.type, `exp_${idx}`)}
         </svg>
-        <text x="42" y="26" fill="${textMuted}" font-family="${monoFont}" font-size="9.5" font-weight="600">${escapeSvgXml(roleText)}</text>
-        <text x="10" y="56" fill="${textPrimary}" font-family="${sansFont}" font-size="11" font-weight="700">${escapeSvgXml(labelText)}</text>
-        <text x="10" y="73" fill="${textMuted}" font-family="${monoFont}" font-size="9.5" font-weight="500">${escapeSvgXml(ipText)}</text>
       </g>`;
+    })
+    .join('\n');
+
+  const labelsSvg = (doc.labels || [])
+    .map(lbl => {
+      const fontPx = LABEL_SIZE_CONFIG[lbl.fontSize]?.px || 14;
+      const colCfg = LABEL_COLOR_STYLES[lbl.color] || LABEL_COLOR_STYLES.slate;
+      const fill = isDarkTheme ? colCfg.darkHex : colCfg.lightHex;
+      const weight = lbl.bold ? '700' : '500';
+      const lines = (lbl.text || '').split('\n');
+      const tspans = lines
+        .map(
+          (line, li) =>
+            `<tspan x="${lbl.x}" dy="${li === 0 ? 0 : Math.round(fontPx * 1.28)}">${escapeSvgXml(line || ' ')}</tspan>`
+        )
+        .join('');
+      return `<text x="${lbl.x}" y="${lbl.y + fontPx}" fill="${fill}" font-family="${sansFont}" font-size="${fontPx}" font-weight="${weight}">${tspans}</text>`;
     })
     .join('\n');
 
   const tx = pad - minX;
   const ty = headerH + pad - minY;
   const titleText = doc.name || 'Network Topology Diagram';
-  const summaryText = `${doc.nodes.length} Network Devices  ·  ${doc.cables.length} Cables  ·  ${doc.zones.length} Zones`;
+  const labelCount = (doc.labels || []).length;
+  const summaryText = `${doc.nodes.length} Devices  ·  ${doc.cables.length} Cables  ·  ${doc.zones.length} Zones${labelCount > 0 ? `  ·  ${labelCount} Labels` : ''}`;
+  const outW = Math.round(canvasW * pixelScale);
+  const outH = Math.round(canvasH * pixelScale);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}">
+<svg xmlns="http://www.w3.org/2000/svg" width="${outW}" height="${outH}" viewBox="0 0 ${canvasW} ${canvasH}">
   <defs>
     <pattern id="netdiag-grid" width="20" height="20" patternUnits="userSpaceOnUse">
       <circle cx="10" cy="10" r="1" fill="${dotCol}"/>
@@ -1143,6 +1651,7 @@ export function buildNetworkDiagramSvgString(
     ${zonesSvg}
     ${cablesSvg}
     ${nodesSvg}
+    ${labelsSvg}
   </g>
 </svg>`;
 }
@@ -1151,7 +1660,7 @@ export function exportNetworkDiagramToSvg(
   doc: NetworkDiagramDocument,
   isDarkTheme: boolean
 ): void {
-  const svgString = buildNetworkDiagramSvgString(doc, isDarkTheme);
+  const svgString = buildNetworkDiagramSvgString(doc, isDarkTheme, 1);
   const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1167,212 +1676,40 @@ export async function exportNetworkDiagramToPng(
   doc: NetworkDiagramDocument,
   isDarkTheme: boolean
 ): Promise<void> {
-  const { minX, minY, pad, headerH, canvasW, canvasH } = computeDiagramExportBounds(doc);
+  const { canvasW, canvasH } = computeDiagramExportBounds(doc);
+  const scale = canvasW > 2000 ? 1.5 : 2;
+  const svgString = buildNetworkDiagramSvgString(doc, isDarkTheme, scale);
+  const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+  const svgUrl = URL.createObjectURL(svgBlob);
 
-  const dpr = Math.max(canvasW, canvasH) * 2 <= 9000 ? 2 : 1.5;
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.ceil(canvasW * dpr);
-  canvas.height = Math.ceil(canvasH * dpr);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Unable to initialize canvas export');
-  ctx.scale(dpr, dpr);
-
-  const bg = isDarkTheme ? '#070b14' : '#f8fafc';
-  const headerBg = isDarkTheme ? '#0c1220' : '#ffffff';
-  const borderCol = isDarkTheme ? '#1e293b' : '#e2e8f0';
-  const textPrimary = isDarkTheme ? '#f8fafc' : '#0f172a';
-  const textMuted = isDarkTheme ? '#94a3b8' : '#64748b';
-
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, canvasW, canvasH);
-
-  // Grid dots
-  ctx.fillStyle = isDarkTheme ? 'rgba(148,163,184,0.12)' : 'rgba(100,116,139,0.16)';
-  for (let gx = 20; gx < canvasW; gx += 20) {
-    for (let gy = headerH + 20; gy < canvasH; gy += 20) {
-      ctx.fillRect(gx, gy, 1.5, 1.5);
-    }
-  }
-
-  // Header
-  ctx.fillStyle = headerBg;
-  ctx.fillRect(0, 0, canvasW, headerH);
-  ctx.strokeStyle = borderCol;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, headerH - 0.5);
-  ctx.lineTo(canvasW, headerH - 0.5);
-  ctx.stroke();
-
-  const sansFont = 'Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif';
-  const monoFont = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-
-  ctx.textBaseline = 'top';
-  ctx.fillStyle = textPrimary;
-  ctx.font = `700 16px ${sansFont}`;
-  ctx.fillText(doc.name || 'Network Topology Diagram', 28, 16);
-
-  ctx.fillStyle = textMuted;
-  ctx.font = `500 11px ${monoFont}`;
-  ctx.fillText(
-    `${doc.nodes.length} Network Devices  ·  ${doc.cables.length} Cables  ·  ${doc.zones.length} Zones`,
-    28,
-    42
-  );
-
-  ctx.save();
-  ctx.translate(pad - minX, headerH + pad - minY);
-
-  // Zones
-  const zonePalettes: Record<ZoneColorTheme, { fill: string; stroke: string; title: string }> = {
-    blue: {
-      fill: isDarkTheme ? 'rgba(37,99,235,0.08)' : 'rgba(219,234,254,0.45)',
-      stroke: isDarkTheme ? 'rgba(56,189,248,0.35)' : 'rgba(59,130,246,0.45)',
-      title: isDarkTheme ? '#67e8f9' : '#1d4ed8'
-    },
-    emerald: {
-      fill: isDarkTheme ? 'rgba(16,185,129,0.08)' : 'rgba(209,250,229,0.45)',
-      stroke: isDarkTheme ? 'rgba(52,211,153,0.35)' : 'rgba(16,185,129,0.45)',
-      title: isDarkTheme ? '#6ee7b7' : '#047857'
-    },
-    amber: {
-      fill: isDarkTheme ? 'rgba(245,158,11,0.08)' : 'rgba(254,243,199,0.45)',
-      stroke: isDarkTheme ? 'rgba(251,191,36,0.35)' : 'rgba(245,158,11,0.45)',
-      title: isDarkTheme ? '#fcd34d' : '#b45309'
-    },
-    violet: {
-      fill: isDarkTheme ? 'rgba(139,92,246,0.08)' : 'rgba(237,233,254,0.45)',
-      stroke: isDarkTheme ? 'rgba(167,139,250,0.35)' : 'rgba(139,92,246,0.45)',
-      title: isDarkTheme ? '#c4b5fd' : '#6d28d9'
-    },
-    slate: {
-      fill: isDarkTheme ? 'rgba(100,116,139,0.1)' : 'rgba(241,245,249,0.65)',
-      stroke: isDarkTheme ? 'rgba(148,163,184,0.35)' : 'rgba(100,116,139,0.4)',
-      title: isDarkTheme ? '#cbd5e1' : '#334155'
-    }
-  };
-
-  doc.zones.forEach(z => {
-    const zp = zonePalettes[z.color] || zonePalettes.blue;
-    ctx.save();
-    drawRoundedRect(ctx, z.x, z.y, z.width, z.height, 14);
-    ctx.fillStyle = zp.fill;
-    ctx.fill();
-    ctx.setLineDash([6, 4]);
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = zp.stroke;
-    ctx.stroke();
-    ctx.restore();
-
-    ctx.fillStyle = zp.title;
-    ctx.font = `700 11px ${sansFont}`;
-    ctx.fillText(z.title, z.x + 12, z.y + 10);
-    if (z.subtitle) {
-      ctx.fillStyle = textMuted;
-      ctx.font = `500 10px ${monoFont}`;
-      ctx.fillText(z.subtitle, z.x + 12, z.y + 25);
-    }
-  });
-
-  // Cables
-  const nodeMap = new Map(doc.nodes.map(n => [n.id, n]));
-  doc.cables.forEach(cable => {
-    const src = nodeMap.get(cable.sourceId);
-    const dst = nodeMap.get(cable.targetId);
-    if (!src || !dst) return;
-    const geom = computeCableGeometry(src, dst, cable);
-    const spec = CABLE_SPECS[cable.cableType];
-    const stroke = isDarkTheme ? spec.darkStroke : spec.lightStroke;
-
-    ctx.save();
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = spec.strokeWidth;
-    if (spec.dashArray) {
-      ctx.setLineDash(spec.dashArray.split(' ').map(Number));
-    }
-    ctx.stroke(new Path2D(geom.pathD));
-    ctx.restore();
-
-    // Endpoints
-    [
-      { x: geom.startX, y: geom.startY },
-      { x: geom.endX, y: geom.endY }
-    ].forEach(pt => {
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = stroke;
-      ctx.fill();
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('Could not rasterize diagram SVG for PNG export'));
+      image.src = svgUrl;
     });
 
-    const badgeText = cable.label || cable.bandwidth || spec.shortLabel;
-    if (badgeText) {
-      ctx.font = `600 9.5px ${monoFont}`;
-      const tw = ctx.measureText(badgeText).width + 10;
-      drawRoundedRect(ctx, geom.midX - tw / 2, geom.midY - 9, tw, 18, 5);
-      ctx.fillStyle = headerBg;
-      ctx.fill();
-      ctx.strokeStyle = borderCol;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.fillStyle = textPrimary;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(badgeText, geom.midX, geom.midY + 0.5);
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(canvasW * scale);
+    canvas.height = Math.round(canvasH * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Unable to initialize canvas export');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    const filename = `${getDiagramSlug(doc.name)}.png`;
+    const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/png', 1.0));
+    if (blob) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
-  });
-
-  // Device Cards
-  doc.nodes.forEach(node => {
-    const meta = STENCIL_MAP[node.type];
-    drawRoundedRect(ctx, node.x, node.y, NODE_WIDTH, NODE_HEIGHT, 12);
-    ctx.fillStyle = headerBg;
-    ctx.fill();
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = borderCol;
-    ctx.stroke();
-
-    // Top accent bar inside device card
-    ctx.fillStyle = meta.accentHex;
-    drawRoundedRect(ctx, node.x + 12, node.y + 10, 26, 26, 7);
-    ctx.fill();
-
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `700 9px ${monoFont}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(meta.shortPrefix.slice(0, 4), node.x + 25, node.y + 23);
-
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillStyle = textMuted;
-    ctx.font = `600 9.5px ${monoFont}`;
-    ctx.fillText(meta.name.slice(0, 13), node.x + 44, node.y + 12);
-
-    ctx.fillStyle = textPrimary;
-    ctx.font = `700 11px ${sansFont}`;
-    ctx.fillText(node.label.slice(0, 17), node.x + 10, node.y + 44);
-
-    ctx.fillStyle = textMuted;
-    ctx.font = `500 9.5px ${monoFont}`;
-    const ipText = `${node.ipAddress}${node.subnetMask || ''}`;
-    ctx.fillText(ipText.slice(0, 19), node.x + 10, node.y + 62);
-  });
-
-  ctx.restore();
-
-  const filename = `${getDiagramSlug(doc.name)}.png`;
-
-  const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/png'));
-  if (blob) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } finally {
+    URL.revokeObjectURL(svgUrl);
   }
 }
