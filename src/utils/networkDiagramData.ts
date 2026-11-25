@@ -189,8 +189,8 @@ export interface DeviceStencilMeta {
 
 export const NODE_WIDTH = 92;
 export const NODE_HEIGHT = 78;
-export const DIAGRAM_CANVAS_WIDTH = 2200;
-export const DIAGRAM_CANVAS_HEIGHT = 1400;
+export const DIAGRAM_CANVAS_WIDTH = 2800;
+export const DIAGRAM_CANVAS_HEIGHT = 1800;
 export const GRID_SNAP_SIZE = 20;
 
 export const NETWORK_DEVICE_STENCILS: DeviceStencilMeta[] = [

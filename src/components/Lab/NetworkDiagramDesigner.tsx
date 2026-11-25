@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   Bold,
   BoxSelect,
@@ -79,8 +79,8 @@ import {
 import { NetworkDeviceGlyph } from './NetworkDeviceGlyph';
 
 const STORAGE_KEY = 'netpulse_network_diagram_designer_v1';
-const MIN_ZOOM = 0.3;
-const MAX_ZOOM = 2.0;
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 2.5;
 const ZOOM_STEP = 0.1;
 
 type SelectionState =
@@ -255,6 +255,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
   const [showGrid, setShowGrid] = useState<boolean>(true);
   const [zoom, setZoom] = useState<number>(0.9);
   const [isPanning, setIsPanning] = useState<boolean>(false);
+  const [isSpacePressed, setIsSpacePressed] = useState<boolean>(false);
 
   const [selection, setSelection] = useState<SelectionState>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
@@ -293,6 +294,14 @@ export const NetworkDiagramDesigner: React.FC = () => {
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
   const labelInputRef = useRef<HTMLTextAreaElement | null>(null);
   const spacePressedRef = useRef<boolean>(false);
+  const suppressNextContextMenuRef = useRef<boolean>(false);
+  const pendingZoomAnchorRef = useRef<{
+    contentX: number;
+    contentY: number;
+    anchorX: number;
+    anchorY: number;
+    targetZoom: number;
+  } | null>(null);
   const docRef = useRef(doc);
   docRef.current = doc;
   const zoomRef = useRef(zoom);
@@ -902,7 +911,113 @@ export const NetworkDiagramDesigner: React.FC = () => {
     }
   }, [selectedNodeIds, selection, inspectorTarget, commitChange]);
 
-  // Keyboard controls inside Network Designer (Undo/Redo, Group/Ungroup, Select All, Delete, Escape, Duplicate, Nudge, Space Pan)
+  const applyZoom = useCallback((nextRaw: number, anchorX?: number, anchorY?: number) => {
+    const clamped = Math.max(
+      MIN_ZOOM,
+      Math.min(MAX_ZOOM, Math.round(nextRaw * 100) / 100)
+    );
+    const el = viewportRef.current;
+    const prevZoom = zoomRef.current;
+    if (!el || clamped === prevZoom) {
+      zoomRef.current = clamped;
+      setZoom(clamped);
+      return;
+    }
+
+    const ax = anchorX ?? el.clientWidth / 2;
+    const ay = anchorY ?? el.clientHeight / 2;
+    const pending = pendingZoomAnchorRef.current;
+    const baseScrollLeft = pending
+      ? Math.max(0, pending.contentX * prevZoom - pending.anchorX)
+      : el.scrollLeft;
+    const baseScrollTop = pending
+      ? Math.max(0, pending.contentY * prevZoom - pending.anchorY)
+      : el.scrollTop;
+
+    const contentX = (baseScrollLeft + ax) / prevZoom;
+    const contentY = (baseScrollTop + ay) / prevZoom;
+
+    pendingZoomAnchorRef.current = {
+      contentX,
+      contentY,
+      anchorX: ax,
+      anchorY: ay,
+      targetZoom: clamped
+    };
+    zoomRef.current = clamped;
+    setZoom(clamped);
+  }, []);
+
+  useLayoutEffect(() => {
+    const pending = pendingZoomAnchorRef.current;
+    const el = viewportRef.current;
+    if (!pending || !el) return;
+    pendingZoomAnchorRef.current = null;
+    el.scrollLeft = Math.max(0, pending.contentX * zoom - pending.anchorX);
+    el.scrollTop = Math.max(0, pending.contentY * zoom - pending.anchorY);
+  }, [zoom]);
+
+  const handleFitDiagram = useCallback(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    docRef.current.zones.forEach(z => {
+      minX = Math.min(minX, z.x);
+      minY = Math.min(minY, z.y);
+      maxX = Math.max(maxX, z.x + z.width);
+      maxY = Math.max(maxY, z.y + z.height);
+    });
+    (docRef.current.racks || []).forEach(r => {
+      minX = Math.min(minX, r.x);
+      minY = Math.min(minY, r.y);
+      maxX = Math.max(maxX, r.x + r.width);
+      maxY = Math.max(maxY, r.y + r.height);
+    });
+    docRef.current.nodes.forEach(n => {
+      minX = Math.min(minX, n.x);
+      minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + NODE_WIDTH);
+      maxY = Math.max(maxY, n.y + NODE_HEIGHT);
+    });
+    (docRef.current.labels || []).forEach(lbl => {
+      minX = Math.min(minX, lbl.x);
+      minY = Math.min(minY, lbl.y);
+      maxX = Math.max(maxX, lbl.x + Math.max(80, lbl.text.length * 9));
+      maxY = Math.max(maxY, lbl.y + 36);
+    });
+
+    if (!Number.isFinite(minX)) {
+      applyZoom(1);
+      el.scrollLeft = 0;
+      el.scrollTop = 0;
+      return;
+    }
+
+    const boxW = Math.max(300, maxX - minX + 80);
+    const boxH = Math.max(240, maxY - minY + 80);
+    const fitScale = Math.min(
+      (el.clientWidth - 24) / boxW,
+      (el.clientHeight - 24) / boxH
+    );
+    const clampedFit = Math.max(MIN_ZOOM, Math.min(1.1, Math.floor(fitScale * 100) / 100));
+
+    pendingZoomAnchorRef.current = {
+      contentX: (minX + maxX) / 2,
+      contentY: (minY + maxY) / 2,
+      anchorX: el.clientWidth / 2,
+      anchorY: el.clientHeight / 2,
+      targetZoom: clampedFit
+    };
+    zoomRef.current = clampedFit;
+    setZoom(clampedFit);
+  }, [applyZoom]);
+
+  // Keyboard controls inside Network Designer (Undo/Redo, Group/Ungroup, Select All, Delete, Escape, Duplicate, Nudge, Pan/Zoom Shortcuts)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -917,7 +1032,12 @@ export const NetworkDiagramDesigner: React.FC = () => {
       }
 
       if (e.code === 'Space') {
-        spacePressedRef.current = true;
+        e.preventDefault();
+        if (!spacePressedRef.current) {
+          spacePressedRef.current = true;
+          setIsSpacePressed(true);
+        }
+        return;
       }
 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
@@ -972,6 +1092,42 @@ export const NetworkDiagramDesigner: React.FC = () => {
           handleDuplicateSelectedNode();
         }
         return;
+      }
+
+      // Zoom shortcuts (work both with Ctrl/Cmd and directly when canvas is focused)
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        applyZoom(zoomRef.current + ZOOM_STEP);
+        return;
+      }
+      if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        applyZoom(zoomRef.current - ZOOM_STEP);
+        return;
+      }
+      if (e.key === '0' && !e.shiftKey) {
+        e.preventDefault();
+        applyZoom(1);
+        return;
+      }
+
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+        const lower = e.key.toLowerCase();
+        if (lower === 'v') {
+          setToolMode('select');
+          setConnectSourceId(null);
+          return;
+        }
+        if (lower === 'h') {
+          setToolMode('pan');
+          setConnectSourceId(null);
+          return;
+        }
+        if (lower === 'f') {
+          e.preventDefault();
+          handleFitDiagram();
+          return;
+        }
       }
 
       if (e.key === 'Escape') {
@@ -1065,14 +1221,24 @@ export const NetworkDiagramDesigner: React.FC = () => {
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
         spacePressedRef.current = false;
+        setIsSpacePressed(false);
+      }
+    };
+
+    const handleWindowBlur = () => {
+      if (spacePressedRef.current) {
+        spacePressedRef.current = false;
+        setIsSpacePressed(false);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleWindowBlur);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleWindowBlur);
     };
   }, [
     selection,
@@ -1084,109 +1250,43 @@ export const NetworkDiagramDesigner: React.FC = () => {
     handleDuplicateSelectedNode,
     groupNodesIntoRack,
     ungroupRack,
-    commitCoalescedEdit
+    commitCoalescedEdit,
+    applyZoom,
+    handleFitDiagram
   ]);
 
-  const applyZoom = useCallback((nextRaw: number, anchorX?: number, anchorY?: number) => {
-    const clamped = Math.max(
-      MIN_ZOOM,
-      Math.min(MAX_ZOOM, Math.round(nextRaw * 100) / 100)
-    );
-    const el = viewportRef.current;
-    const prevZoom = zoomRef.current;
-    if (!el || clamped === prevZoom) {
-      zoomRef.current = clamped;
-      setZoom(clamped);
-      return;
-    }
-
-    const ax = anchorX ?? el.clientWidth / 2;
-    const ay = anchorY ?? el.clientHeight / 2;
-    const contentX = (el.scrollLeft + ax) / prevZoom;
-    const contentY = (el.scrollTop + ay) / prevZoom;
-
-    zoomRef.current = clamped;
-    setZoom(clamped);
-
-    window.requestAnimationFrame(() => {
-      const target = viewportRef.current;
-      if (!target) return;
-      target.scrollLeft = Math.max(0, contentX * clamped - ax);
-      target.scrollTop = Math.max(0, contentY * clamped - ay);
-    });
-  }, []);
-
-  const handleFitDiagram = useCallback(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    docRef.current.zones.forEach(z => {
-      minX = Math.min(minX, z.x);
-      minY = Math.min(minY, z.y);
-      maxX = Math.max(maxX, z.x + z.width);
-      maxY = Math.max(maxY, z.y + z.height);
-    });
-    (docRef.current.racks || []).forEach(r => {
-      minX = Math.min(minX, r.x);
-      minY = Math.min(minY, r.y);
-      maxX = Math.max(maxX, r.x + r.width);
-      maxY = Math.max(maxY, r.y + r.height);
-    });
-    docRef.current.nodes.forEach(n => {
-      minX = Math.min(minX, n.x);
-      minY = Math.min(minY, n.y);
-      maxX = Math.max(maxX, n.x + NODE_WIDTH);
-      maxY = Math.max(maxY, n.y + NODE_HEIGHT);
-    });
-    (docRef.current.labels || []).forEach(lbl => {
-      minX = Math.min(minX, lbl.x);
-      minY = Math.min(minY, lbl.y);
-      maxX = Math.max(maxX, lbl.x + Math.max(80, lbl.text.length * 9));
-      maxY = Math.max(maxY, lbl.y + 36);
-    });
-
-    if (!Number.isFinite(minX)) {
-      applyZoom(1);
-      el.scrollLeft = 0;
-      el.scrollTop = 0;
-      return;
-    }
-
-    const boxW = Math.max(300, maxX - minX + 80);
-    const boxH = Math.max(240, maxY - minY + 80);
-    const fitScale = Math.min(
-      (el.clientWidth - 24) / boxW,
-      (el.clientHeight - 24) / boxH
-    );
-    const clampedFit = Math.max(MIN_ZOOM, Math.min(1.1, Math.floor(fitScale * 100) / 100));
-    zoomRef.current = clampedFit;
-    setZoom(clampedFit);
-
-    window.requestAnimationFrame(() => {
-      const target = viewportRef.current;
-      if (!target) return;
-      const centerX = ((minX + maxX) / 2) * clampedFit - target.clientWidth / 2;
-      const centerY = ((minY + maxY) / 2) * clampedFit - target.clientHeight / 2;
-      target.scrollLeft = Math.max(0, centerX);
-      target.scrollTop = Math.max(0, centerY);
-    });
-  }, [applyZoom]);
-
-  // Ctrl/Cmd + Scroll Zoom
+  // Mouse-wheel cursor-anchored Zoom & Shift/Trackpad horizontal Pan
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
     const handleWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
+      // Shift + wheel pans horizontally across wide topologies
+      if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+        el.scrollLeft += delta;
+        return;
+      }
+
+      // Trackpad two-finger horizontal pan when dominant axis is X
+      if (!e.ctrlKey && !e.metaKey && Math.abs(e.deltaX) > Math.abs(e.deltaY) * 1.25) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaX;
+        return;
+      }
+
+      if (e.deltaY === 0) return;
       e.preventDefault();
       const rect = el.getBoundingClientRect();
-      const step = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
-      applyZoom(zoomRef.current + step, e.clientX - rect.left, e.clientY - rect.top);
+      const rawDelta =
+        e.deltaMode === 1
+          ? e.deltaY * 32
+          : e.deltaMode === 2
+          ? e.deltaY * 400
+          : e.deltaY;
+      const stepMagnitude = Math.min(0.16, Math.max(0.03, Math.abs(rawDelta) * 0.001));
+      const signedStep = rawDelta < 0 ? stepMagnitude : -stepMagnitude;
+      applyZoom(zoomRef.current + signedStep, e.clientX - rect.left, e.clientY - rect.top);
     };
     el.addEventListener('wheel', handleWheel, { passive: false });
     return () => el.removeEventListener('wheel', handleWheel);
@@ -1194,7 +1294,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
 
   // Dragging a single device node or all currently selected nodes together
   const startNodeDrag = (e: React.MouseEvent, node: NetworkDiagramNode) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || toolMode === 'pan' || spacePressedRef.current) return;
     e.stopPropagation();
     focusCanvas();
 
@@ -1351,7 +1451,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
     node: NetworkDiagramNode,
     side: ConcretePortSide
   ) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || toolMode === 'pan' || spacePressedRef.current) return;
     e.stopPropagation();
 
     const anchor = resolvePortAnchor(node, side);
@@ -1397,7 +1497,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
     zone: NetworkDiagramZone,
     mode: 'move' | 'resize'
   ) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || toolMode === 'pan' || spacePressedRef.current) return;
     e.stopPropagation();
     focusCanvas();
     setSelection({ kind: 'zone', id: zone.id });
@@ -1471,7 +1571,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
 
   // Dragging a standalone text label
   const startLabelDrag = (e: React.MouseEvent, lbl: NetworkDiagramLabel) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || toolMode === 'pan' || spacePressedRef.current) return;
     e.stopPropagation();
     focusCanvas();
     setSelection({ kind: 'label', id: lbl.id });
@@ -1536,7 +1636,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
     rack: NetworkDiagramRack,
     mode: 'move' | 'resize'
   ) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || toolMode === 'pan' || spacePressedRef.current) return;
     e.stopPropagation();
     focusCanvas();
     setSelectedNodeIds([]);
@@ -1668,10 +1768,70 @@ export const NetworkDiagramDesigner: React.FC = () => {
     window.addEventListener('mouseup', onUp);
   };
 
-  // Canvas background click (marquee select / place zone / place label / pan)
+  // Canvas background click & pan navigation (Pan tool, Space+Drag, Middle-drag, Right-drag, or marquee select)
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0 && e.button !== 1) return;
+    if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
+
     const target = e.target as HTMLElement | null;
+    const isPanInteraction =
+      toolMode === 'pan' || spacePressedRef.current || e.button === 1 || e.button === 2;
+
+    if (isPanInteraction) {
+      // Allow interactive buttons/inputs inside canvas overlays to still work on normal left-click unless Space/Pan-tool is intentional
+      if (
+        e.button === 0 &&
+        !spacePressedRef.current &&
+        toolMode !== 'pan' &&
+        target?.closest('button, input, select, textarea')
+      ) {
+        return;
+      }
+
+      if (e.button === 1) {
+        e.preventDefault();
+      }
+
+      focusCanvas();
+      const el = viewportRef.current;
+      if (!el) return;
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startScrollLeft = el.scrollLeft;
+      const startScrollTop = el.scrollTop;
+      const isRightBtn = e.button === 2;
+      let moved = false;
+      setIsPanning(true);
+
+      const onMove = (moveEvt: MouseEvent) => {
+        const dx = moveEvt.clientX - startX;
+        const dy = moveEvt.clientY - startY;
+        if (!moved && Math.hypot(dx, dy) > 4) {
+          moved = true;
+          if (isRightBtn) {
+            suppressNextContextMenuRef.current = true;
+          }
+        }
+        el.scrollLeft = startScrollLeft - dx;
+        el.scrollTop = startScrollTop - dy;
+      };
+
+      const onUp = () => {
+        setIsPanning(false);
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        if (isRightBtn) {
+          window.setTimeout(() => {
+            suppressNextContextMenuRef.current = false;
+          }, 80);
+        }
+      };
+
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+      return;
+    }
+
     if (
       target?.closest('[data-node-id]') ||
       target?.closest('[data-cable-id]') ||
@@ -1697,10 +1857,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
       return;
     }
 
-    const shouldPan =
-      toolMode === 'pan' || e.button === 1 || spacePressedRef.current;
-
-    if (!shouldPan && toolMode === 'select' && e.button === 0) {
+    if (toolMode === 'select' && e.button === 0) {
       const startPt = clientToCanvas(e.clientX, e.clientY);
       const baseSelection = e.shiftKey ? [...selectedNodeIdsRef.current] : [];
       if (!e.shiftKey) {
@@ -1757,44 +1914,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
 
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
-      return;
     }
-
-    setSelection(null);
-    setSelectedNodeIds([]);
-    setInspectorTarget(null);
-    setConnectSourceId(null);
-
-    const el = viewportRef.current;
-    if (!el) return;
-
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const startScrollLeft = el.scrollLeft;
-    const startScrollTop = el.scrollTop;
-    let moved = false;
-
-    const onMove = (moveEvt: MouseEvent) => {
-      const dx = moveEvt.clientX - startX;
-      const dy = moveEvt.clientY - startY;
-      if (!moved && Math.hypot(dx, dy) > 4) {
-        moved = true;
-        setIsPanning(true);
-      }
-      if (moved) {
-        el.scrollLeft = startScrollLeft - dx;
-        el.scrollTop = startScrollTop - dy;
-      }
-    };
-
-    const onUp = () => {
-      setIsPanning(false);
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
   };
 
   const handleCanvasDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -2264,7 +2384,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
                   setConnectSourceId(null);
                 }}
                 aria-pressed={toolMode === 'select'}
-                title="Box-select or drag devices (Shift+Click for multi-select)"
+                title="Select & Drag Devices (V) · Drag empty canvas to box-select"
                 className={`px-2.5 py-1 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all ${
                   toolMode === 'select'
                     ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-cyan-400 shadow-2xs'
@@ -2282,7 +2402,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
                   setConnectSourceId(null);
                 }}
                 aria-pressed={toolMode === 'pan'}
-                title="Pan canvas (or hold Space + Drag)"
+                title="Pan Canvas (H) · Or hold Space / Middle-click / Right-click & drag anywhere"
                 className={`px-2.5 py-1 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all ${
                   toolMode === 'pan'
                     ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-cyan-400 shadow-2xs'
@@ -2718,6 +2838,12 @@ export const NetworkDiagramDesigner: React.FC = () => {
             tabIndex={0}
             aria-label="Interactive network topology canvas"
             onMouseDown={handleCanvasMouseDown}
+            onContextMenu={e => {
+              if (suppressNextContextMenuRef.current) {
+                e.preventDefault();
+                suppressNextContextMenuRef.current = false;
+              }
+            }}
             onDragOver={e => {
               e.preventDefault();
               e.dataTransfer.dropEffect = 'copy';
@@ -2751,9 +2877,9 @@ export const NetworkDiagramDesigner: React.FC = () => {
             onDrop={handleCanvasDrop}
             className={`w-full h-[640px] overflow-auto relative select-none focus:outline-none ${
               isPanning
-                ? 'cursor-grabbing'
-                : toolMode === 'pan'
-                ? 'cursor-grab'
+                ? 'cursor-grabbing [&_*]:!cursor-grabbing'
+                : toolMode === 'pan' || isSpacePressed
+                ? 'cursor-grab [&_*]:!cursor-grab'
                 : toolMode === 'zone'
                 ? 'cursor-crosshair'
                 : toolMode === 'label'
@@ -2963,6 +3089,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
                         data-cable-id={cable.id}
                         className="pointer-events-auto cursor-pointer"
                         onClick={e => {
+                          if (toolMode === 'pan' || spacePressedRef.current) return;
                           e.stopPropagation();
                           focusCanvas();
                           setSelection({ kind: 'cable', id: cable.id });
@@ -2971,6 +3098,7 @@ export const NetworkDiagramDesigner: React.FC = () => {
                           );
                         }}
                         onDoubleClick={e => {
+                          if (toolMode === 'pan' || spacePressedRef.current) return;
                           e.stopPropagation();
                           focusCanvas();
                           setSelection({ kind: 'cable', id: cable.id });
@@ -3250,8 +3378,75 @@ export const NetworkDiagramDesigner: React.FC = () => {
           </div>
 
           {/* Bottom-left Quick Hint */}
-          <div className="pointer-events-none absolute left-3 bottom-3 hidden sm:flex items-center px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm border border-slate-200/80 dark:border-slate-700/80 text-[11px] text-slate-500 dark:text-slate-400 shadow-xs">
-            Drag empty canvas or Shift+Click to multi-select · Hold Alt while dragging to bypass snap · Double-click to edit
+          <div className="pointer-events-none absolute left-3 bottom-3 hidden xl:flex items-center px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm border border-slate-200/80 dark:border-slate-700/80 text-[11px] text-slate-500 dark:text-slate-400 shadow-xs">
+            Scroll wheel to zoom · Pan (H), Space+Drag, or Middle/Right-drag to navigate · Alt+Drag bypasses snap
+          </div>
+
+          {/* Floating Bottom-Right Viewport Pan & Zoom HUD */}
+          <div
+            onMouseDown={e => e.stopPropagation()}
+            className={`absolute bottom-3 z-20 inline-flex items-center gap-1 p-1 rounded-xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 shadow-md text-[11px] font-mono tabular-nums transition-all ${
+              inspectedNode || inspectedCable || inspectedZone || inspectedLabel || inspectedRack
+                ? 'right-3 sm:right-[364px]'
+                : 'right-3'
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setToolMode(prev => (prev === 'pan' ? 'select' : 'pan'));
+                setConnectSourceId(null);
+              }}
+              aria-pressed={toolMode === 'pan'}
+              title="Toggle click-and-drag Pan mode (H)"
+              className={`px-2 py-1 rounded-lg font-sans font-semibold inline-flex items-center gap-1 transition-colors ${
+                toolMode === 'pan'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <Hand className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{toolMode === 'pan' ? 'Panning' : 'Pan'}</span>
+            </button>
+            <span className="h-3.5 w-px bg-slate-200 dark:bg-slate-700" aria-hidden="true" />
+            <button
+              type="button"
+              disabled={zoom <= MIN_ZOOM}
+              onClick={() => applyZoom(zoom - ZOOM_STEP)}
+              title="Zoom out (-)"
+              aria-label="Zoom out canvas"
+              className="p-1 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-35"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => applyZoom(1)}
+              title="Reset zoom to 100% (0)"
+              className="px-1.5 py-0.5 rounded-lg font-semibold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-cyan-400"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              type="button"
+              disabled={zoom >= MAX_ZOOM}
+              onClick={() => applyZoom(zoom + ZOOM_STEP)}
+              title="Zoom in (+)"
+              aria-label="Zoom in canvas"
+              className="p-1 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-35"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+            <span className="h-3.5 w-px bg-slate-200 dark:bg-slate-700" aria-hidden="true" />
+            <button
+              type="button"
+              onClick={handleFitDiagram}
+              title="Fit topology to viewport (F)"
+              className="px-2 py-1 rounded-lg font-sans font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-cyan-400 inline-flex items-center gap-1"
+            >
+              <Maximize2 className="w-3 h-3" />
+              <span>Fit</span>
+            </button>
           </div>
 
           {/* Floating Properties Box — appears ONLY when double-clicking or adding a label */}
