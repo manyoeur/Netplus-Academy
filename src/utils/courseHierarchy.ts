@@ -411,6 +411,56 @@ export function createStarterModule(
     };
   }
 
+  if (kind === 'flashcard') {
+    return {
+      id: `mod-${stamp}`,
+      title: `Module ${nextNum}: Chapter Flashcard Review`,
+      type: 'flashcard',
+      durationMin: 15,
+      summary: `Active-recall flip cards for reviewing key terminology, ports, and protocols in ${course.code}.`,
+      flashcards: {
+        deckTitle: `${course.code} Section Review Deck`,
+        summary: 'Flip through core concepts, protocols, and verification cues to reinforce retention before moving on.',
+        cards: [
+          {
+            id: `fc-${stamp}-1`,
+            category: 'Protocol',
+            term: 'TCP 3-Way Handshake',
+            question: `In ${course.code}, which three control flags establish a reliable TCP session?`,
+            answer: 'SYN → SYN-ACK → ACK',
+            portNumber: 'TCP',
+            transportProtocol: 'TCP',
+            osiLayer: 'Layer 4 (Transport)',
+            explanation: 'The client sends SYN with an initial sequence number, the server replies with SYN-ACK, and the client confirms with ACK.',
+            memoryTip: 'Think "Start (SYN) → Sync Reply (SYN-ACK) → Confirmed (ACK)".'
+          },
+          {
+            id: `fc-${stamp}-2`,
+            category: 'Port Number',
+            term: 'SSH (Secure Shell)',
+            question: 'Which TCP port and protocol provide encrypted remote CLI management for switches and routers?',
+            answer: 'TCP Port 22',
+            portNumber: '22',
+            transportProtocol: 'TCP',
+            osiLayer: 'Layer 7 (Application)',
+            explanation: 'SSH encrypts management traffic end-to-end, replacing legacy plaintext Telnet (TCP 23).',
+            memoryTip: '22 = Two encrypted keys (SSH); 23 = Telnet (1 higher, unencrypted).'
+          },
+          {
+            id: `fc-${stamp}-3`,
+            category: 'Architecture',
+            term: 'Default Gateway',
+            question: 'What network role forwards traffic destined outside the local IP subnet?',
+            answer: 'Layer 3 Router / SVI Default Gateway',
+            osiLayer: 'Layer 3 (Network)',
+            explanation: 'Hosts ARP for the default gateway MAC address whenever the destination IP is outside their local subnet mask.',
+            memoryTip: 'Local subnet = direct ARP; remote subnet = send frame to the Default Gateway.'
+          }
+        ]
+      }
+    };
+  }
+
   return {
     id: `mod-${stamp}`,
     title: `Module ${nextNum}: Core Concepts & Design Notes`,

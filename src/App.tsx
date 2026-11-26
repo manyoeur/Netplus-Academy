@@ -13,7 +13,6 @@ import { NetworkDiagramDesigner } from './components/Lab/NetworkDiagramDesigner'
 import { SubnettingCalculator } from './components/Lab/SubnettingCalculator';
 import { NumberBaseConverter } from './components/Lab/NumberBaseConverter';
 import { BinaryGame } from './components/Lab/BinaryGame';
-import { FlashcardDeckView } from './components/Flashcards/FlashcardDeckView';
 import { CertificateViewer } from './components/Certificates/CertificateViewer';
 import { ManagementPanel } from './components/Admin/ManagementPanel';
 import { AnalyticsDashboard } from './components/Admin/AnalyticsDashboard';
@@ -215,8 +214,7 @@ const AcademyApp: React.FC = () => {
         ? 'lab'
         : currentTab === 'subnet-calc' ||
           currentTab === 'base-converter' ||
-          currentTab === 'binary-game' ||
-          currentTab === 'flashcard'
+          currentTab === 'binary-game'
         ? 'practice'
         : null;
 
@@ -408,11 +406,6 @@ const AcademyApp: React.FC = () => {
         {/* Binary Conversion Practice Game */}
         {currentTab === 'binary-game' && (
           <BinaryGame />
-        )}
-
-        {/* AI Networking Flashcards */}
-        {currentTab === 'flashcard' && (
-          <FlashcardDeckView />
         )}
 
         {/* Discussion Forum */}

@@ -68,6 +68,8 @@ function formatModuleKind(type: ModuleType): string {
       return 'Video';
     case 'pcap':
       return 'PCAP';
+    case 'flashcard':
+      return 'Flashcards';
     case 'theory':
     default:
       return 'Reading';

@@ -39,8 +39,13 @@ import {
   FolderPlus,
   Check,
   LayoutGrid,
-  List
+  List,
+  SquareStack
 } from 'lucide-react';
+import {
+  FlashcardCategory,
+  FlashcardItem
+} from '../Flashcards/flashcardTypes';
 import { useAcademy } from '../../context/AcademyContext';
 import {
   getBetweenModuleQuiz,
@@ -564,6 +569,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     labVerification: string;
     quizPassingScore: number;
     quizQuestions: QuizQuestion[];
+    flashcardDeckTitle: string;
+    flashcardCards: FlashcardItem[];
     disableCheckpoint: boolean;
   }>({
     title: '',
@@ -582,6 +589,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
     labVerification: 'show ip ospf neighbor',
     quizPassingScore: 70,
     quizQuestions: [],
+    flashcardDeckTitle: '',
+    flashcardCards: [],
     disableCheckpoint: false
   });
 
@@ -769,6 +778,18 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
           explanation: 'RFC 7348 assigns UDP destination port 4789 for VXLAN encapsulated traffic.'
         }
       ],
+      flashcardDeckTitle: 'Chapter Flashcard Review',
+      flashcardCards: [
+        {
+          id: `fc-${Date.now()}-1`,
+          category: 'Terminology',
+          term: 'Key Term',
+          question: 'What is the core concept or rule reviewed in this card?',
+          answer: 'Concise technical answer',
+          explanation: 'Supporting technical explanation shown when flipped.',
+          memoryTip: ''
+        }
+      ],
       disableCheckpoint: true
     });
   };
@@ -802,6 +823,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
       labVerification: mod.lab?.verificationCheck || 'show ip route',
       quizPassingScore: mod.quiz?.passingScore ?? 70,
       quizQuestions: mod.quiz?.questions ? mod.quiz.questions.map(q => ({ ...q, options: [...q.options] })) : [],
+      flashcardDeckTitle: mod.flashcards?.deckTitle || mod.title,
+      flashcardCards: mod.flashcards?.cards ? mod.flashcards.cards.map(c => ({ ...c })) : [],
       disableCheckpoint: !hasActiveCheckpoint
     });
   };
@@ -1308,6 +1331,15 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
             quiz: {
               passingScore: Number(moduleForm.quizPassingScore) || 70,
               questions: moduleForm.quizQuestions
+            }
+          }
+        : {}),
+      ...(moduleForm.type === 'flashcard'
+        ? {
+            flashcards: {
+              deckTitle: moduleForm.flashcardDeckTitle.trim() || moduleForm.title.trim(),
+              summary: moduleForm.summary.trim(),
+              cards: moduleForm.flashcardCards
             }
           }
         : {})
@@ -3543,6 +3575,8 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                                                         ? SquarePen
                                                         : mod.type === 'pcap'
                                                         ? Activity
+                                                        : mod.type === 'flashcard'
+                                                        ? SquareStack
                                                         : FileText;
 
                                                     return (
@@ -4071,6 +4105,7 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                     <option value="video">Video Walkthrough</option>
                     <option value="quiz">Benchmark Quiz</option>
                     <option value="pcap">Wireshark PCAP Deep Dive</option>
+                    <option value="flashcard">Flashcards Review Deck</option>
                   </select>
                 </div>
                 <div>
@@ -4289,6 +4324,146 @@ export const ManagementPanel: React.FC<ManagementPanelProps> = ({ initialTab = '
                           onChange={(e) => handleUpdateQuizQuestion(qIdx, { explanation: e.target.value })}
                           placeholder="Explanation shown after answer submission..."
                           className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[11px]"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Flashcard Deck Specific Fields */}
+              {moduleForm.type === 'flashcard' && (
+                <div className="p-3.5 rounded-xl bg-cyan-50/70 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-900/50 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-cyan-800 dark:text-cyan-300 text-[11px] uppercase font-mono">
+                      Flashcard Deck ({moduleForm.flashcardCards.length} cards)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setModuleForm(prev => ({
+                          ...prev,
+                          flashcardCards: [
+                            ...prev.flashcardCards,
+                            {
+                              id: `fc-${Date.now()}-${prev.flashcardCards.length}`,
+                              category: 'Terminology',
+                              term: 'New Term',
+                              question: 'Question prompt...',
+                              answer: 'Concise answer...',
+                              explanation: '',
+                              memoryTip: ''
+                            }
+                          ]
+                        }))
+                      }
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-semibold"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Add Card</span>
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Deck Title
+                    </label>
+                    <input
+                      type="text"
+                      value={moduleForm.flashcardDeckTitle}
+                      onChange={(e) =>
+                        setModuleForm(prev => ({ ...prev, flashcardDeckTitle: e.target.value }))
+                      }
+                      className="w-full px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                      placeholder="Chapter Review Deck..."
+                    />
+                  </div>
+
+                  <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                    {moduleForm.flashcardCards.map((card, cIdx) => (
+                      <div
+                        key={card.id}
+                        className="p-2.5 rounded-xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-mono font-bold text-slate-500">
+                            Card {cIdx + 1}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setModuleForm(prev => ({
+                                ...prev,
+                                flashcardCards: prev.flashcardCards.filter((_, i) => i !== cIdx)
+                              }))
+                            }
+                            className="text-red-400 hover:text-red-600 text-[11px]"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <input
+                            type="text"
+                            value={card.term}
+                            onChange={(e) =>
+                              setModuleForm(prev => ({
+                                ...prev,
+                                flashcardCards: prev.flashcardCards.map((c, i) =>
+                                  i === cIdx ? { ...c, term: e.target.value } : c
+                                )
+                              }))
+                            }
+                            placeholder="Term..."
+                            className="px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-semibold"
+                          />
+                          <select
+                            value={card.category}
+                            onChange={(e) =>
+                              setModuleForm(prev => ({
+                                ...prev,
+                                flashcardCards: prev.flashcardCards.map((c, i) =>
+                                  i === cIdx
+                                    ? { ...c, category: e.target.value as FlashcardCategory }
+                                    : c
+                                )
+                              }))
+                            }
+                            className="px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                          >
+                            <option value="Terminology">Terminology</option>
+                            <option value="Protocol">Protocol</option>
+                            <option value="Port Number">Port Number</option>
+                            <option value="Architecture">Architecture</option>
+                          </select>
+                        </div>
+                        <input
+                          type="text"
+                          value={card.question}
+                          onChange={(e) =>
+                            setModuleForm(prev => ({
+                              ...prev,
+                              flashcardCards: prev.flashcardCards.map((c, i) =>
+                                i === cIdx ? { ...c, question: e.target.value } : c
+                              )
+                            }))
+                          }
+                          placeholder="Front (Question)..."
+                          className="w-full px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                        />
+                        <input
+                          type="text"
+                          value={card.answer}
+                          onChange={(e) =>
+                            setModuleForm(prev => ({
+                              ...prev,
+                              flashcardCards: prev.flashcardCards.map((c, i) =>
+                                i === cIdx ? { ...c, answer: e.target.value } : c
+                              )
+                            }))
+                          }
+                          placeholder="Back (Answer)..."
+                          className="w-full px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-blue-700 dark:text-cyan-300 font-semibold"
                         />
                       </div>
                     ))}

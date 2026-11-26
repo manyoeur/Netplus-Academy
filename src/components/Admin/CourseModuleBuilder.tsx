@@ -27,7 +27,10 @@ import {
   Check,
   X,
   Pin,
-  PinOff
+  PinOff,
+  SquareStack,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { useAcademy } from '../../context/AcademyContext';
 import {
@@ -41,6 +44,11 @@ import {
   toChapterConfigFromHierarchy
 } from '../../utils/courseHierarchy';
 import { RichMarkdownEditor } from '../Courses/HierarchyContentWorkspace';
+import {
+  FlashcardCategory,
+  FlashcardItem
+} from '../Flashcards/flashcardTypes';
+import { generateFlashcardDeck } from '../../utils/flashcardApi';
 import {
   Course,
   CourseChapterSection,
@@ -67,6 +75,7 @@ type DragPayload =
 type SelectedInspectorTarget =
   | { kind: 'grading' }
   | { kind: 'quiz-module'; moduleId: string }
+  | { kind: 'flashcard-module'; moduleId: string }
   | { kind: 'checkpoint'; fromModuleId: string; toModuleId: string }
   | { kind: 'chapter-content'; chapterId: string }
   | { kind: 'section-content'; chapterId: string; sectionId: string };
@@ -140,6 +149,14 @@ const PALETTE_ITEMS: {
     badge: 'Forensics',
     icon: Activity,
     accentClass: 'text-emerald-600 dark:text-emerald-400'
+  },
+  {
+    kind: 'flashcard',
+    label: 'Flashcards',
+    description: 'Interactive flip-card deck for section review & recall',
+    badge: 'Review',
+    icon: SquareStack,
+    accentClass: 'text-cyan-600 dark:text-cyan-400'
   }
 ];
 
@@ -200,6 +217,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
   const [editingMainKey, setEditingMainKey] = useState<string | null>(null);
   const [editingMainDraft, setEditingMainDraft] = useState('');
   const [dropSectionKey, setDropSectionKey] = useState<string | null>(null);
+  const [dropOutlineSlotKey, setDropOutlineSlotKey] = useState<string | null>(null);
 
   const hierarchyTree = useMemo(() => resolveCourseHierarchy(course), [course]);
 
@@ -413,6 +431,8 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     setSelectedSection({ chapterTitle, mainContentTitle });
     if (newMod.type === 'quiz') {
       setInspectorTarget({ kind: 'quiz-module', moduleId: newMod.id });
+    } else if (newMod.type === 'flashcard') {
+      setInspectorTarget({ kind: 'flashcard-module', moduleId: newMod.id });
     }
     onToast(`Added "${newMod.title}" to ${mainContentTitle}`);
     if (openEditorAfter) {
@@ -441,6 +461,61 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     onToast(`Moved to "${chapterTitle} › ${mainContentTitle}"`);
   };
 
+  const handleDropInSectionAt = (
+    e: React.DragEvent,
+    chapterTitle: string,
+    mainContentTitle: string,
+    insertAtIndex: number
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropSectionKey(null);
+    setDropOutlineSlotKey(null);
+    if (!dragPayload) return;
+
+    if (dragPayload.source === 'module') {
+      const { fromIndex, moduleId } = dragPayload;
+      const nextModules = [...course.modules];
+      const [moved] = nextModules.splice(fromIndex, 1);
+      if (moved) {
+        const adjustedTarget = fromIndex < insertAtIndex ? insertAtIndex - 1 : insertAtIndex;
+        nextModules.splice(adjustedTarget, 0, {
+          ...moved,
+          chapterTitle,
+          mainContentTitle
+        });
+        setCourseModulesOrder(course.id, nextModules);
+        onToast(`Moved "${moved.title}" into "${mainContentTitle}"`);
+      }
+      setDragPayload(null);
+      return;
+    }
+
+    if (dragPayload.source === 'palette') {
+      if (dragPayload.kind === 'checkpoint') {
+        handleInjectPaletteItem('checkpoint', insertAtIndex);
+        setDragPayload(null);
+        return;
+      }
+      const starter = createStarterModule(dragPayload.kind, course, gradingForm.quizPassingScore);
+      const newMod: CourseModule = {
+        ...starter,
+        title: starter.title.replace(/^Module \d+:\s*/, ''),
+        chapterTitle,
+        mainContentTitle
+      };
+      addModuleToCourse(course.id, newMod, insertAtIndex);
+      setSelectedSection({ chapterTitle, mainContentTitle });
+      if (newMod.type === 'quiz') {
+        setInspectorTarget({ kind: 'quiz-module', moduleId: newMod.id });
+      } else if (newMod.type === 'flashcard') {
+        setInspectorTarget({ kind: 'flashcard-module', moduleId: newMod.id });
+      }
+      onToast(`Inserted "${newMod.title}" into "${mainContentTitle}"`);
+      setDragPayload(null);
+    }
+  };
+
   const handleDropOnSection = (
     e: React.DragEvent,
     chapterTitle: string,
@@ -448,6 +523,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
   ) => {
     e.preventDefault();
     setDropSectionKey(null);
+    setDropOutlineSlotKey(null);
     if (!dragPayload) return;
 
     if (dragPayload.source === 'module') {
@@ -471,6 +547,8 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
         setSelectedSection({ chapterTitle, mainContentTitle });
         if (newMod.type === 'quiz') {
           setInspectorTarget({ kind: 'quiz-module', moduleId: newMod.id });
+        } else if (newMod.type === 'flashcard') {
+          setInspectorTarget({ kind: 'flashcard-module', moduleId: newMod.id });
         }
         onToast(`Added "${newMod.title}" into "${mainContentTitle}"`);
       }
@@ -497,6 +575,11 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     return course.modules.find(m => m.id === inspectorTarget.moduleId) || null;
   }, [course.modules, inspectorTarget]);
 
+  const selectedFlashcardModule = useMemo(() => {
+    if (inspectorTarget.kind !== 'flashcard-module') return null;
+    return course.modules.find(m => m.id === inspectorTarget.moduleId) || null;
+  }, [course.modules, inspectorTarget]);
+
   const selectedCheckpointPair = useMemo(() => {
     if (inspectorTarget.kind !== 'checkpoint') return null;
     const fromMod = course.modules.find(m => m.id === inspectorTarget.fromModuleId);
@@ -514,6 +597,19 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     passingScore: 75,
     questions: []
   });
+
+  const [flashcardDraft, setFlashcardDraft] = useState<{
+    title: string;
+    deckTitle: string;
+    summary: string;
+    cards: FlashcardItem[];
+  }>({
+    title: '',
+    deckTitle: '',
+    summary: '',
+    cards: []
+  });
+  const [isGeneratingFlashcards, setIsGeneratingFlashcards] = useState(false);
 
   const selectedHierarchyChapter = useMemo(() => {
     if (
@@ -595,12 +691,23 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
         summary: selectedHierarchySection.summary || '',
         contentMarkdown: selectedHierarchySection.contentMarkdown || ''
       });
+    } else if (inspectorTarget.kind === 'flashcard-module' && selectedFlashcardModule) {
+      setFlashcardDraft({
+        title: selectedFlashcardModule.title,
+        deckTitle: selectedFlashcardModule.flashcards?.deckTitle || selectedFlashcardModule.title,
+        summary:
+          selectedFlashcardModule.flashcards?.summary ||
+          selectedFlashcardModule.summary ||
+          '',
+        cards: (selectedFlashcardModule.flashcards?.cards || []).map(c => ({ ...c }))
+      });
     }
   }, [
     course,
     gradingForm.quizPassingScore,
     inspectorTarget,
     selectedCheckpointPair,
+    selectedFlashcardModule,
     selectedHierarchyChapter,
     selectedHierarchySection,
     selectedQuizModule
@@ -753,6 +860,8 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
     addModuleToCourse(course.id, newMod, targetIdx);
     if (newMod.type === 'quiz') {
       setInspectorTarget({ kind: 'quiz-module', moduleId: newMod.id });
+    } else if (newMod.type === 'flashcard') {
+      setInspectorTarget({ kind: 'flashcard-module', moduleId: newMod.id });
     }
     onToast(
       activeTargetSection
@@ -957,6 +1066,87 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
       ...prev,
       questions: prev.questions.filter((_, idx) => idx !== index)
     }));
+  };
+
+  const handleSaveFlashcardDraft = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (inspectorTarget.kind !== 'flashcard-module' || !selectedFlashcardModule) return;
+    const cleanedCards = flashcardDraft.cards
+      .map(c => ({
+        ...c,
+        term: c.term.trim() || 'Key Term',
+        question: c.question.trim() || 'Prompt question',
+        answer: c.answer.trim() || 'Answer'
+      }))
+      .filter(c => c.question && c.answer);
+
+    updateModuleInCourse(course.id, selectedFlashcardModule.id, {
+      title: flashcardDraft.title.trim() || selectedFlashcardModule.title,
+      summary: flashcardDraft.summary.trim() || selectedFlashcardModule.summary,
+      flashcards: {
+        deckTitle: flashcardDraft.deckTitle.trim() || flashcardDraft.title.trim() || selectedFlashcardModule.title,
+        summary: flashcardDraft.summary.trim(),
+        cards: cleanedCards
+      }
+    });
+    onToast(`Saved ${cleanedCards.length} flashcards for "${flashcardDraft.title.trim() || selectedFlashcardModule.title}"`);
+  };
+
+  const handleAddFlashcardItem = () => {
+    setFlashcardDraft(prev => ({
+      ...prev,
+      cards: [
+        ...prev.cards,
+        {
+          id: `fc-${Date.now()}-${prev.cards.length}`,
+          category: 'Terminology',
+          term: 'New Term',
+          question: 'What is the key role or behavior of this concept?',
+          answer: 'Concise definition or command answer',
+          explanation: 'Supporting technical details shown after flipping.',
+          memoryTip: ''
+        }
+      ]
+    }));
+  };
+
+  const handleUpdateFlashcardItem = (index: number, patch: Partial<FlashcardItem>) => {
+    setFlashcardDraft(prev => ({
+      ...prev,
+      cards: prev.cards.map((c, idx) => (idx === index ? { ...c, ...patch } : c))
+    }));
+  };
+
+  const handleRemoveFlashcardItem = (index: number) => {
+    setFlashcardDraft(prev => ({
+      ...prev,
+      cards: prev.cards.filter((_, idx) => idx !== index)
+    }));
+  };
+
+  const handleGenerateFlashcardCards = async () => {
+    if (isGeneratingFlashcards) return;
+    setIsGeneratingFlashcards(true);
+    try {
+      const focusLabel = `${course.code} ${course.title}: ${flashcardDraft.title || 'Chapter Review'}`;
+      const deck = await generateFlashcardDeck({
+        topic: 'all',
+        difficulty: 'certification',
+        cardCount: 6,
+        customFocus: focusLabel
+      });
+      setFlashcardDraft(prev => ({
+        ...prev,
+        deckTitle: prev.deckTitle || deck.deckTitle,
+        summary: prev.summary || deck.summary,
+        cards: [...prev.cards, ...deck.cards]
+      }));
+      onToast(`Added ${deck.cards.length} AI-generated cards to deck`);
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : 'Could not generate AI flashcards right now');
+    } finally {
+      setIsGeneratingFlashcards(false);
+    }
   };
 
   const handleSaveHierarchyContentDraft = (e: React.FormEvent) => {
@@ -1636,6 +1826,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                       <option value="video">Video</option>
                                       <option value="quiz">Quiz Review</option>
                                       <option value="pcap">PCAP Lab</option>
+                                      <option value="flashcard">Flashcards</option>
                                     </select>
                                     <input
                                       type="text"
@@ -1671,9 +1862,12 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                       No items yet — click <span className="font-semibold">+ Item</span> or drag a block here.
                                     </p>
                                   ) : (
-                                    mc.items.map(({ module: mod, flatIndex, itemNumber }) => {
+                                    mc.items.map(({ module: mod, flatIndex, itemNumber }, secItemIdx) => {
                                       const isSelectedQuiz =
                                         inspectorTarget.kind === 'quiz-module' &&
+                                        inspectorTarget.moduleId === mod.id;
+                                      const isSelectedFlashcard =
+                                        inspectorTarget.kind === 'flashcard-module' &&
                                         inspectorTarget.moduleId === mod.id;
 
                                       const ItemIcon =
@@ -1685,6 +1879,8 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                           ? SquarePen
                                           : mod.type === 'pcap'
                                           ? Activity
+                                          : mod.type === 'flashcard'
+                                          ? SquareStack
                                           : FileText;
 
                                       const nextSequentialMod =
@@ -1694,9 +1890,38 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                       const betweenCheck = nextSequentialMod
                                         ? getBetweenModuleQuiz(course, mod, nextSequentialMod)
                                         : null;
+                                      const beforeSlotKey = `${secKey}::before::${mod.id}`;
+                                      const afterSlotKey = `${secKey}::after::${mod.id}`;
+                                      const isBeforeDropActive = dropOutlineSlotKey === beforeSlotKey;
+                                      const isAfterDropActive = dropOutlineSlotKey === afterSlotKey;
 
                                       return (
                                         <React.Fragment key={mod.id}>
+                                          {secItemIdx === 0 && dragPayload && (
+                                            <div
+                                              onDragOver={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setDropOutlineSlotKey(beforeSlotKey);
+                                              }}
+                                              onDragLeave={() => {
+                                                if (dropOutlineSlotKey === beforeSlotKey) {
+                                                  setDropOutlineSlotKey(null);
+                                                }
+                                              }}
+                                              onDrop={(e) =>
+                                                handleDropInSectionAt(e, ch.title, mc.title, flatIndex)
+                                              }
+                                              className={`rounded-md border border-dashed px-2 py-1 text-center font-mono text-[10px] transition-colors ${
+                                                isBeforeDropActive
+                                                  ? 'border-blue-500 dark:border-cyan-400 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-cyan-300 font-semibold'
+                                                  : 'border-slate-300 dark:border-slate-700 text-slate-400'
+                                              }`}
+                                            >
+                                              Drop here · Start of {mc.sectionNumber}
+                                            </div>
+                                          )}
+
                                           <div
                                             draggable
                                             onDragStart={(e) => {
@@ -1711,9 +1936,10 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                             onDragEnd={() => {
                                               setDragPayload(null);
                                               setDropSectionKey(null);
+                                              setDropOutlineSlotKey(null);
                                             }}
                                             className={`group/item flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg transition-colors ${
-                                              isSelectedQuiz
+                                              isSelectedQuiz || isSelectedFlashcard
                                                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold'
                                                 : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
                                             }`}
@@ -1730,18 +1956,32 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                                     kind: 'quiz-module',
                                                     moduleId: mod.id
                                                   });
+                                                } else if (mod.type === 'flashcard') {
+                                                  setInspectorTarget({
+                                                    kind: 'flashcard-module',
+                                                    moduleId: mod.id
+                                                  });
                                                 } else {
                                                   onEditFullModule(course.id, mod);
                                                 }
                                               }}
                                               className="flex items-start gap-2.5 min-w-0 flex-1 text-left"
                                             >
-                                              <ItemIcon className="w-4 h-4 mt-0.5 text-slate-500 dark:text-slate-400 shrink-0" />
+                                              <ItemIcon className={`w-4 h-4 mt-0.5 shrink-0 ${
+                                                mod.type === 'flashcard'
+                                                  ? 'text-cyan-600 dark:text-cyan-400'
+                                                  : 'text-slate-500 dark:text-slate-400'
+                                              }`} />
                                               <span className="text-[13px] leading-snug text-slate-800 dark:text-slate-200">
                                                 <span className="tabular-nums mr-1.5 font-medium text-slate-600 dark:text-slate-400">
                                                   {itemNumber}
                                                 </span>
                                                 {mod.title}
+                                                {mod.type === 'flashcard' && (
+                                                  <span className="ml-1.5 text-[10px] font-mono text-cyan-600 dark:text-cyan-400 tabular-nums">
+                                                    ({mod.flashcards?.cards?.length || 0} cards)
+                                                  </span>
+                                                )}
                                               </span>
                                             </button>
 
@@ -1759,7 +1999,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                                 disabled={course.modules.length <= 1}
                                                 onClick={() => {
                                                   deleteModuleFromCourse(course.id, mod.id);
-                                                  if (isSelectedQuiz) {
+                                                  if (isSelectedQuiz || isSelectedFlashcard) {
                                                     setInspectorTarget({ kind: 'grading' });
                                                   }
                                                   onToast(`Removed "${mod.title}"`);
@@ -1818,6 +2058,31 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                                               </div>
                                             </div>
                                           )}
+
+                                          {dragPayload && (
+                                            <div
+                                              onDragOver={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setDropOutlineSlotKey(afterSlotKey);
+                                              }}
+                                              onDragLeave={() => {
+                                                if (dropOutlineSlotKey === afterSlotKey) {
+                                                  setDropOutlineSlotKey(null);
+                                                }
+                                              }}
+                                              onDrop={(e) =>
+                                                handleDropInSectionAt(e, ch.title, mc.title, flatIndex + 1)
+                                              }
+                                              className={`rounded-md border border-dashed px-2 py-1 text-center font-mono text-[10px] transition-colors ${
+                                                isAfterDropActive
+                                                  ? 'border-blue-500 dark:border-cyan-400 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-cyan-300 font-semibold'
+                                                  : 'border-slate-300 dark:border-slate-700 text-slate-400'
+                                              }`}
+                                            >
+                                              Drop here · After {itemNumber}
+                                            </div>
+                                          )}
                                         </React.Fragment>
                                       );
                                     })
@@ -1841,6 +2106,8 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
               const betweenQuiz = nextMod ? getBetweenModuleQuiz(course, mod, nextMod) : null;
               const isSelectedQuiz =
                 inspectorTarget.kind === 'quiz-module' && inspectorTarget.moduleId === mod.id;
+              const isSelectedFlashcard =
+                inspectorTarget.kind === 'flashcard-module' && inspectorTarget.moduleId === mod.id;
               const isDraggingSelf =
                 dragPayload?.source === 'module' && dragPayload.moduleId === mod.id;
               const isDropActiveBefore = activeDropIndex === idx;
@@ -1887,6 +2154,8 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                         ? 'opacity-45 border-blue-400 bg-blue-50/40 dark:bg-blue-950/20'
                         : isSelectedQuiz
                         ? 'border-amber-500 bg-amber-50/60 dark:bg-amber-950/30'
+                        : isSelectedFlashcard
+                        ? 'border-cyan-500 bg-cyan-50/60 dark:bg-cyan-950/30'
                         : 'border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-700'
                     }`}
                   >
@@ -1910,6 +2179,8 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                         <HelpCircle className="w-4 h-4 text-amber-500 shrink-0" />
                       ) : mod.type === 'pcap' ? (
                         <Activity className="w-4 h-4 text-emerald-500 shrink-0" />
+                      ) : mod.type === 'flashcard' ? (
+                        <SquareStack className="w-4 h-4 text-cyan-500 shrink-0" />
                       ) : (
                         <FileText className="w-4 h-4 text-blue-500 shrink-0" />
                       )}
@@ -1919,6 +2190,8 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                         onClick={() => {
                           if (mod.type === 'quiz') {
                             setInspectorTarget({ kind: 'quiz-module', moduleId: mod.id });
+                          } else if (mod.type === 'flashcard') {
+                            setInspectorTarget({ kind: 'flashcard-module', moduleId: mod.id });
                           } else {
                             onEditFullModule(course.id, mod);
                           }
@@ -1933,6 +2206,8 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                           <span className="capitalize">{mod.type}</span> · {mod.durationMin}m
                           {mod.type === 'quiz' && mod.quiz
                             ? ` · Pass ${mod.quiz.passingScore}% · ${mod.quiz.questions.length} Qs`
+                            : mod.type === 'flashcard'
+                            ? ` · ${mod.flashcards?.cards?.length || 0} Cards`
                             : ''}
                         </p>
                       </button>
@@ -1962,12 +2237,20 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                         onClick={() => {
                           if (mod.type === 'quiz') {
                             setInspectorTarget({ kind: 'quiz-module', moduleId: mod.id });
+                          } else if (mod.type === 'flashcard') {
+                            setInspectorTarget({ kind: 'flashcard-module', moduleId: mod.id });
                           } else {
                             onEditFullModule(course.id, mod);
                           }
                         }}
                         className="p-1 rounded text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-cyan-400"
-                        title={mod.type === 'quiz' ? 'Edit Quiz in Inspector' : 'Edit Module Content'}
+                        title={
+                          mod.type === 'quiz'
+                            ? 'Edit Quiz in Inspector'
+                            : mod.type === 'flashcard'
+                            ? 'Edit Flashcards in Inspector'
+                            : 'Edit Module Content'
+                        }
                       >
                         <Edit3 className="w-3.5 h-3.5" />
                       </button>
@@ -1976,7 +2259,7 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                         disabled={course.modules.length <= 1}
                         onClick={() => {
                           deleteModuleFromCourse(course.id, mod.id);
-                          if (isSelectedQuiz) setInspectorTarget({ kind: 'grading' });
+                          if (isSelectedQuiz || isSelectedFlashcard) setInspectorTarget({ kind: 'grading' });
                           onToast(`Removed "${mod.title}"`);
                         }}
                         className="p-1 rounded text-red-400 hover:text-red-600 disabled:opacity-30"
@@ -2190,6 +2473,24 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
               }`}
             >
               Quiz Editor
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const firstFc = course.modules.find(m => m.type === 'flashcard');
+                if (firstFc) {
+                  setInspectorTarget({ kind: 'flashcard-module', moduleId: firstFc.id });
+                } else {
+                  setInspectorTarget({ kind: 'flashcard-module', moduleId: '' });
+                }
+              }}
+              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                inspectorTarget.kind === 'flashcard-module'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              Flashcards
             </button>
           </div>
 
@@ -2545,6 +2846,189 @@ export const CourseModuleBuilder: React.FC<CourseModuleBuilderProps> = ({
                 </span>
               </button>
             </form>
+          ) : inspectorTarget.kind === 'flashcard-module' ? (
+            selectedFlashcardModule ? (
+              <form onSubmit={handleSaveFlashcardDraft} className="space-y-3 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-0.5 min-w-0">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-cyan-600 dark:text-cyan-400 font-bold flex items-center gap-1">
+                      <SquareStack className="w-3 h-3" />
+                      <span>Flashcard Deck Inspector</span>
+                    </span>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                      Editing "{selectedFlashcardModule.title}"
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleGenerateFlashcardCards}
+                    disabled={isGeneratingFlashcards}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-[10px] font-bold whitespace-nowrap shrink-0 disabled:opacity-60"
+                    title="Generate 6 flashcards for this module using AI"
+                  >
+                    {isGeneratingFlashcards ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3 h-3" />
+                    )}
+                    <span>{isGeneratingFlashcards ? 'Generating...' : 'AI Cards'}</span>
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Module Title
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={flashcardDraft.title}
+                    onChange={(e) => setFlashcardDraft(prev => ({ ...prev, title: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Deck Description / Review Goal
+                  </label>
+                  <input
+                    type="text"
+                    value={flashcardDraft.summary}
+                    onChange={(e) => setFlashcardDraft(prev => ({ ...prev, summary: e.target.value }))}
+                    placeholder="Key terms & concepts to review in this section..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <span className="font-mono text-[11px] font-bold text-slate-600 dark:text-slate-300 tabular-nums">
+                    Cards ({flashcardDraft.cards.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleAddFlashcardItem}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-semibold whitespace-nowrap shrink-0"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Add Card</span>
+                  </button>
+                </div>
+
+                <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
+                  {flashcardDraft.cards.length === 0 ? (
+                    <p className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-200 dark:border-slate-700 text-center text-[11px] text-slate-500 dark:text-slate-400">
+                      No cards yet. Click "+ Add Card" or "AI Cards" to populate this deck.
+                    </p>
+                  ) : (
+                    flashcardDraft.cards.map((card, cIdx) => (
+                      <div
+                        key={card.id}
+                        className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 space-y-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-mono font-bold text-slate-500 tabular-nums">
+                            Card {cIdx + 1}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFlashcardItem(cIdx)}
+                            className="text-[11px] text-red-500 hover:text-red-600"
+                          >
+                            Remove
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <input
+                            type="text"
+                            required
+                            value={card.term}
+                            onChange={(e) => handleUpdateFlashcardItem(cIdx, { term: e.target.value })}
+                            placeholder="Term / Topic..."
+                            className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-semibold"
+                          />
+                          <select
+                            value={card.category}
+                            onChange={(e) =>
+                              handleUpdateFlashcardItem(cIdx, {
+                                category: e.target.value as FlashcardCategory
+                              })
+                            }
+                            className="px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                          >
+                            <option value="Terminology">Terminology</option>
+                            <option value="Protocol">Protocol</option>
+                            <option value="Port Number">Port Number</option>
+                            <option value="Architecture">Architecture</option>
+                          </select>
+                        </div>
+
+                        <input
+                          type="text"
+                          required
+                          value={card.question}
+                          onChange={(e) => handleUpdateFlashcardItem(cIdx, { question: e.target.value })}
+                          placeholder="Front (Question / Prompt)..."
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                        />
+
+                        <input
+                          type="text"
+                          required
+                          value={card.answer}
+                          onChange={(e) => handleUpdateFlashcardItem(cIdx, { answer: e.target.value })}
+                          placeholder="Back (Answer)..."
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-blue-700 dark:text-cyan-300 font-semibold"
+                        />
+
+                        <input
+                          type="text"
+                          value={card.explanation}
+                          onChange={(e) => handleUpdateFlashcardItem(cIdx, { explanation: e.target.value })}
+                          placeholder="Explanation (optional)..."
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[11px]"
+                        />
+
+                        <input
+                          type="text"
+                          value={card.memoryTip}
+                          onChange={(e) => handleUpdateFlashcardItem(cIdx, { memoryTip: e.target.value })}
+                          placeholder="Memory tip / mnemonic (optional)..."
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[11px]"
+                        />
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Save Flashcard Deck</span>
+                </button>
+              </form>
+            ) : (
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-dashed border-slate-200 dark:border-slate-700 text-center space-y-3 text-xs">
+                <SquareStack className="w-7 h-7 mx-auto text-cyan-500" />
+                <p className="font-semibold text-slate-700 dark:text-slate-200">
+                  No Flashcard deck selected yet
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Drag &ldquo;Flashcards&rdquo; from the Component Palette into any section or between modules, or inject one directly into the selected section.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleInjectPaletteItem('flashcard')}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Flashcard Deck</span>
+                </button>
+              </div>
+            )
           ) : (
             /* Inline Quiz & Retention Check Question Editor */
             <form onSubmit={handleSaveQuizDraft} className="space-y-3 text-xs">

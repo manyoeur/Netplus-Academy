@@ -36,6 +36,7 @@ import {
   ModuleContentWorkspace
 } from './HierarchyContentWorkspace';
 import { PersonalFlashcardModal } from '../Flashcards/PersonalFlashcardModal';
+import { ModuleFlashcardDeck } from '../Flashcards/ModuleFlashcardDeck';
 import {
   getModuleQuiz,
   getPostVideoModuleQuiz
@@ -1666,6 +1667,13 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                           ? `Quiz pending · Retry (${modQuizResult.score}%)`
                                                           : `Quiz pending · ${modQuiz.questions.length} Qs`}
                                                       </span>
+                                                    ) : m.type === 'flashcard' && !isDone ? (
+                                                      <span className="text-[10px] font-mono tabular-nums text-cyan-700 dark:text-cyan-400 flex items-center gap-1 mt-0.5">
+                                                        <SquareStack className="w-3 h-3 shrink-0" />
+                                                        <span>
+                                                          Flashcards · {m.flashcards?.cards?.length || 0} cards
+                                                        </span>
+                                                      </span>
                                                     ) : !isDone && savedModPercent > 0 ? (
                                                       <span className="text-[10px] font-mono tabular-nums text-emerald-700 dark:text-emerald-400 block mt-0.5">
                                                         {savedModPercent}% read
@@ -2325,6 +2333,50 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                         : undefined
                     }
                   />
+                </div>
+              )}
+
+              {/* Flashcards Review Deck Module */}
+              {activeModule.type === 'flashcard' && (
+                <div className="space-y-4">
+                  <ModuleFlashcardDeck
+                    userId={currentUser.id}
+                    courseId={course.id}
+                    courseCode={course.code}
+                    module={activeModule}
+                    isCompleted={isModuleCompleted(activeModule.id)}
+                    canEdit={canEditCourseContent}
+                    personalModuleCards={personalFlashcards.filter(
+                      c => c.courseId === course.id && c.moduleId === activeModule.id
+                    )}
+                    onCompleteModule={() => {
+                      if (!isStudentPaymentRequired) {
+                        completeModule(course.id, activeModule.id);
+                      }
+                    }}
+                    onContinueNext={
+                      activeModuleIndex < course.modules.length - 1
+                        ? () => handleNextModule()
+                        : undefined
+                    }
+                    nextModuleTitle={
+                      activeModuleIndex < course.modules.length - 1
+                        ? course.modules[activeModuleIndex + 1]?.title
+                        : undefined
+                    }
+                    onAddPersonalCard={() => setIsFlashcardModalOpen(true)}
+                    onStudyTimeTick={(seconds) =>
+                      recordStudyTime(seconds, 'practice', activeModule.id)
+                    }
+                  />
+                  {activeModule.contentMarkdown?.trim() && (
+                    <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+                      <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Review Notes
+                      </h3>
+                      <MarkdownProse content={activeModule.contentMarkdown} />
+                    </div>
+                  )}
                 </div>
               )}
             </ModuleContentWorkspace>

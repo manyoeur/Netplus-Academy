@@ -25,7 +25,6 @@ import {
   GraduationCap,
   Binary,
   Gamepad2,
-  SquareStack,
   Keyboard,
   Workflow,
   ClipboardList,
@@ -384,15 +383,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           accentText: 'text-emerald-600 dark:text-emerald-400',
           accentBg: 'bg-emerald-50 dark:bg-emerald-950/60',
           accentBar: 'bg-emerald-500'
-        },
-        {
-          id: 'flashcard',
-          label: 'Flashcards',
-          icon: SquareStack,
-          accentText: 'text-cyan-600 dark:text-cyan-400',
-          accentBg: 'bg-cyan-50 dark:bg-cyan-950/60',
-          accentBar: 'bg-cyan-500',
-          tag: 'AI'
         }
       ]
     },
@@ -467,7 +457,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'subnet-calc', label: 'Subnetting & VLSM Architecture Calculator', category: 'Calculators & Practice', icon: Calculator },
     { id: 'base-converter', label: 'Binary, Decimal & Hexadecimal Converter', category: 'Calculators & Practice', icon: Binary },
     { id: 'binary-game', label: 'Binary Conversion Practice Game', category: 'Calculators & Practice', icon: Gamepad2 },
-    { id: 'flashcard', label: 'Flashcards · AI Terminology, Protocols & Ports Deck', category: 'Calculators & Practice', icon: SquareStack },
     { id: 'pricing', label: 'Subscription Tiers & Pro Checkout', category: 'Account', icon: CreditCard },
     ...(isAdminOnly
       ? [

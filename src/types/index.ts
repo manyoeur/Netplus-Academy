@@ -1,3 +1,5 @@
+import type { FlashcardItem } from '../components/Flashcards/flashcardTypes';
+
 export type UserRole = 'student' | 'instructor' | 'admin';
 
 export type SubscriptionTier = 'free' | 'pro' | 'expert' | 'enterprise';
@@ -51,7 +53,7 @@ export interface Invitation {
   expiresAt: string;
 }
 
-export type ModuleType = 'theory' | 'video' | 'lab' | 'quiz' | 'pcap';
+export type ModuleType = 'theory' | 'video' | 'lab' | 'quiz' | 'pcap' | 'flashcard';
 
 export interface QuizQuestion {
   id: string;
@@ -124,6 +126,11 @@ export interface CourseModule {
     expectedCommands: string[];
     terminalHints: string[];
     verificationCheck: string;
+  };
+  flashcards?: {
+    deckTitle?: string;
+    summary?: string;
+    cards: FlashcardItem[];
   };
 }
 

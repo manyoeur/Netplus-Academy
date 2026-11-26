@@ -57,16 +57,6 @@ export const GLOBAL_KEYBOARD_SHORTCUTS: KeyboardShortcutDef[] = [
     actionType: 'navigate'
   },
   {
-    id: 'nav-flashcards',
-    key: 'f',
-    displayKey: 'F',
-    label: 'Flashcards',
-    description: 'Open Networking Flashcards Deck',
-    category: 'navigation',
-    tabId: 'flashcard',
-    actionType: 'navigate'
-  },
-  {
     id: 'nav-certificates',
     key: 'e',
     displayKey: 'E',
