@@ -1128,7 +1128,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
             }`}
           >
             {/* Course Outline Header with Progress Bar & Collapse Toggle */}
-            <div className="shrink-0 p-4 bg-emerald-50/90 dark:bg-emerald-950/35 border-b border-emerald-200/70 dark:border-emerald-900/50 space-y-2.5">
+            <div className="shrink-0 p-4 bg-transparent border-b border-slate-200/80 dark:border-slate-800 space-y-2.5">
               <div className="flex items-start justify-between gap-2.5">
                 <div
                   onDoubleClick={(e) => {
@@ -1232,9 +1232,9 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                           data-outline-active={isChapterSelected ? 'true' : undefined}
                           className={`group flex items-start justify-between gap-1.5 px-2 py-2 rounded-lg transition-colors ${
                             isChapterSelected
-                              ? 'bg-emerald-100 dark:bg-emerald-900/60 border-l-[3px] border-emerald-600 dark:border-emerald-400 ring-1 ring-emerald-500/40 dark:ring-emerald-400/40 shadow-xs'
+                              ? 'bg-blue-50 dark:bg-blue-950/55 border-l-[3px] border-blue-600 dark:border-cyan-400 ring-1 ring-blue-500/40 dark:ring-cyan-400/40 shadow-xs'
                               : isChapterOpen
-                              ? 'bg-emerald-50/90 dark:bg-emerald-900/25'
+                              ? 'bg-transparent hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
                               : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
                           }`}
                         >
@@ -1326,13 +1326,13 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                             <span
                               className={`text-[13px] font-bold leading-snug transition-colors block ${
                                 isChapterSelected
-                                  ? 'text-emerald-900 dark:text-emerald-100'
-                                  : 'text-slate-900 dark:text-white group-hover:text-emerald-700 dark:group-hover:text-emerald-300'
+                                  ? 'text-blue-950 dark:text-blue-100'
+                                  : 'text-slate-900 dark:text-white group-hover:text-blue-700 dark:group-hover:text-cyan-300'
                               }`}
                             >
                               <span
                                 className={`tabular-nums mr-1.5 ${
-                                  isChapterSelected ? 'text-emerald-700 dark:text-emerald-300' : ''
+                                  isChapterSelected ? 'text-blue-700 dark:text-cyan-300' : ''
                                 }`}
                               >
                                 {chapter.chapterNumber}
@@ -1380,7 +1380,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
 
                         {/* Level 2: Main Contents List (indented inside Level 1 Chapter) */}
                         {isChapterOpen && (
-                          <div className="mt-1 rounded-lg bg-emerald-50/45 dark:bg-emerald-950/20 py-1.5 px-1.5 space-y-1">
+                          <div className="mt-1 rounded-lg bg-transparent py-1.5 px-1.5 space-y-1">
                             {chapter.mainContents.map((section) => {
                               const isSectionOpen = Boolean(expandedSections[section.id]);
                               const isSectionSelected =
@@ -1404,10 +1404,10 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                     data-outline-active={isSectionSelected ? 'true' : undefined}
                                     className={`group/sec flex items-start justify-between gap-1.5 px-2 py-1.5 rounded-md transition-colors ${
                                       isSectionSelected
-                                        ? 'bg-emerald-100 dark:bg-emerald-900/60 border-l-[3px] border-emerald-600 dark:border-emerald-400 ring-1 ring-emerald-500/40 dark:ring-emerald-400/40 shadow-xs'
+                                        ? 'bg-blue-50 dark:bg-blue-950/55 border-l-[3px] border-blue-600 dark:border-cyan-400 ring-1 ring-blue-500/40 dark:ring-cyan-400/40 shadow-xs'
                                         : isSectionActiveBranch
-                                        ? 'bg-emerald-100/65 dark:bg-emerald-900/30'
-                                        : 'hover:bg-white/70 dark:hover:bg-slate-800/50'
+                                        ? 'bg-transparent hover:bg-slate-100/60 dark:hover:bg-slate-800/50'
+                                        : 'hover:bg-slate-100/60 dark:hover:bg-slate-800/50'
                                     }`}
                                   >
                                     <button
@@ -1477,16 +1477,16 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                       <span
                                         className={`text-[12px] font-bold leading-snug transition-colors block ${
                                           isSectionSelected
-                                            ? 'text-emerald-900 dark:text-emerald-100'
+                                            ? 'text-blue-950 dark:text-blue-100'
                                             : isSectionActiveBranch
-                                            ? 'text-emerald-800 dark:text-emerald-200'
-                                            : 'text-slate-800 dark:text-slate-200 group-hover/sec:text-emerald-700 dark:group-hover/sec:text-emerald-300'
+                                            ? 'text-blue-700 dark:text-cyan-300'
+                                            : 'text-slate-800 dark:text-slate-200 group-hover/sec:text-blue-700 dark:group-hover/sec:text-cyan-300'
                                         }`}
                                       >
                                         <span
                                           className={`tabular-nums mr-1.5 ${
                                             isSectionSelected || isSectionActiveBranch
-                                              ? 'text-emerald-700 dark:text-emerald-300'
+                                              ? 'text-blue-700 dark:text-cyan-300'
                                               : ''
                                           }`}
                                         >
@@ -1570,16 +1570,14 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                 data-outline-active={isActive ? 'true' : undefined}
                                                 className={`group/mod relative w-full px-2.5 py-2 rounded-lg transition-all flex items-start gap-1.5 ${
                                                   isActive
-                                                    ? isDedicatedQuiz && modQuiz && !isModQuizPassed
-                                                      ? 'bg-amber-100/90 dark:bg-amber-900/45 border-l-[3px] border-amber-600 dark:border-amber-400 ring-1 ring-amber-500/45 text-amber-950 dark:text-amber-50 font-semibold shadow-xs'
-                                                      : 'bg-emerald-100 dark:bg-emerald-900/60 border-l-[3px] border-emerald-600 dark:border-emerald-400 ring-1 ring-emerald-500/45 dark:ring-emerald-400/45 text-emerald-950 dark:text-emerald-50 font-semibold shadow-xs'
+                                                    ? 'bg-blue-50 dark:bg-blue-950/55 border-l-[3px] border-blue-600 dark:border-cyan-400 ring-1 ring-blue-500/40 dark:ring-cyan-400/40 text-blue-950 dark:text-blue-50 font-semibold shadow-xs'
                                                     : isDedicatedQuiz && modQuiz
                                                     ? isModQuizPassed
-                                                      ? 'border-l-2 border-emerald-500 dark:border-emerald-400 bg-emerald-50/45 dark:bg-emerald-950/20 hover:bg-white/80 dark:hover:bg-slate-800/50 text-slate-800 dark:text-slate-200'
-                                                      : 'border-l-2 border-amber-400 dark:border-amber-500 hover:bg-white/70 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
+                                                      ? 'border-l-2 border-emerald-500 dark:border-emerald-400 bg-transparent hover:bg-slate-100/60 dark:hover:bg-slate-800/50 text-slate-800 dark:text-slate-200'
+                                                      : 'border-l-2 border-amber-400 dark:border-amber-500 hover:bg-slate-100/60 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
                                                     : isModMasteryLocked
-                                                    ? 'text-slate-400 dark:text-slate-500 hover:bg-white/60 dark:hover:bg-slate-800/40'
-                                                    : 'hover:bg-white/70 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
+                                                    ? 'text-slate-400 dark:text-slate-500 hover:bg-slate-100/60 dark:hover:bg-slate-800/40'
+                                                    : 'hover:bg-slate-100/60 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
                                                 }`}
                                               >
                                                 <button
@@ -1592,7 +1590,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                     {isDone || isModQuizPassed ? (
                                                       <span
                                                         className={`w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center ${
-                                                          isActive ? 'ring-2 ring-emerald-300 dark:ring-emerald-700' : ''
+                                                          isActive ? 'ring-2 ring-blue-300 dark:ring-cyan-700' : ''
                                                         }`}
                                                         aria-label="Completed"
                                                       >
@@ -1606,7 +1604,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                       <span
                                                         className={`w-4 h-4 rounded-full border flex items-center justify-center ${
                                                           isActive
-                                                            ? 'border-amber-600 bg-amber-600 text-white dark:border-amber-400 dark:bg-amber-500'
+                                                            ? 'border-blue-600 bg-blue-600 text-white dark:border-cyan-400 dark:bg-cyan-500'
                                                             : 'border-amber-500/80 bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400'
                                                         }`}
                                                         aria-label="Quiz pending"
@@ -1617,8 +1615,8 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                       <span
                                                         className={`w-4 h-4 rounded-full border flex items-center justify-center ${
                                                           isActive
-                                                            ? 'border-emerald-600 bg-emerald-600 text-white dark:border-emerald-400 dark:bg-emerald-500 shadow-2xs'
-                                                            : 'border-emerald-500/60 bg-white dark:bg-slate-900 text-emerald-600/80 dark:text-emerald-400/80'
+                                                            ? 'border-blue-600 bg-blue-600 text-white dark:border-cyan-400 dark:bg-cyan-500 shadow-2xs'
+                                                            : 'border-emerald-500/60 bg-transparent text-emerald-600/80 dark:text-emerald-400/80'
                                                         }`}
                                                       >
                                                         <ChevronRight className="w-2.5 h-2.5" />
@@ -1635,9 +1633,7 @@ export const CoursePlayer: React.FC<CoursePlayerProps> = ({
                                                       <span
                                                         className={`tabular-nums mr-1.5 ${
                                                           isActive
-                                                            ? isDedicatedQuiz && modQuiz && !isModQuizPassed
-                                                              ? 'text-amber-700 dark:text-amber-300 font-bold'
-                                                              : 'text-emerald-700 dark:text-emerald-300 font-bold'
+                                                            ? 'text-blue-700 dark:text-cyan-300 font-bold'
                                                             : 'text-slate-500 dark:text-slate-400'
                                                         }`}
                                                       >
